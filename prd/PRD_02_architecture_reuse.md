@@ -5,8 +5,9 @@ Parent: [PRD index](../PRD.md). Owns source provenance, reuse boundaries, Git ad
 ## Outcome tree
 
 ```text
-Outcome: one Git product composed over proven MiniCon mechanisms
+Outcome: a Git-first source-control product composed over proven MiniCon mechanisms
 ├── Portable product rules — repo identities, snapshots, operation plans
+├── VCS capability boundary — Git implementation now; SVN and other adapters later
 ├── Git adapter — installed Git, byte-safe parsing, supervised execution
 ├── MiniCon mechanisms — rules / rendering / native capabilities
 └── Composition — SrcMgr navigation, views, authority and persistence
@@ -16,7 +17,8 @@ Outcome: one Git product composed over proven MiniCon mechanisms
 flowchart TD
     UI["SrcMgr views"] --> DOMAIN["SrcMgr domain and operation coordinator"]
     AUTO["SrcMgr public control"] --> DOMAIN
-    DOMAIN --> RUN["Typed Git runner"] --> GIT["Selected installed Git"]
+    DOMAIN --> BACKEND["15 VCS capability contract"]
+    BACKEND --> RUN["Typed Git runner"] --> GIT["Selected installed Git"]
     UI --> CORE["minicon-core"] & RENDER["minicon-ui-core"]
     RUN & UI --> PLATFORM["minicon-platform"]
     PLATFORM --> OS["Private native adapters"]
@@ -49,7 +51,7 @@ The upstream manifests declare Rust 1.97. The future toolchain lock must satisfy
 
 ## Product-owned boundaries
 
-Planned crates, not existing code: `srcmgr-domain` (typed IDs, snapshots, graph model, operation state); `srcmgr-git` (Git invocation and protocol parsing); `srcmgr-ui` (layout, components and semantic accessibility tree); binary composition (application lifecycle, control, persistence). Prefer these boundaries over premature extra packages. Native extensions go through a reviewed platform capability; Git trust and UX policy remain product-owned. Never put branch, account or repository state in MiniCon shared crates.
+Planned crates, not existing code: `srcmgr-domain` (backend-tagged IDs, common change/history envelopes, capability and operation contracts); `srcmgr-git` (Git invocation, parsing, index/refs/graph and sequencer semantics); `srcmgr-ui` (layout, components and semantic accessibility tree); binary composition (application lifecycle, control, persistence). The backend contract and future SVN seam are owned by [15](PRD_15_vcs_backends.md); they may initially live inside the domain crate rather than a separate framework package. Prefer these boundaries over premature extra packages. Native extensions go through a reviewed platform capability; VCS trust and UX policy remain product-owned. Never put branch, account or repository state in MiniCon shared crates.
 
 Use installed Git as the semantic engine. Do not combine a second repository-writing library with CLI mutations in this baseline. Discover Git from a user setting or system search, resolve its executable identity and show version/path in Diagnostics. Minimum baseline is Git 2.43 with capability probes for optional newer behavior; a version number alone is insufficient. Unsupported Git disables affected commands and explains the required capability. Honor user repository settings unless security policy explicitly quarantines execution.
 

@@ -11,7 +11,7 @@ PREFIXES = {
     "01": "PROD", "02": "ARCH", "03": "REPO", "04": "CHANGE",
     "05": "HIST", "06": "REF", "07": "REMOTE", "08": "REC",
     "09": "ADV", "10": "UX", "11": "SEC", "12": "SHIP",
-    "13": "STATE", "14": "QA",
+    "13": "STATE", "14": "QA", "15": "VCS",
 }
 
 
@@ -19,7 +19,7 @@ def main() -> int:
     errors = []
     modules = sorted((ROOT / "prd").glob("PRD_*.md"))
     if len(modules) != len(PREFIXES):
-        errors.append(f"Expected 14 owner modules, found {len(modules)}")
+        errors.append(f"Expected {len(PREFIXES)} owner modules, found {len(modules)}")
     index = (ROOT / "PRD.md").read_text(encoding="utf-8")
     definitions = {}
     numbers = set()
@@ -58,8 +58,8 @@ def main() -> int:
 
     registry = (ROOT / "prd/PRD_14_verification_roadmap.md").read_text(encoding="utf-8")
     registry_rows = re.findall(r"^\| (QA-J\d{2}) ·.*$", registry, re.MULTILINE)
-    if set(registry_rows) != {f"QA-J{i:02d}" for i in range(1, 14)} or len(registry_rows) != 13:
-        errors.append("Journey registry must define QA-J01 through QA-J13 exactly once")
+    if set(registry_rows) != {f"QA-J{i:02d}" for i in range(1, 15)} or len(registry_rows) != 14:
+        errors.append("Journey registry must define QA-J01 through QA-J14 exactly once")
     coverage = set()
     for line in registry.splitlines():
         if not line.startswith("| QA-J"):

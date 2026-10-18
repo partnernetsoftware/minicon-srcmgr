@@ -1,6 +1,6 @@
 # MiniCon SrcMgr
 
-A lightweight, native Git GUI for Windows, macOS and Linux on x86_64 and ARM64, built around reusable MiniCon mechanisms and a consistent desktop design.
+A lightweight, native source-control GUI for Windows, macOS and Linux on x86_64 and ARM64. Git comes first, with an explicit extension boundary for future SVN and other VCS backends. Built around reusable MiniCon mechanisms; scope and resource targets live in the [PRD](PRD.md).
 
 **Current state: requirements baseline; no application has been implemented or released.**
 

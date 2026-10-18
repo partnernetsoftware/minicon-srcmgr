@@ -1,6 +1,6 @@
 # MiniCon SrcMgr — product requirements index
 
-Baseline: **1.0 · 2026-10-18 · specified, not implemented**. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
+Baseline: **1.1 · 2026-10-18 · specified, not implemented**. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
 
 ## Outcome tree DAG
 
@@ -19,7 +19,8 @@ Outcome: understand and change Git repositories confidently through a small nati
 ├── 11 Trust — credentials, executable content and privacy
 ├── 12 Delivery — six OS/ISA cells, packages and updates
 ├── 13 State and control — persistence, command model and automation
-└── 14 Verification — traceability, performance, gates and implementation order
+├── 14 Verification — traceability, performance, gates and implementation order
+└── 15 VCS extension — Git-first capability boundary; future SVN and other backends
 ```
 
 ```mermaid
@@ -35,6 +36,7 @@ flowchart TD
     G --> E["14 Observable evidence"]
     E --> D["12 Exact artifact delivery"]
     O["01 Product boundary"] --> U & E
+    V["15 VCS capabilities: Git now, SVN later"] --> F & P
 ```
 
 ## Governing invariants
@@ -46,6 +48,8 @@ flowchart TD
 5. Cross-architecture means matching native artifacts and independently recorded build/runtime evidence. Compilation alone proves no GUI behavior.
 6. No mandatory service account, telemetry or network for local workflows. Repository-controlled code needs explicit trust.
 7. One fact has one owning PRD. Links express dependencies; acceptance evidence cannot be inferred from documentation completeness.
+8. Git is the initial backend; shared identities, storage and actions preserve a capability boundary for SVN and other VCS without inventing Git semantics for them. The extension contract is owned by 15.
+9. Simple, practical, intuitive workflows and low resource use are release criteria. The lazygit functional comparison is owned by 01, interaction rules by 10 and measurable budgets by 14.
 
 ## Capability ownership
 
@@ -65,6 +69,7 @@ flowchart TD
 | 12 | [Platform and release](prd/PRD_12_platform_delivery.md) | SHIP-* |
 | 13 | [Persistence and control](prd/PRD_13_state_control.md) | STATE-* |
 | 14 | [Verification and roadmap](prd/PRD_14_verification_roadmap.md) | QA-* |
+| 15 | [VCS backend extension](prd/PRD_15_vcs_backends.md) | VCS-* |
 
 ## Reading and change protocol
 
@@ -74,7 +79,7 @@ Read 01 → 02 → 10 for intent and composition; read a behavior owner plus 08/
 
 ## Current frontier
 
-- [v] Requirements baseline: this index and 14 linked owner modules; documentation checks are reproducible through `python scripts/check_docs.py`.
+- [v] Requirements baseline: this index and 15 linked owner modules; documentation checks are reproducible through `python scripts/check_docs.py`.
 - [_] M0 architecture and native capability proofs, especially pixel UI accessibility, subprocess cancellation and fork resolution.
 - [_] M1 local Git vertical slice; M2 team workflow beta; M3 full baseline and six-cell release qualification.
 
