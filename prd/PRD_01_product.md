@@ -1,0 +1,60 @@
+# 01 · Product, users and scope
+
+Parent: [PRD index](../PRD.md). This module owns product intent, milestone membership and scope changes. Status: specified; implementation `[_]`.
+
+## Outcome tree
+
+```text
+Outcome: complete daily Git work without losing context or local work
+├── Read — understand repository state and why a file changed
+├── Prepare — choose exactly what belongs in one commit
+├── Collaborate — move changes between branches and remotes deliberately
+└── Recover — resolve conflicts and understand the limits of undo
+```
+
+```mermaid
+flowchart LR
+    N["New Git user"] --> I["Inspect"]
+    E["Experienced developer"] --> I
+    M["Maintainer across repositories"] --> I
+    I --> P["Prepare a precise commit"] --> C["Collaborate"]
+    C --> R["Recover or continue"] --> I
+```
+
+## Positioning and users
+
+MiniCon SrcMgr is a lightweight native desktop Git client. It combines a clear repository overview, visual history, precise staging and explicit operation recovery. It shares MiniCon's compact layout, semantic themes, keyboard-oriented input and native rendering mechanisms. It does not require MiniCon to be running.
+
+Primary users are individual developers working across several local repositories, contributors learning staged changes and branch integration, and maintainers reviewing histories and managing releases. Windows, macOS and Linux users receive the same operation meanings and equivalent input paths. CPU architecture must not change Git outcomes.
+
+Git is the first and only VCS in this baseline. Hosting services are optional remote endpoints; an online account is not the workspace identity. Local repositories, offline use and externally installed Git are first-class requirements.
+
+## Cumulative milestones and scope
+
+| Milestone | Required product scope | Exit meaning |
+|---|---|---|
+| M0 — feasibility | Shared dependency consumer, native window/input/font/IME/clipboard proof, Git discovery and typed runner, safety/state skeleton, accessibility bridge proof | Architecture viable in all six build cells; native interaction risks identified with runtime receipts, no public product promise |
+| M1 — local alpha | Open/init/organize repositories; scoped settings/ignore; status; whole-file and hunk stage/unstage; commit; paged graph and diff; create/switch branches; local trust and durable settings | Complete local journey including dirty/unborn/detached states; developer artifacts only |
+| M2 — collaboration beta | Clone, remotes and auth; fetch/pull/push; merge and rebase with conflict recovery; tags; stash; basic worktrees; signed commit interaction; English and Simplified Chinese; keyboard and accessibility | Offline local work plus two-user collaboration and restart recovery across six cells; scoped prerelease |
+| M3 — baseline release | Interactive rebase; cherry-pick/revert/reset; line selection; blame/search; submodules/LFS/patches; full worktree operations; Traditional Chinese; all acceptance, performance, signing and package gates | Entire baseline specified here is qualified; public stable release may be proposed |
+
+Later roadmap, excluded from M3: other VCS engines, mandatory cloud synchronization, hosting-specific PR review or issue clients, code editing IDE, semantic merge, AI commit agents, arbitrary plugin execution, terminal multiplexer, background auto-commit, repository backup service, 32-bit/RISC-V targets, a single executable for every architecture, managed Git distribution and automatic Git installation. Opening the user's terminal or editor is supported; embedding the entire MiniCon terminal is deferred.
+
+## Delivery contracts
+
+| ID / leaf | Invariant | Observable evidence | Safe failure | Dependencies | Non-goal |
+|---|---|---|---|---|---|
+| PROD-01 · daily journey | A user can inspect → stage → commit → integrate → push and recover interruption without hidden work loss | QA-J01/J02/J03/J04, fresh-profile journeys | Clear state plus next action; no speculative repair | 03–08, 10–13 | Every Git command exposed |
+| PROD-02 · independence | Local use needs neither account nor network | Offline cold-start and commit journey QA-J01 | Git missing yields setup guidance and settings access | 02, 11 | Bundle Git in M3 |
+| PROD-03 · scope parity | All six targets implement the same baseline meanings | QA-J12 per supported cell | Unqualified cell blocks baseline release | 12, 14 | Emulation as native proof |
+| PROD-04 · usability | Common operations are discoverable with mouse and keyboard | QA-J09 and task study | Focused error keeps selections/drafts | 10 | Training course or IDE |
+
+## Success criteria and measurement
+
+For M2/M3 usability acceptance, run a documented study with at least five participants, including two who do not routinely use Git CLI. At least four complete open → inspect staged versus unstaged → stage one hunk → commit → push to a test remote without facilitator intervention within ten minutes, after a one-minute product introduction. Every participant must locate the active repository/branch and describe the effect of Discard before confirmation. A failure changes UX or scope before release; it is not averaged away by speed.
+
+Performance budgets and workloads are owned by [14](PRD_14_verification_roadmap.md). Measurements are opt-in local studies/benchmarks, never silent user telemetry. Data integrity is a zero-known-loss release gate, not a percentage target.
+
+## Assumptions and change control
+
+The default is an installed Git executable, native Rust UI over MiniCon crates, no browser runtime and no cloud backend. All are product decisions; feasibility of concrete mechanisms is gated in [02](PRD_02_architecture_reuse.md). A milestone may not quietly omit an accepted requirement. Scope changes update this owner, affected acceptance cases and release labeling in one reviewable change. No delivery date is promised before M0 resolves the principal risks.
