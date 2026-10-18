@@ -24,7 +24,7 @@ flowchart LR
 
 ## Required behavior
 
-Open accepts a directory, a file inside a working tree, a linked worktree with a `.git` file, a submodule checkout or a bare repository. Git discovery establishes actual worktree/git/common-dir roots; never assume `.git` is a directory. Bare repositories have history/refs/remotes views and clearly unavailable working-tree actions. An uninitialized submodule is not an empty normal repository. A nested repository is shown as distinct, with parent navigation when known.
+Open accepts a directory, a file inside a working tree, a linked worktree with a `.git` file, a submodule checkout or a bare repository. For unknown existing roots, bounded metadata inspection and the trust decision in [11](PRD_11_security.md) precede Git discovery; candidate metadata never establishes trusted repository identity. After trust, Git discovery establishes actual worktree/git/common-dir roots; never assume `.git` is a directory. Bare repositories have history/refs/remotes views and clearly unavailable working-tree actions. An uninitialized submodule is not an empty normal repository. A nested repository is shown as distinct, with parent navigation when known.
 
 Canonical identities deduplicate aliases while preserving the user's display path. Symlinks, case folding, network mounts and removable media need explicit identity checks rather than string-only normalization. A missing recent repository remains a repairable entry with Locate/Remove; Remove only removes the bookmark. Replacing a path with another repository invalidates snapshots and pending plans. A tab binds a worktree; related worktrees share a visible repository family.
 

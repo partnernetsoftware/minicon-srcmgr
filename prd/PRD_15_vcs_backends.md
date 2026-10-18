@@ -54,7 +54,7 @@ Keep shared scheduling, bounded streams, progress, cancellation and privacy mech
 
 ## Current acceptance and future activation
 
-By M0, exercise the real contract with a minimal inert non-Git fixture: opaque non-OID revision IDs, no staging or push capability, optional property-change data and unavailable remote state. This fixture is a contract check, not an SVN implementation or a second product engine. It must traverse capability routing, snapshot serialization, profile reload and plan rejection through the shared boundaries. Unknown extension fields are preserved or rejected by the versioned schema, never coerced to Git fields. Git behavior tests still require actual Git fixtures under 14.
+By M0, exercise the real domain contract with a minimal inert non-Git fixture: opaque non-OID revision IDs, no staging or push capability, optional property-change data and unavailable remote state. This fixture is a contract check, not an SVN implementation or a second product engine. M0 covers capability routing, snapshot serialization, minimal persisted identity round-trip and plan rejection without requiring GUI/control transport. M1 extends it through the real view/action bindings and profile reload; M2 extends it through the public control schema. Unknown extension fields are preserved or rejected by the versioned schema, never coerced to Git fields. Git behavior tests still require actual Git fixtures under 14.
 
 Before activating a real SVN adapter, add its command/trust matrix, local versus server mutation semantics, properties/locks/externals, authentication, conflict/recovery cases, clean installation prerequisites and native qualification. Other VCS follow the same admission process. No delivery date or backend parity claim is implied.
 

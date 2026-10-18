@@ -20,9 +20,11 @@ stateDiagram-v2
     Queued --> Running: revalidated
     Running --> Waiting: helper / hook / signer
     Waiting --> Running: response
+    Waiting --> Reconciling: cancel / exit / crash
     Running --> Conflicted: Git conflict
     Running --> Reconciling: exit / cancel / crash / timeout
     Conflicted --> Running: continue / skip / abort
+    Queued --> Rejected: expiry / stale / cancelled
     Reconciling --> Completed: actual post-state known
     Reconciling --> Unknown: unresolved result
     Unknown --> Reconciling: observe again
@@ -32,7 +34,9 @@ stateDiagram-v2
 
 ## Mutation gate and risks
 
-An operation plan contains worktree/common-dir identities, action, literal paths/resolved OIDs, observed HEAD/index/content fingerprints, trust generation, risk class, expected effects and recovery limits. Preflight occurs before preview and immediately before execution. A changed target, trust decision or material state invalidates confirmation. A queued job never treats an old confirmation as permission for a different effect.
+An operation plan contains backend/worktree/common-dir identities, action, literal paths/resolved OIDs, observed HEAD/index/content fingerprints, trust generation, risk class, expected effects and recovery limits. Internal GUI plans follow the same expiry/consumption rules as control plans in [13](PRD_13_state_control.md), starting in M1; the control transport itself arrives later. Preflight occurs before preview and immediately before execution. A changed target, trust decision or observed material state invalidates confirmation. A queued job never treats an old confirmation as permission for a different effect.
+
+Freshness checks detect observed changes and Git supplies its native locks/conditional updates; neither creates a global transaction against other tools. Use exact patch baselines and expected-old ref values where supported. Where a native command cannot compare-and-swap all preconditions, disclose and reconcile the race as specified for commits in [04](PRD_04_changes_commits.md); never claim every possible external write is prevented. File mutation guards use content identity and entry/link identity, not timestamps alone. A race detected after a side effect leads to reconciliation rather than automatic destructive rollback.
 
 | Risk class | Examples | Interaction |
 |---|---|---|
@@ -42,7 +46,7 @@ An operation plan contains worktree/common-dir identities, action, literal paths
 | Remote publication/deletion | push, lease rewrite, delete remote ref | Destination/ref preview; lease rewrite and delete require a distinct confirmation |
 | Irrecoverable deletion | remove untracked content, delete worktree files, delete local safety copy | Typed target confirmation and explicit no-guaranteed-recovery warning |
 
-A confirmation is part of the GUI workflow, not a request to the repository owner during this documentation task. No permanent “never warn again” switch for destructive classes. Keyboard Enter cannot confirm while a modal is still receiving its opening keypress; destructive default focus is Cancel.
+No permanent “never warn again” switch for destructive classes. Keyboard Enter cannot confirm while a modal is still receiving its opening keypress; destructive default focus is Cancel. Snapshot/backup creation happens only after a valid confirmation and before its associated destructive write; it is not a side effect of browsing a preview. The user sees whether a durable safety copy exists before proceeding.
 
 ## Conflict center
 
@@ -63,6 +67,8 @@ On startup, journal jobs left running become Needs reconciliation, never success
 Before destructive tracked-content actions, offer a durable safety copy of affected worktree bytes and index intent, including deletions/modes where supported. Recovery storage is outside the repository and must pass free-space/permission/write/read-back checks. If the action depends on a safety copy and storage fails, block it; a separate clearly labeled proceed-without-copy path requires the irreversible confirmation class. Untracked cleanup is previewed file by file and defaults to OS trash where reliably supported, with explicit capability error otherwise; permanent deletion is never a fallback selected silently. Submodules, nested repositories and links are never recursively cleaned by a generic action.
 
 Before ref rewrites, retain an application recovery ref to the old OID and record the operation. Reflog/recovery refs can restore reachable commits, not never-committed bytes or external hook effects. Restore previews current versus recovered state and uses the same gate; do not overwrite new work because an old job has an Undo button. Delete safety records only through storage management under [13](PRD_13_state_control.md). No unlimited durable backup guarantee.
+
+Reserve `refs/srcmgr/recovery/<opaque-operation-id>` for application recovery refs. They remain ordinary local refs: exclude them from default product history/query/push selections and clearly identify them in recovery management. Never issue a broad mirror/all-ref push that publishes them. They can retain otherwise unreachable source objects until explicitly removed; show that storage/privacy consequence. Creation failure blocks the dependent ref rewrite, and restore/delete uses expected old OIDs rather than acting on a display label. Git tools outside this product can still enumerate or publish such refs.
 
 ## Delivery contracts
 

@@ -32,6 +32,8 @@ Pull is a named two-phase flow: fetch, inspect divergence, then fast-forward-onl
 
 Push preview shows destination URL label, local source OID/ref, remote destination ref, creation/deletion, upstream intent and expected non-fast-forward behavior. Default is current branch, not every ref. Missing upstream offers an explicit mapping. Multi-ref push displays each result and partial success; atomic push is optional only when supported. Remote branch deletion is a separate risk action.
 
+Construct explicit reviewed source/destination refspecs; do not let ambient `push.default`, `remote.*.push`, mirror or follow-tags settings add unpreviewed refs. Recovery refs from 08 are never selected automatically. If effective remote settings cannot be overridden safely to match the preview, block and explain rather than execute a broader push. Use noninteractive machine-readable per-ref results and reconcile uncertain remote state; Git/helper progress is not itself proof a ref was updated.
+
 Ordinary force push is excluded. A deliberate rewrite uses `--force-with-lease` with an explicit expected destination OID recorded at the reviewed fetch; background fetch cannot silently update that expectation. On lease mismatch, fetch/review/reconfirm; never retry with bare force. Lease protects against that ref moving, not branch policy or all server-side effects. Server protections/hooks/permissions surface as remote rejection. Cancellation or lost connection may leave remote completion unknown: mark Unknown, query the destination and reconcile before retry. A timed-out push is never automatically replayed.
 
 ## Delivery contracts

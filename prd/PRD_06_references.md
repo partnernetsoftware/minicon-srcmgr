@@ -38,6 +38,8 @@ Rebase shows source commits and new base; default auto-stash is off. Detect a re
 
 Cherry-pick and revert accept an ordered selected sequence; preview direction and order, avoid accidental duplicate selection. Merge commits require explicit mainline parent. Stop at conflicts and retain the remaining sequence. Revert produces new history, not erasure. Reset exposes soft (move HEAD), mixed (HEAD + index), hard (HEAD + index + worktree tracked content) with distinct impact previews; [08](PRD_08_recovery.md) owns safeguards and undo limits. Reset does not imply deletion of all untracked files.
 
+A hard reset can overwrite/remove untracked entries that obstruct target tracked paths ([Git reset behavior](https://git-scm.com/docs/git-reset)). Its preview and safety copy must include those obstructions, not just the current tracked dirty list. If that scope cannot be established safely, block the GUI hard reset rather than promising to preserve every untracked file. Submodule recursion remains off unless separately reviewed under 09.
+
 ## Delivery contracts
 
 | ID / leaf | Invariant | Observable evidence | Safe failure | Dependencies | Non-goal |

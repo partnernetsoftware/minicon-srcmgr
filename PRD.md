@@ -1,6 +1,6 @@
 # MiniCon SrcMgr — product requirements index
 
-Baseline: **1.1 · 2026-10-18 · specified, not implemented**. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
+Baseline: **1.2 · 2026-10-18 · reviewed for M0 implementation handoff; not implemented**. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
 
 ## Outcome tree DAG
 
@@ -74,6 +74,8 @@ flowchart TD
 ## Reading and change protocol
 
 Read 01 → 02 → 10 for intent and composition; read a behavior owner plus 08/11/13 before implementing a mutation; use 14 for implementation sequence and evidence. Requirement tables use invariant / observable evidence / safe failure / dependency / explicit exclusion as delivery contracts. Detailed acceptance clauses in the same owner refine those contracts.
+
+Implementation entry: [M0 handoff and work sequence](plan/implementation-handoff.md). Review findings/disposition are owned by [14](prd/PRD_14_verification_roadmap.md); pending mechanism proofs remain owned by 02. The handoff permits beginning implementation, not declaring all risks resolved or publishing binaries.
 
 `M0`, `M1`, `M2` and `M3` denote cumulative delivery milestones, defined only in [01](prd/PRD_01_product.md). All application requirements start `[_]`. `PASS`, `FAIL`, `BLOCKED` and `NOT-RUN` are evidence verdicts; no verdict currently certifies application behavior.
 
