@@ -194,8 +194,8 @@ The initial MiniCon revision is owned by 02, regardless of newer upstream/siblin
 
 ### Release 0.0.1 (source-level, local)
 
-- `Cargo.toml` already declares `0.0.1` for the workspace. `CHANGELOG.md` records what works, the known limits, and that nothing is published.
-- Created a local annotated tag `v0.0.1` on the commit that adds the changelog. It is not pushed.
+- `Cargo.toml` already declares `0.0.1` for the workspace. The release status, known limits and the unpublished state are recorded in [12](PRD_12_platform_delivery.md#release-001-status).
+- Created a local annotated tag `v0.0.1` on the commit that records the release status in PRD 12. It is not pushed.
 - Not done, and why: no binary is built or distributed (work order: "No binary publication is part of this assignment"); no signing or notarization (PRD 12 requires signing authority and six-cell evidence, neither available here); no push to `origin` or GitHub Release, because that is public and cannot be undone. Publishing needs explicit owner authority.
 - Gate for this release: the full test suite, clippy and the docs check pass at the tagged commit (recorded in the commit's session notes).
 
