@@ -119,6 +119,26 @@ fn the_limit_is_respected() {
 }
 
 #[test]
+fn paging_with_skip_matches_git_log_skip() {
+    let scratch = Scratch::new("paging");
+    let repo = history_repository(&scratch);
+    let profile = scratch.root.join("profile");
+    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+
+    let shown = text(&cli(&profile, &["history", p(&repo), "--skip", "1", "--limit", "2"]));
+    let expected: Vec<String> = oracle(&repo, &["log", "--format=%H", "--skip=1", "--max-count=2"])
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let lines: Vec<&str> = shown.lines().collect();
+    assert_eq!(lines.len(), expected.len(), "{shown}");
+    for (line, id) in lines.iter().zip(&expected) {
+        let short = line[2..].split_whitespace().next().expect("short id");
+        assert!(id.starts_with(short), "{line} is not a prefix of {id}");
+    }
+}
+
+#[test]
 fn an_unborn_branch_has_no_history() {
     let scratch = Scratch::new("unborn");
     let repo = scratch.root.join("repo");

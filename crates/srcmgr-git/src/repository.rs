@@ -337,12 +337,14 @@ pub struct CommitSummary {
     pub subject: String,
 }
 
-/// Lists up to `limit` commits reachable from HEAD, newest first. An unborn
-/// branch has no history and yields an empty list. Records are split on the
-/// ASCII record separator so a subject cannot forge a record boundary.
+/// Lists up to `limit` commits reachable from HEAD, newest first, after the
+/// first `skip` of them. An unborn branch has no history and yields an empty
+/// list. Records are split on the ASCII record separator so a subject cannot
+/// forge a record boundary.
 pub fn log(
     installation: &GitInstallation,
     identity: &RepositoryIdentity,
+    skip: usize,
     limit: usize,
 ) -> Result<Vec<CommitSummary>, GitError> {
     let head = run_mutation(
@@ -360,6 +362,7 @@ pub fn log(
         identity,
         &[
             OsString::from("log"),
+            format!("--skip={skip}").into(),
             format!("--max-count={limit}").into(),
             "--format=%H%x1f%P%x1f%s%x1e".into(),
         ],

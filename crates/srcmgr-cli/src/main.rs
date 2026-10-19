@@ -30,7 +30,7 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>
   minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> create|switch <name>
-  minicon-srcmgr [--profile DIR] [--git EXE] history <worktree> [--limit N]
+  minicon-srcmgr [--profile DIR] [--git EXE] history <worktree> [--skip N] [--limit N]
   minicon-srcmgr [--profile DIR] [--git EXE] ignore <worktree> <path>
   minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> list <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> stage|unstage <path> <number>";
@@ -152,8 +152,17 @@ fn history_command(options: &Options) -> Result<(), String> {
             .ok_or("--limit needs a number")?,
         None => 20,
     };
+    let skip: usize = match options.positional.iter().position(|word| word == "--skip") {
+        Some(position) => options
+            .positional
+            .get(position + 1)
+            .and_then(|word| word.to_str())
+            .and_then(|text| text.parse().ok())
+            .ok_or("--skip needs a number")?,
+        None => 0,
+    };
     let session = open_trusted(options, worktree)?;
-    let commits = srcmgr_git::log(&session.installation, &session.identity, limit)
+    let commits = srcmgr_git::log(&session.installation, &session.identity, skip, limit)
         .map_err(|error| error.to_string())?;
     if commits.is_empty() {
         println!("no commits yet");
