@@ -31,6 +31,7 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> create|switch <name>
   minicon-srcmgr [--profile DIR] [--git EXE] history <worktree> [--skip N] [--limit N]
+  minicon-srcmgr [--profile DIR] setting get|set <key> [value]   (keys: history.limit)
   minicon-srcmgr [--profile DIR] [--git EXE] ignore <worktree> <path>
   minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> list <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> stage|unstage <path> <number>";
@@ -72,6 +73,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "hunk" => hunk_command(&options),
         "ignore" => ignore_command(&options),
         "history" => history_command(&options),
+        "setting" => setting_command(&options),
         _ => Err(USAGE.to_owned()),
     }
 }
@@ -141,6 +143,45 @@ fn branch_command(options: &Options) -> Result<(), String> {
 
 /// `history <worktree> [--limit N]`: a newest-first commit list from HEAD.
 /// Merges are marked `M`. This is a list, not a lane graph.
+const HISTORY_LIMIT_KEY: &str = "history.limit";
+const DEFAULT_HISTORY_LIMIT: usize = 20;
+const MAX_HISTORY_LIMIT: usize = 200;
+
+/// `setting get|set <key> [value]`: app preferences kept in the profile store.
+/// Only the keys listed here are accepted, and each value is validated before
+/// it is written, so a typo cannot silently persist.
+fn setting_command(options: &Options) -> Result<(), String> {
+    let action = options.positional.get(1).and_then(|word| word.to_str()).ok_or(USAGE)?;
+    let key = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
+    if key != HISTORY_LIMIT_KEY {
+        return Err(format!("unknown setting '{key}'; known keys: {HISTORY_LIMIT_KEY}"));
+    }
+    let mut store = open_profile_store(options)?;
+    match action {
+        "get" => match store.get_setting(key).map_err(|error| error.to_string())? {
+            Some(value) => println!("{value}"),
+            None => println!("unset"),
+        },
+        "set" => {
+            let value = options.positional.get(3).and_then(|word| word.to_str()).ok_or(USAGE)?;
+            let limit = parse_history_limit(value)?;
+            store
+                .put_setting(key, &limit.to_string())
+                .map_err(|error| error.to_string())?;
+            println!("{key} = {limit}");
+        }
+        _ => return Err(USAGE.to_owned()),
+    }
+    Ok(())
+}
+
+fn parse_history_limit(text: &str) -> Result<usize, String> {
+    match text.parse::<usize>() {
+        Ok(limit) if (1..=MAX_HISTORY_LIMIT).contains(&limit) => Ok(limit),
+        _ => Err(format!("{HISTORY_LIMIT_KEY} must be a number from 1 to {MAX_HISTORY_LIMIT}")),
+    }
+}
+
 fn history_command(options: &Options) -> Result<(), String> {
     let worktree = worktree_argument(options, 1)?;
     let limit: usize = match options.positional.iter().position(|word| word == "--limit") {
@@ -150,7 +191,15 @@ fn history_command(options: &Options) -> Result<(), String> {
             .and_then(|word| word.to_str())
             .and_then(|text| text.parse().ok())
             .ok_or("--limit needs a number")?,
-        None => 20,
+        // The store is opened only when no --limit is given, so an explicit
+        // limit never waits on the profile lock.
+        None => {
+            let store = open_profile_store(options)?;
+            match store.get_setting(HISTORY_LIMIT_KEY).map_err(|error| error.to_string())? {
+                Some(saved) => parse_history_limit(&saved)?,
+                None => DEFAULT_HISTORY_LIMIT,
+            }
+        }
     };
     let skip: usize = match options.positional.iter().position(|word| word == "--skip") {
         Some(position) => options
