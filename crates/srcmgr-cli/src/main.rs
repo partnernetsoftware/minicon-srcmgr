@@ -25,7 +25,8 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] trust grant|revoke <worktree>
   minicon-srcmgr [--profile DIR] [--git EXE] stage <worktree> <path>...
   minicon-srcmgr [--profile DIR] [--git EXE] unstage <worktree> <path>...
-  minicon-srcmgr [--profile DIR] [--git EXE] commit <worktree> -m <message>
+  minicon-srcmgr [--profile DIR] [--git EXE] commit <worktree> [-m <message>]
+  minicon-srcmgr [--profile DIR] draft <worktree> save -m <message> | show | clear
   minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>
   minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> create|switch <name>";
@@ -60,6 +61,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "stage" => change_paths(&options, Change::Stage),
         "unstage" => change_paths(&options, Change::Unstage),
         "commit" => commit_command(&options),
+        "draft" => draft_command(&options),
         "gui" => gui(&options),
         "diff" => diff_command(&options),
         "branch" => branch_command(&options),
@@ -320,15 +322,23 @@ fn change_paths(options: &Options, change: Change) -> Result<(), String> {
     Ok(())
 }
 
+/// Commits the index. The message comes from `-m` or, when that is absent, from
+/// the saved draft for this repository. A successful commit clears the draft.
+/// A refused commit leaves the draft in place.
 fn commit_command(options: &Options) -> Result<(), String> {
     let worktree = worktree_argument(options, 1)?;
-    let message = options
-        .message
-        .as_ref()
-        .ok_or("commit needs -m <message>")?
-        .to_str()
-        .ok_or("the commit message must be valid UTF-8")?
-        .to_owned();
+    let key = repository_key(worktree)?;
+    let mut store = open_profile_store(options)?;
+    let message = match &options.message {
+        Some(given) => given
+            .to_str()
+            .ok_or("the commit message must be valid UTF-8")?
+            .to_owned(),
+        None => store
+            .get_draft(BACKEND_GIT, &key)
+            .map_err(|error| error.to_string())?
+            .ok_or("commit needs -m <message> or a saved draft")?,
+    };
     if message.trim().is_empty() {
         return Err("the commit message is empty".to_owned());
     }
@@ -340,7 +350,63 @@ fn commit_command(options: &Options) -> Result<(), String> {
     }
     let revision = commit(&session.installation, &session.identity, &message)
         .map_err(|error| error.to_string())?;
+    store
+        .delete_draft(BACKEND_GIT, &key)
+        .map_err(|error| error.to_string())?;
     println!("committed {}", short(revision.token()));
+    Ok(())
+}
+
+const BACKEND_GIT: &str = "git";
+
+/// The repository key used for drafts: the canonical `.git` directory, found
+/// from metadata alone so that saving a draft never runs Git.
+fn repository_key(worktree: &Path) -> Result<String, String> {
+    let canonical = canonical_worktree(worktree)?;
+    let git_dir = git_dir_of(&canonical)?;
+    git_dir
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "the repository path cannot be stored as UTF-8".to_owned())
+}
+
+fn open_profile_store(options: &Options) -> Result<srcmgr_state::ProfileStore, String> {
+    let root = profile_root(options)?;
+    srcmgr_state::ProfileStore::open(&root).map_err(|error| error.to_string())
+}
+
+/// `draft <worktree> save -m <message> | show | clear`. Drafts store text only
+/// and never run Git, so they need no trust grant.
+fn draft_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
+    let key = repository_key(worktree)?;
+    let mut store = open_profile_store(options)?;
+    match action {
+        "save" => {
+            let message = options
+                .message
+                .as_ref()
+                .ok_or("draft save needs -m <message>")?
+                .to_str()
+                .ok_or("the draft must be valid UTF-8")?;
+            store
+                .put_draft(BACKEND_GIT, &key, message)
+                .map_err(|error| error.to_string())?;
+            println!("draft saved");
+        }
+        "show" => match store.get_draft(BACKEND_GIT, &key).map_err(|error| error.to_string())? {
+            Some(message) => print!("{message}"),
+            None => println!("no draft"),
+        },
+        "clear" => {
+            store
+                .delete_draft(BACKEND_GIT, &key)
+                .map_err(|error| error.to_string())?;
+            println!("draft cleared");
+        }
+        _ => return Err(USAGE.to_owned()),
+    }
     Ok(())
 }
 
