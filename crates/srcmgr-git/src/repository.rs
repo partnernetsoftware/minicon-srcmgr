@@ -219,3 +219,49 @@ fn checked_branch_name(
     .map_err(|_| GitError::InvalidName)?;
     Ok(name.to_os_string())
 }
+
+/// The text hunks of one path's diff, each starting at its `@@` line. Index
+/// `0` is the first hunk. The same diff options as [`diff`] apply.
+pub fn hunks(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    path: &OsStr,
+    staged: bool,
+) -> Result<Vec<String>, GitError> {
+    let patch = diff(installation, identity, path, staged)?;
+    crate::hunks::split(&patch)
+        .map(|parts| parts.hunks)
+        .ok_or(GitError::NoHunks)
+}
+
+/// Stages (`reverse == false`, working tree against index) or unstages
+/// (`reverse == true`, index against HEAD) one hunk by zero-based index.
+///
+/// The hunk is applied to the index only (`git apply --cached`); the working
+/// tree is never written. `--recount` lets the hunk apply after its neighbours
+/// were changed.
+pub fn apply_hunk(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    path: &OsStr,
+    index: usize,
+    reverse: bool,
+) -> Result<(), GitError> {
+    let patch = diff(installation, identity, path, reverse)?;
+    let parts = crate::hunks::split(&patch).ok_or(GitError::NoHunks)?;
+    let hunk = parts.hunks.get(index).ok_or(GitError::HunkOutOfRange)?;
+    let mut text = format!("{}{hunk}", parts.header);
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    let mut arguments = vec![
+        OsString::from("apply"),
+        OsString::from("--cached"),
+        OsString::from("--recount"),
+    ];
+    if reverse {
+        arguments.push(OsString::from("-R"));
+    }
+    run_mutation(installation, identity, &arguments, Some(&text))?;
+    Ok(())
+}

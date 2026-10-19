@@ -36,6 +36,10 @@ pub enum GitError {
     UnrepresentableName,
     /// The name is not a valid branch name under Git's rules.
     InvalidName,
+    /// The diff has no text hunks (for example a binary change or no change).
+    NoHunks,
+    /// The requested hunk index is outside the diff's hunks.
+    HunkOutOfRange,
     /// The worktree has no `.git` entry that this slice can read directly.
     NotARepository,
 }
@@ -60,6 +64,8 @@ impl fmt::Display for GitError {
                 write!(formatter, "Git status output record {record} did not match the expected format")
             }
             Self::InvalidName => formatter.write_str("the branch name is not valid"),
+            Self::NoHunks => formatter.write_str("this change has no text hunks to stage"),
+            Self::HunkOutOfRange => formatter.write_str("no hunk has that number"),
             Self::UnrepresentableName => {
                 formatter.write_str("a path or branch name cannot be represented on this platform")
             }

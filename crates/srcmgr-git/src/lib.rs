@@ -9,6 +9,7 @@
 //! currently requires an explicit per-invocation approval flag.
 
 mod error;
+mod hunks;
 mod installation;
 mod repository;
 mod runner;
@@ -19,7 +20,8 @@ use srcmgr_domain::{BackendKind, Capability, CapabilityState, VcsBackend};
 pub use error::GitError;
 pub use installation::{GitInstallation, MINIMUM_GIT, parse_version};
 pub use repository::{
-    RepositoryIdentity, commit, create_branch, diff, locate, read_status, stage, switch_branch, unstage,
+    RepositoryIdentity, apply_hunk, commit, create_branch, diff, hunks, locate, read_status, stage,
+    switch_branch, unstage,
 };
 pub use status::parse_status;
 

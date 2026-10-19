@@ -29,7 +29,9 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] draft <worktree> save -m <message> | show | clear
   minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>
   minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
-  minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> create|switch <name>";
+  minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> create|switch <name>
+  minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> list <path> [--staged]
+  minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> stage|unstage <path> <number>";
 const SCHEMA: &str = "minicon-srcmgr.status/1";
 const TRUST_FILE: &str = "trust.v1";
 
@@ -65,6 +67,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "gui" => gui(&options),
         "diff" => diff_command(&options),
         "branch" => branch_command(&options),
+        "hunk" => hunk_command(&options),
         _ => Err(USAGE.to_owned()),
     }
 }
@@ -126,6 +129,47 @@ fn branch_command(options: &Options) -> Result<(), String> {
             srcmgr_git::switch_branch(&session.installation, &session.identity, name)
                 .map_err(|error| error.to_string())?;
             println!("switched to {}", name.to_string_lossy());
+        }
+        _ => return Err(USAGE.to_owned()),
+    }
+    Ok(())
+}
+
+/// `hunk <worktree> list <path> [--staged]`, or
+/// `hunk <worktree> stage|unstage <path> <number>`. Hunk numbers start at 1.
+/// Staging applies to the index only; unstaging reverses a staged hunk.
+fn hunk_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
+    let path = options.positional.get(3).ok_or(USAGE)?;
+    let session = open_trusted(options, worktree)?;
+    match action {
+        "list" => {
+            let staged = options.positional.iter().any(|word| word == "--staged");
+            let hunks = srcmgr_git::hunks(&session.installation, &session.identity, path, staged)
+                .map_err(|error| error.to_string())?;
+            for (index, hunk) in hunks.iter().enumerate() {
+                println!("hunk {}", index + 1);
+                print!("{hunk}");
+            }
+        }
+        "stage" | "unstage" => {
+            let number: usize = options
+                .positional
+                .get(4)
+                .and_then(|word| word.to_str())
+                .and_then(|text| text.parse().ok())
+                .filter(|number| *number >= 1)
+                .ok_or("give the hunk number, starting at 1")?;
+            srcmgr_git::apply_hunk(
+                &session.installation,
+                &session.identity,
+                path,
+                number - 1,
+                action == "unstage",
+            )
+            .map_err(|error| error.to_string())?;
+            println!("{action}d hunk {number}");
         }
         _ => return Err(USAGE.to_owned()),
     }
