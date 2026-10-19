@@ -32,9 +32,11 @@ The initial MiniCon revision is owned by 02, regardless of newer upstream/siblin
 - Build and test (host Windows, rustc 1.97.0 pinned by `rust-toolchain.toml`): `cargo build --workspace`, `cargo clippy --workspace --all-targets` clean, `cargo test --workspace` 31 tests passing against MinGit 2.56.0.windows.2 through `SRCMGR_TEST_GIT`. The test fixtures are disposable repositories; the release-blocking floor remains Git 2.43.
 - MiniCon dependency: `minicon-core` and `minicon-platform` (feature `contained-process-spawn` only) at commit `5aa3a8a8893b311d07b503f4b0a45e896727f3b9`. The sibling checkout was not modified.
 - Host Git on this machine is 2.42.0.windows.2, below the 2.43 floor. `minicon-srcmgr status` refuses it with the floor message; the fixture suite needs an explicitly supplied supported Git.
-- Demonstrated slice: `minicon-srcmgr status <worktree> --git <exe> --approve-git-execution [--json]` on a disposable repository shows the branch, the modified tracked file and a spaced untracked file.
-- Not yet evidenced: hostile-fixture trust tests (QA-J10), the injection/encoding corpus (QA-J11, non-UTF-8 Unix paths not run on this host), a clean-clone consumer build (ARCH-01/QA-J12), durable state (STATE-*), mutations, and the GUI.
-- Interim control: the `--approve-git-execution` flag is per invocation and not persisted. It stands in for the trust gate until M0-C.
+- M0-C (partial): `srcmgr-state` stores trust grants in an atomically written, owner-only profile file. Each grant covers the canonical `.git` directory plus a SHA-256 fingerprint of the config, `info/attributes`, the worktree `.gitattributes` and `hooks/`. The fingerprint is computed from metadata before any Git command runs. A config with `[include]` cannot be granted. Dependency added for this: `sha2` 0.11 (MiniCon's checksums are not collision-resistant). Still missing: the QA-J10 hostile-fixture suite, persisted SQLite state, and the single-writer lock.
+- M1-A (CLI slice, not GUI): `minicon-srcmgr trust grant|revoke`, `status`, `stage`, `unstage` and `commit -m`. Stage and unstage accept only literal paths that the status read reports as changed. The commit message is passed on stdin, never in argv. Covered by 9 end-to-end tests in `crates/srcmgr-cli/tests/slice.rs`, including the invalidation cases: a changed config, a hook edit, an `include` directive and revocation.
+- Test totals with MinGit 2.56.0 (`SRCMGR_TEST_GIT`): `cargo test --workspace` 43 passing, `cargo clippy --workspace --all-targets` zero warnings.
+- Not yet evidenced: the QA-J11 injection and encoding corpus (non-UTF-8 Unix paths were not run on this Windows host), a clean-clone consumer build (ARCH-01/QA-J12), persisted SQLite state and draft recovery (STATE-*), hunk staging, branches, the GUI (M0-D), and the M1 graph and diff views.
+- The `--approve-git-execution` flag from the first slice has been removed. The durable grant replaces it.
 
 ## Evidence and blocker handling
 
