@@ -229,3 +229,35 @@ fn diff_shows_the_unstaged_and_staged_change_of_a_path() {
     assert!(stdout(&staged).contains("+two"), "{}", stdout(&staged));
     assert!(stdout(&cli(&profile, &["diff", path_str(&repo), "a.txt"])).is_empty());
 }
+
+#[test]
+fn branch_create_and_switch_update_the_status_heading() {
+    let scratch = Scratch::new("branches");
+    let repo = repository(&scratch);
+    let profile = scratch.root.join("profile");
+    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
+
+    let created = cli(&profile, &["branch", path_str(&repo), "create", "feature/x"]);
+    assert!(created.status.success(), "{}", stderr(&created));
+    assert!(stdout(&cli(&profile, &["status", path_str(&repo)])).starts_with("On branch feature/x ("));
+
+    let switched = cli(&profile, &["branch", path_str(&repo), "switch", "main"]);
+    assert!(switched.status.success(), "{}", stderr(&switched));
+    assert!(stdout(&cli(&profile, &["status", path_str(&repo)])).starts_with("On branch main ("));
+}
+
+#[test]
+fn invalid_and_option_like_branch_names_are_refused_before_git_changes_anything() {
+    let scratch = Scratch::new("bad-names");
+    let repo = repository(&scratch);
+    let profile = scratch.root.join("profile");
+    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
+
+    let dotted = cli(&profile, &["branch", path_str(&repo), "create", "bad..name"]);
+    assert!(!dotted.status.success());
+    assert!(stderr(&dotted).contains("not valid"), "{}", stderr(&dotted));
+
+    let option_like = cli(&profile, &["branch", path_str(&repo), "create", "--orphan=x"]);
+    assert!(!option_like.status.success());
+    assert!(stdout(&cli(&profile, &["status", path_str(&repo)])).starts_with("On branch main ("));
+}

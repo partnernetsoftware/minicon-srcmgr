@@ -169,3 +169,53 @@ pub fn diff(
     let output = run_mutation(installation, identity, &arguments, None)?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
+
+/// Creates a branch at HEAD and switches to it. The name is validated by Git's
+/// own rules first, so an invalid or option-like name never reaches `switch`.
+pub fn create_branch(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    name: &OsStr,
+) -> Result<(), GitError> {
+    let name = checked_branch_name(installation, identity, name)?;
+    run_mutation(
+        installation,
+        identity,
+        &[OsString::from("switch"), "-c".into(), name],
+        None,
+    )?;
+    Ok(())
+}
+
+/// Switches the worktree to an existing local branch. Git itself refuses a
+/// switch that would overwrite local changes, and that refusal is returned.
+pub fn switch_branch(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    name: &OsStr,
+) -> Result<(), GitError> {
+    let name = checked_branch_name(installation, identity, name)?;
+    run_mutation(installation, identity, &[OsString::from("switch"), name], None)?;
+    Ok(())
+}
+
+/// Asks Git whether `name` is a valid branch name. Returns it as an owned
+/// `OsString` ready for an argument vector.
+fn checked_branch_name(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    name: &OsStr,
+) -> Result<OsString, GitError> {
+    let text = name.to_str().ok_or(GitError::UnrepresentableName)?;
+    if text.is_empty() || text.starts_with('-') {
+        return Err(GitError::InvalidName);
+    }
+    run_mutation(
+        installation,
+        identity,
+        &[OsString::from("check-ref-format"), "--branch".into(), name.to_os_string()],
+        None,
+    )
+    .map_err(|_| GitError::InvalidName)?;
+    Ok(name.to_os_string())
+}

@@ -27,7 +27,8 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] unstage <worktree> <path>...
   minicon-srcmgr [--profile DIR] [--git EXE] commit <worktree> -m <message>
   minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>
-  minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]";
+  minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
+  minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> create|switch <name>";
 const SCHEMA: &str = "minicon-srcmgr.status/1";
 const TRUST_FILE: &str = "trust.v1";
 
@@ -61,6 +62,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "commit" => commit_command(&options),
         "gui" => gui(&options),
         "diff" => diff_command(&options),
+        "branch" => branch_command(&options),
         _ => Err(USAGE.to_owned()),
     }
 }
@@ -100,6 +102,28 @@ fn entry_diffs(session: &Session, snapshot: &StatusSnapshot) -> Vec<String> {
                 .unwrap_or_else(|error| format!("(diff unavailable: {error})"))
         })
         .collect()
+}
+
+/// `branch <worktree> create <name>` or `branch <worktree> switch <name>`.
+fn branch_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
+    let name = options.positional.get(3).ok_or(USAGE)?;
+    let session = open_trusted(options, worktree)?;
+    match action {
+        "create" => {
+            srcmgr_git::create_branch(&session.installation, &session.identity, name)
+                .map_err(|error| error.to_string())?;
+            println!("created and switched to {}", name.to_string_lossy());
+        }
+        "switch" => {
+            srcmgr_git::switch_branch(&session.installation, &session.identity, name)
+                .map_err(|error| error.to_string())?;
+            println!("switched to {}", name.to_string_lossy());
+        }
+        _ => return Err(USAGE.to_owned()),
+    }
+    Ok(())
 }
 
 /// Prints the textual diff of one path, unstaged by default and staged with

@@ -40,7 +40,8 @@ The initial MiniCon revision is owned by 02, regardless of newer upstream/siblin
 - M0-D (first window, Windows only): `minicon-srcmgr gui <worktree>` opens a native window through MiniCon's `window_host::run_pixel_window`, using `minicon-platform` font masks and `minicon-ui-core` blend kernels. It passes the same trust gate as `status`. Visual evidence: desktop capture of the window over the demo repository showing the branch line, a modified row and an untracked row in the expected tones. The capture is kept in the local scratchpad, not the repository. `srcmgr-ui` has 3 view-model unit tests.
 - Still open for M0-D: keyboard and pointer interaction, layout and scrolling, accessibility on each OS family, IME, DPI beyond one scale check, resource measurements, and the Linux and macOS cells.
 - M1 selected-file diff (first slice): `diff <worktree> <path> [--staged]` runs `git diff` with external diff and textconv disabled. The status window selects rows with the Up and Down keys and shows the selected entry's diff below the list, with hunk, added and removed lines toned differently. Evidence: a desktop capture after Down and Up, showing an untracked row and a modified row with its hunk. Covered by an end-to-end CLI test and 5 view-model tests; the diff view shows at most 200 entries and does not scroll yet.
-- Still open for M1: a scrolling diff view, graph view, hunk staging, branch create and switch, and persisted settings.
+- M1 branch create and switch (CLI only): `branch <worktree> create|switch <name>`. Names go through `git check-ref-format --branch` first, and a leading `-` is refused, so an option-like name never reaches `switch`. Git's own refusal of a switch over local changes is returned unchanged. Covered by two end-to-end tests; the window does not yet offer these actions.
+- Still open for M1: a scrolling diff view, graph view, hunk staging, window controls for branches, and persisted settings.
 
 ## Evidence and blocker handling
 

@@ -34,6 +34,8 @@ pub enum GitError {
     MissingBranchHeader,
     /// A path or branch name cannot be represented on this platform.
     UnrepresentableName,
+    /// The name is not a valid branch name under Git's rules.
+    InvalidName,
     /// The worktree has no `.git` entry that this slice can read directly.
     NotARepository,
 }
@@ -57,6 +59,7 @@ impl fmt::Display for GitError {
             Self::MalformedOutput { record } => {
                 write!(formatter, "Git status output record {record} did not match the expected format")
             }
+            Self::InvalidName => formatter.write_str("the branch name is not valid"),
             Self::UnrepresentableName => {
                 formatter.write_str("a path or branch name cannot be represented on this platform")
             }
