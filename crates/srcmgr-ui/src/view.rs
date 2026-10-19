@@ -32,6 +32,7 @@ pub struct StatusView {
     /// Heading first, then one row per entry (or the clean-tree note).
     pub lines: Vec<Line>,
     entries: usize,
+    heading_lines: usize,
     diffs: Vec<Vec<Line>>,
     selected: usize,
 }
@@ -64,6 +65,7 @@ impl StatusView {
             title: title.into(),
             lines,
             entries: snapshot.entries.len(),
+            heading_lines: 1,
             diffs: Vec::new(),
             selected: 0,
         }
@@ -80,6 +82,29 @@ impl StatusView {
     #[must_use]
     pub const fn entry_count(&self) -> usize {
         self.entries
+    }
+
+    /// Index in `lines` of the first entry row. Heading lines come first.
+    #[must_use]
+    pub const fn first_row_index(&self) -> usize {
+        self.heading_lines
+    }
+
+    /// Adds a muted line under the heading showing the first line of a saved
+    /// draft, so a recovered message is visible before the user commits.
+    #[must_use]
+    pub fn with_draft(mut self, draft: Option<&str>) -> Self {
+        if let Some(text) = draft.and_then(|body| body.lines().next()) {
+            self.lines.insert(
+                self.heading_lines,
+                Line {
+                    tone: Tone::Muted,
+                    text: format!("Draft: {text}"),
+                },
+            );
+            self.heading_lines += 1;
+        }
+        self
     }
 
     #[must_use]
@@ -248,6 +273,21 @@ mod tests {
         view.move_selection(true);
         let tones: Vec<Tone> = view.selected_diff().iter().map(|line| line.tone).collect();
         assert_eq!(tones, vec![Tone::Hunk, Tone::Removed, Tone::Added, Tone::Text]);
+    }
+
+    #[test]
+    fn a_saved_draft_shows_under_the_heading_and_shifts_the_rows() {
+        let mut view = three_entries().with_draft(Some("first line\nsecond"));
+        assert_eq!(view.lines[1], Line { tone: Tone::Muted, text: "Draft: first line".to_owned() });
+        assert_eq!(view.first_row_index(), 2);
+        assert_eq!(view.lines[view.first_row_index()].text, "M. a.txt");
+        view.move_selection(true);
+        assert_eq!(view.lines[view.first_row_index() + view.selected()].text, ".M b.txt");
+    }
+
+    #[test]
+    fn no_draft_leaves_the_view_unchanged() {
+        assert_eq!(three_entries().with_draft(None), three_entries());
     }
 
     #[test]

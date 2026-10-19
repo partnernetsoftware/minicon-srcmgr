@@ -79,7 +79,11 @@ fn gui(options: &Options) -> Result<(), String> {
     let name = worktree
         .file_name()
         .map_or_else(|| "repository".to_owned(), |name| name.to_string_lossy().into_owned());
-    let mut view = StatusView::from_snapshot(&snapshot, format!("MiniCon SrcMgr - {name}"));
+    let key = repository_key(worktree)?;
+    let store = open_profile_store(options)?;
+    let draft = store.get_draft(BACKEND_GIT, &key).map_err(|error| error.to_string())?;
+    let mut view = StatusView::from_snapshot(&snapshot, format!("MiniCon SrcMgr - {name}"))
+        .with_draft(draft.as_deref());
     view.attach_diffs(entry_diffs(&session, &snapshot));
     srcmgr_ui::show(view).map_err(|error| format!("the status window could not be shown: {error}"))
 }

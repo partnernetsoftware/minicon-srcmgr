@@ -181,7 +181,8 @@ impl PixelWindowApplication for StatusWindow {
         let height = frame.height();
         let lines = self.view.lines.clone();
         let title = self.view.title.clone();
-        let selected_row = (self.view.entry_count() > 0).then(|| self.view.selected() + 1);
+        let selected_row =
+            (self.view.entry_count() > 0).then(|| self.view.first_row_index() + self.view.selected());
         let diff = self.view.selected_diff().to_vec();
         let mut canvas = Canvas {
             pixels: frame.pixels_mut(),
