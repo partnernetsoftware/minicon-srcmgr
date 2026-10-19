@@ -1,6 +1,6 @@
 # Implementation handoff · requirements baseline 1.2
 
-Status: `[-]` M0-A foundation and the M0-B Git runner/status slice are implemented; M0-C, M0-D and M1 are not started (see evidence below). Start with [AGENTS.md](../AGENTS.md) and [PRD.md](../PRD.md). This plan sequences work; the linked PRD owners define behavior, scope and acceptance. The completed review disposition lives in [14](../prd/PRD_14_verification_roadmap.md).
+Status: `[-]` M0-A foundation and the M0-B Git runner/status slice are implemented; M0-C (trust and SQLite store, partial), M0-D (first Windows window, partial) and the M1 local slice (status, stage/unstage, commit, whole-hunk staging, ignore, history, branch list/create/switch, the window B-key switch) are implemented in part; the open items are listed under each heading and in the "Still open" lines below (see evidence below). Start with [AGENTS.md](../AGENTS.md) and [PRD.md](../PRD.md). This plan sequences work; the linked PRD owners define behavior, scope and acceptance. The completed review disposition lives in [14](../prd/PRD_14_verification_roadmap.md).
 
 ## First assignment
 
