@@ -35,6 +35,8 @@ pub struct StatusView {
     heading_lines: usize,
     diffs: Vec<Vec<Line>>,
     selected: usize,
+    /// True while a notice line sits under the heading (see `set_notice`).
+    notice: bool,
 }
 
 impl StatusView {
@@ -68,6 +70,7 @@ impl StatusView {
             heading_lines: 1,
             diffs: Vec::new(),
             selected: 0,
+            notice: false,
         }
     }
 
@@ -105,6 +108,22 @@ impl StatusView {
             self.heading_lines += 1;
         }
         self
+    }
+
+    /// Shows a one-line notice under the heading, replacing any earlier one.
+    /// Rows keep their place, so the selection is unchanged.
+    pub fn set_notice(&mut self, text: &str) {
+        let line = Line {
+            tone: Tone::Muted,
+            text: text.to_owned(),
+        };
+        if self.notice {
+            self.lines[self.heading_lines - 1] = line;
+        } else {
+            self.lines.insert(self.heading_lines, line);
+            self.heading_lines += 1;
+            self.notice = true;
+        }
     }
 
     #[must_use]
@@ -288,6 +307,20 @@ mod tests {
     #[test]
     fn no_draft_leaves_the_view_unchanged() {
         assert_eq!(three_entries().with_draft(None), three_entries());
+    }
+
+    #[test]
+    fn a_notice_sits_under_the_heading_and_is_replaced_not_stacked() {
+        let mut view = three_entries();
+        view.move_selection(true);
+        let selected_before = view.selected();
+        view.set_notice("first refusal");
+        view.set_notice("second refusal");
+        assert_eq!(view.lines[1], Line { tone: Tone::Muted, text: "second refusal".to_owned() });
+        assert_eq!(view.first_row_index(), 2);
+        assert_eq!(view.lines[view.first_row_index()].text, "M. a.txt");
+        assert_eq!(view.selected(), selected_before);
+        assert_eq!(view.lines.iter().filter(|line| line.text.contains("refusal")).count(), 1);
     }
 
     #[test]

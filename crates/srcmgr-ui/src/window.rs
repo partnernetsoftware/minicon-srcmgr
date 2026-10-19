@@ -38,8 +38,16 @@ fn colour(tone: Tone) -> u32 {
     }
 }
 
-/// Opens the status window and blocks until the user closes it.
-pub fn show(view: StatusView) -> Result<(), PixelWindowError> {
+/// Switches to the next local branch on behalf of the window and returns the
+/// status view that results. The caller owns trust checks and the Git work;
+/// an error is shown to the user as a notice and leaves the view unchanged.
+pub trait BranchCycler {
+    fn next_branch(&mut self) -> Result<StatusView, String>;
+}
+
+/// Opens the status window and blocks until the user closes it. `B` asks the
+/// cycler for the next branch.
+pub fn show(view: StatusView, cycler: Box<dyn BranchCycler>) -> Result<(), PixelWindowError> {
     let options = PixelWindowOptions::new(
         view.title.clone(),
         LogicalSize {
@@ -47,18 +55,20 @@ pub fn show(view: StatusView) -> Result<(), PixelWindowError> {
             height: 640.0,
         },
     );
-    run_pixel_window(options, Box::new(StatusWindow::new(view)))
+    run_pixel_window(options, Box::new(StatusWindow::new(view, cycler)))
 }
 
 struct StatusWindow {
     view: StatusView,
+    cycler: Box<dyn BranchCycler>,
     glyphs: GlyphCache<(char, u16), Arc<Option<RasterGlyph>>>,
 }
 
 impl StatusWindow {
-    fn new(view: StatusView) -> Self {
+    fn new(view: StatusView, cycler: Box<dyn BranchCycler>) -> Self {
         Self {
             view,
+            cycler,
             glyphs: GlyphCache::with_capacity(GLYPH_CACHE_ENTRIES),
         }
     }
@@ -156,6 +166,12 @@ impl PixelWindowApplication for StatusWindow {
                     if self.view.selected() != before {
                         window.request_redraw();
                     }
+                } else if is_branch_key(&key) {
+                    match self.cycler.next_branch() {
+                        Ok(next) => self.view = next,
+                        Err(message) => self.view.set_notice(&message),
+                    }
+                    window.request_redraw();
                 }
                 Ok(PixelWindowDirective::Continue)
             }
@@ -232,6 +248,14 @@ impl PixelWindowApplication for StatusWindow {
     ) -> Result<PixelWindowDirective, PixelWindowError> {
         Ok(PixelWindowDirective::Wait)
     }
+}
+
+/// True for a press of the `B` key, with or without Shift.
+fn is_branch_key(key: &NormalizedKeyEvent) -> bool {
+    if key.state != KeyPressState::Pressed {
+        return false;
+    }
+    matches!(&key.logical, LogicalKey::Character(text) if text == "b" || text == "B")
 }
 
 /// `Some(true)` for Down, `Some(false)` for Up, and `None` for any other key

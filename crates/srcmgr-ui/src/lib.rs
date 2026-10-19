@@ -7,4 +7,4 @@ mod view;
 mod window;
 
 pub use view::{Line, StatusView, Tone};
-pub use window::show;
+pub use window::{BranchCycler, show};
