@@ -6,7 +6,9 @@
 //! is never modified by this crate.
 
 mod profile;
+mod store;
 mod trust;
 
 pub use profile::{default_root, write_atomic};
+pub use store::{ProfileStore, SCHEMA_VERSION, StoreError};
 pub use trust::{Grant, TrustError, TrustStore, fingerprint};

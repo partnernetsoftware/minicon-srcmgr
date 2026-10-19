@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 sha2.workspace = true
+rusqlite.workspace = true
 
 [lints]
 workspace = true

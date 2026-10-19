@@ -29,6 +29,8 @@ srcmgr-state = { path = "crates/srcmgr-state" }
 srcmgr-ui = { path = "crates/srcmgr-ui" }
 # Trust fingerprints need a collision-resistant hash; MiniCon checksums are not one.
 sha2 = { version = "0.11", default-features = false }
+# Durable profile state (PRD 13). Bundled SQLite gives consistent native builds.
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
