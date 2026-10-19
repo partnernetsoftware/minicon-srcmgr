@@ -16,6 +16,7 @@ srcmgr-domain.workspace = true
 srcmgr-git.workspace = true
 minicon-core.workspace = true
 srcmgr-state.workspace = true
+srcmgr-ui.workspace = true
 
 [lints]
 workspace = true

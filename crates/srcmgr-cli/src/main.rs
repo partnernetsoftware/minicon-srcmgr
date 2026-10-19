@@ -18,13 +18,15 @@ use srcmgr_domain::{
 };
 use srcmgr_git::{GitBackend, GitInstallation, RepositoryIdentity, commit, locate, read_status, stage, unstage};
 use srcmgr_state::{TrustStore, default_root, fingerprint};
+use srcmgr_ui::StatusView;
 
 const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] status <worktree> [--json]
   minicon-srcmgr [--profile DIR] trust grant|revoke <worktree>
   minicon-srcmgr [--profile DIR] [--git EXE] stage <worktree> <path>...
   minicon-srcmgr [--profile DIR] [--git EXE] unstage <worktree> <path>...
-  minicon-srcmgr [--profile DIR] [--git EXE] commit <worktree> -m <message>";
+  minicon-srcmgr [--profile DIR] [--git EXE] commit <worktree> -m <message>
+  minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>";
 const SCHEMA: &str = "minicon-srcmgr.status/1";
 const TRUST_FILE: &str = "trust.v1";
 
@@ -56,8 +58,23 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "stage" => change_paths(&options, Change::Stage),
         "unstage" => change_paths(&options, Change::Unstage),
         "commit" => commit_command(&options),
+        "gui" => gui(&options),
         _ => Err(USAGE.to_owned()),
     }
+}
+
+/// Shows the status in a native window. It goes through the same trust gate
+/// as `status`, so the window never reads a repository without a grant.
+fn gui(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let session = open_trusted(options, worktree)?;
+    let snapshot = read_status(&session.installation, &session.identity, Generation(1))
+        .map_err(|error| error.to_string())?;
+    let name = worktree
+        .file_name()
+        .map_or_else(|| "repository".to_owned(), |name| name.to_string_lossy().into_owned());
+    let view = StatusView::from_snapshot(&snapshot, format!("MiniCon SrcMgr - {name}"));
+    srcmgr_ui::show(view).map_err(|error| format!("the status window could not be shown: {error}"))
 }
 
 fn parse(arguments: Vec<OsString>) -> Result<Options, String> {
@@ -186,16 +203,16 @@ fn trust(options: &Options) -> Result<(), String> {
             let digest = fingerprint(&git_dir, &worktree).map_err(|error| error.to_string())?;
             store.grant(git_dir.clone(), digest.clone());
             store.save().map_err(|error| error.to_string())?;
-            println!("trusted {} (fingerprint {})", git_dir.display(), &digest[..12]);
+            println!("trusted {} (fingerprint {})", display_path(&git_dir), &digest[..12]);
             println!("hooks, filters and helpers configured there may now run as you; re-grant after any change");
         }
         "revoke" => {
             let removed = store.revoke(&git_dir);
             store.save().map_err(|error| error.to_string())?;
             if removed {
-                println!("revoked trust for {}", git_dir.display());
+                println!("revoked trust for {}", display_path(&git_dir));
             } else {
-                println!("no grant existed for {} (store: {})", git_dir.display(), path.display());
+                println!("no grant existed for {} (store: {})", display_path(&git_dir), path.display());
             }
         }
         _ => return Err(USAGE.to_owned()),
@@ -388,4 +405,11 @@ fn code(kind: ChangeKind) -> char {
         ChangeKind::Untracked => '?',
         ChangeKind::Ignored => '!',
     }
+}
+
+/// Shows a canonical path without the Windows verbatim prefix. Display only;
+/// stored and compared paths keep their canonical form.
+fn display_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    text.strip_prefix(r"\?\").map_or(text.clone(), str::to_owned)
 }
