@@ -30,6 +30,7 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>
   minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> create|switch <name>
+  minicon-srcmgr [--profile DIR] [--git EXE] ignore <worktree> <path>
   minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> list <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> stage|unstage <path> <number>";
 const SCHEMA: &str = "minicon-srcmgr.status/1";
@@ -68,6 +69,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "diff" => diff_command(&options),
         "branch" => branch_command(&options),
         "hunk" => hunk_command(&options),
+        "ignore" => ignore_command(&options),
         _ => Err(USAGE.to_owned()),
     }
 }
@@ -131,6 +133,21 @@ fn branch_command(options: &Options) -> Result<(), String> {
             println!("switched to {}", name.to_string_lossy());
         }
         _ => return Err(USAGE.to_owned()),
+    }
+    Ok(())
+}
+
+/// `ignore <worktree> <path>`: names the rule that ignores the path, or says
+/// that none does. Git decides the match; this only reports it.
+fn ignore_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let path = options.positional.get(2).ok_or(USAGE)?;
+    let session = open_trusted(options, worktree)?;
+    match srcmgr_git::ignore_match(&session.installation, &session.identity, path)
+        .map_err(|error| error.to_string())?
+    {
+        Some(rule) => println!("ignored by {rule}"),
+        None => println!("not ignored"),
     }
     Ok(())
 }

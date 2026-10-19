@@ -265,3 +265,65 @@ pub fn apply_hunk(
     run_mutation(installation, identity, &arguments, Some(&text))?;
     Ok(())
 }
+
+/// The pattern part of a `source:line:pattern` rule. The source may contain a
+/// colon (a Windows drive letter), so the split is at the first colon that is
+/// followed by a line number and another colon.
+fn rule_pattern(rule: &str) -> Option<&str> {
+    rule.match_indices(':').find_map(|(index, _)| {
+        let after = &rule[index + 1..];
+        let (number, rest) = after.split_once(':')?;
+        (!number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())).then_some(rest)
+    })
+}
+
+/// Reports which ignore rule matches `path`, as Git's `check-ignore -v` names
+/// it (`source:line:pattern`). `None` means no rule matches. Matching uses the
+/// repository's own `.gitignore`, `info/exclude` and core settings.
+pub fn ignore_match(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    path: &OsStr,
+) -> Result<Option<String>, GitError> {
+    match run_mutation(
+        installation,
+        identity,
+        &[OsString::from("check-ignore"), "-v".into(), "--".into(), path.to_os_string()],
+        None,
+    ) {
+        Ok(output) => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let rule = text.lines().next().unwrap_or_default().split('\t').next().unwrap_or_default();
+            // With -v, a negated pattern (`!name`) is reported with exit 0 but means
+            // the path is NOT ignored; it names the rule that re-included the path.
+            if rule_pattern(rule).is_some_and(|pattern| pattern.starts_with('!')) {
+                return Ok(None);
+            }
+            Ok(Some(rule.to_owned()))
+        }
+        // check-ignore exits 1 when nothing matches; that is an answer, not a failure.
+        Err(GitError::Exit { code: 1 }) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod ignore_rule_tests {
+    use super::rule_pattern;
+
+    #[test]
+    fn pattern_follows_the_line_number() {
+        assert_eq!(rule_pattern(".gitignore:1:*.log"), Some("*.log"));
+        assert_eq!(rule_pattern(".gitignore:2:!keep.log"), Some("!keep.log"));
+    }
+
+    #[test]
+    fn a_drive_letter_in_the_source_does_not_confuse_the_split() {
+        assert_eq!(rule_pattern("C:/cfg/ignore:4:build/"), Some("build/"));
+    }
+
+    #[test]
+    fn a_pattern_containing_colons_is_kept_whole() {
+        assert_eq!(rule_pattern(".gitignore:3:a:b:c"), Some("a:b:c"));
+    }
+}
