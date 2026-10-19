@@ -50,6 +50,7 @@ flowchart TD
 7. One fact has one owning PRD. Links express dependencies; acceptance evidence cannot be inferred from documentation completeness.
 8. Git is the initial backend; shared identities, storage and actions preserve a capability boundary for SVN and other VCS without inventing Git semantics for them. The extension contract is owned by 15.
 9. Simple, practical, intuitive workflows and low resource use are release criteria. The lazygit functional comparison is owned by 01, interaction rules by 10 and measurable budgets by 14.
+10. SrcMgr is a MiniCon productivity-suite component whose core promise is a small memory footprint, fast UI/UX response and stable operation. Product priority is owned by 01; all three pillars must qualify together under 14 before an affected milestone can pass.
 
 ## Capability ownership
 

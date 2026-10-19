@@ -23,7 +23,21 @@ flowchart LR
 
 ## Positioning and users
 
-MiniCon SrcMgr is a lightweight native desktop source-control client, initially focused on Git. It combines a clear repository overview, visual history, precise staging and explicit operation recovery. It shares MiniCon's compact layout, semantic themes, keyboard-oriented input and native rendering mechanisms. Simple, practical, intuitive operation and low memory/CPU use are product constraints, not optional polish. It does not require MiniCon to be running.
+MiniCon SrcMgr is an important component of the **MiniCon productivity suite**, initially focused on Git. Its core selling points are **a small memory footprint, fast UI/UX response and stable everyday operation**. It combines a clear repository overview, visual history, precise staging and explicit operation recovery, sharing MiniCon's compact layout, semantic themes, keyboard-oriented input and native rendering mechanisms. Simple, practical, intuitive operation and low CPU use sustain those selling points. It runs independently of MiniCon.
+
+## Product promise and delivery priority
+
+The product promise is: **small memory footprint, immediate interaction, dependable source control**. This governs architecture, daily development, feature admission and milestone acceptance. Every delivered workflow must satisfy all three pillars together; passing functionality tests alone does not qualify it for a release.
+
+| Pillar | User outcome | Delivery consequence |
+|---|---|---|
+| Small memory footprint | Keep SrcMgr available throughout the workday alongside other productivity tools | Bound resident/transient state and owned helpers; prove idle, active and repeated-use budgets |
+| Fast UI/UX response | Selection, scrolling, typing and navigation respond while repository work continues | Keep Git/filesystem work off the UI thread; expose progress/cancel and measure real interaction feedback |
+| Stable product | Trust long sessions, failed commands and restarts without unexplained state or lost work | Qualify sustained operation, error recovery, durable acknowledgements and repository integrity |
+
+Quantitative performance and stability gates are owned by [14](PRD_14_verification_roadmap.md). Security and data integrity remain mandatory while optimizing. A feature addition must preserve the existing quality envelope, and a regression in any pillar blocks the affected milestone until fixed or explicitly re-scoped through the existing change protocol. Marketing language remains a target product promise until matching scoped runtime evidence exists.
+
+Suite membership means consistent themes, focus/input conventions, native behavior and quality standards, with distinct product identity and independent lifecycle/state. Users can keep MiniCon and SrcMgr open together without duplicated mandatory runtimes, shared mutable session/config stores or a required companion daemon. Explicit user actions can open the existing terminal/editor integration; suite positioning does not add a launcher, account or cloud synchronization requirement. Shared mechanisms remain governed by 02 and independence by PROD-02.
 
 Primary users are individual developers working across several local repositories, contributors learning staged changes and branch integration, and maintainers reviewing histories and managing releases. Windows, macOS and Linux users receive the same operation meanings and equivalent input paths. CPU architecture must not change Git outcomes.
 
@@ -68,6 +82,7 @@ Later roadmap, excluded from M3: other VCS engines, mandatory cloud synchronizat
 | PROD-03 · scope parity | All six targets implement the same baseline meanings | QA-J12 per supported cell | Unqualified cell blocks baseline release | 12, 14 | Emulation as native proof |
 | PROD-04 · usability | Common operations are discoverable with mouse and keyboard | QA-J09 and task study | Focused error keeps selections/drafts | 10 | Training course or IDE |
 | PROD-05 · functional benchmark | Accepted lazygit-inspired workflows are explicit, simple and milestone-bounded | QA-J09 task comparison against the pinned reference checklist | Simplify the flow or revise scope explicitly; no parity claim without evidence | 04–10, 14 | Clone every feature or deliver a TUI edition |
+| PROD-06 · suite quality promise | Low footprint, fast interaction and stability qualify every delivered workflow, including coexistence with MiniCon | QA-J04/J09/J12 scoped integrity, suite coexistence, responsiveness, resource and sustained-use receipts | Block the affected quality gate; preserve independent startup, drafts and repository state | 02, 08, 10, 12–14 | Claim suite readiness from feature counts or unmeasured prototypes |
 
 ## Success criteria and measurement
 
