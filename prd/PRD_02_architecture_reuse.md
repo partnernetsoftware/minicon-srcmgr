@@ -1,6 +1,6 @@
 # 02 · Architecture and MiniCon reuse
 
-Parent: [PRD index](../PRD.md). Owns source provenance, reuse boundaries, Git adapter design and architecture decisions. Status: design baseline; no dependencies integrated.
+Parent: [PRD index](../PRD.md). Owns source provenance, reuse boundaries, Git adapter design and architecture decisions. Status: design baseline; `minicon-core` and `minicon-platform` (contained process spawn only) are integrated at the pinned revision for the M0 Git slice. Other gates in this owner remain open.
 
 ## Outcome tree
 

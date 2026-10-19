@@ -8,6 +8,6 @@ Status: `[v]` completed with named evidence; `[-]` in progress; `[_]` not starte
 
 Reuse MiniCon platform mechanisms and keep native extensions behind the typed boundary defined in [architecture/reuse](prd/PRD_02_architecture_reuse.md); VCS meaning stays in this product. Follow that owner before adding dependencies or copying code. Never modify the sibling MiniCon checkout as a side effect of this project. Preserve existing user changes and stage explicit reviewed paths. Never publish private paths, credentials or machine identities.
 
-This repository currently contains documentation only. Do not claim build, runtime, signing or release success. Future checks and evidence follow [verification](prd/PRD_14_verification_roadmap.md) and [delivery](prd/PRD_12_platform_delivery.md). Do not fabricate build commands before the implementation supplies them.
+The repository holds the documentation baseline plus the M0-A/M0-B Rust foundation (`crates/`). Only the commands in the handoff's evidence section are real; do not claim build, runtime, signing or release success beyond the recorded evidence. Future checks and evidence follow [verification](prd/PRD_14_verification_roadmap.md) and [delivery](prd/PRD_12_platform_delivery.md).
 
 For implementation, follow [the handoff sequence](plan/implementation-handoff.md) and update this documentation-only status when evidence exists. Product behavior remains owned by the PRD series.

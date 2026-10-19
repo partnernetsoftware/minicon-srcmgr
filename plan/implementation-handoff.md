@@ -1,6 +1,6 @@
 # Implementation handoff · requirements baseline 1.2
 
-Status: `[_]` implementation not started. Start with [AGENTS.md](../AGENTS.md) and [PRD.md](../PRD.md). This plan sequences work; the linked PRD owners define behavior, scope and acceptance. The completed review disposition lives in [14](../prd/PRD_14_verification_roadmap.md).
+Status: `[-]` M0-A foundation and the M0-B Git runner/status slice are implemented; M0-C, M0-D and M1 are not started (see evidence below). Start with [AGENTS.md](../AGENTS.md) and [PRD.md](../PRD.md). This plan sequences work; the linked PRD owners define behavior, scope and acceptance. The completed review disposition lives in [14](../prd/PRD_14_verification_roadmap.md).
 
 ## First assignment
 
@@ -26,6 +26,15 @@ M0 packages establish contracts together; the order is a dependency sequence rat
 Read-only review on 2026-10-18 observed Rust 1.97.0 and a default Git 2.42.0.windows.2. Recheck at implementation start. The latter is below the product floor owned by [02](../prd/PRD_02_architecture_reuse.md): select an independently verified supported Git for product fixtures before claiming adapter qualification. Existing Git can still maintain this documentation repository; do not globally replace it or lower the product floor just to obtain a green run. Record executable identity/version privately in local receipts and redact exported paths.
 
 The initial MiniCon revision is owned by 02, regardless of newer upstream/sibling changes. If it cannot satisfy an essential consumer capability, record a concrete decision with a reviewed published replacement revision and actual feature/fork checks; never use an uncommitted sibling path. The pinned accessibility publication API has known non-Linux gaps, so inspect/resolve this early rather than treating a successful constructor as support.
+
+## Evidence recorded so far
+
+- Build and test (host Windows, rustc 1.97.0 pinned by `rust-toolchain.toml`): `cargo build --workspace`, `cargo clippy --workspace --all-targets` clean, `cargo test --workspace` 31 tests passing against MinGit 2.56.0.windows.2 through `SRCMGR_TEST_GIT`. The test fixtures are disposable repositories; the release-blocking floor remains Git 2.43.
+- MiniCon dependency: `minicon-core` and `minicon-platform` (feature `contained-process-spawn` only) at commit `5aa3a8a8893b311d07b503f4b0a45e896727f3b9`. The sibling checkout was not modified.
+- Host Git on this machine is 2.42.0.windows.2, below the 2.43 floor. `minicon-srcmgr status` refuses it with the floor message; the fixture suite needs an explicitly supplied supported Git.
+- Demonstrated slice: `minicon-srcmgr status <worktree> --git <exe> --approve-git-execution [--json]` on a disposable repository shows the branch, the modified tracked file and a spaced untracked file.
+- Not yet evidenced: hostile-fixture trust tests (QA-J10), the injection/encoding corpus (QA-J11, non-UTF-8 Unix paths not run on this host), a clean-clone consumer build (ARCH-01/QA-J12), durable state (STATE-*), mutations, and the GUI.
+- Interim control: the `--approve-git-execution` flag is per invocation and not persisted. It stands in for the trust gate until M0-C.
 
 ## Evidence and blocker handling
 

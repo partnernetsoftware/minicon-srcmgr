@@ -1,6 +1,6 @@
 # 15 · VCS backend extension: Git first, SVN and others later
 
-Parent: [PRD index](../PRD.md). Owns backend identity, capability dispatch, semantic isolation and the extension acceptance seam. Product delivery scope is owned by [01](PRD_01_product.md). Status: specified; no adapter is implemented.
+Parent: [PRD index](../PRD.md). Owns backend identity, capability dispatch, semantic isolation and the extension acceptance seam. Product delivery scope is owned by [01](PRD_01_product.md). Status: specified; the Git read-only adapter and the inert contract fixture are implemented in the M0 slice. Mutations and the remaining backend seam are not.
 
 ## Outcome tree
 
