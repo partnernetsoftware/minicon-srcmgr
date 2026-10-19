@@ -15,6 +15,7 @@ path = "src/main.rs"
 srcmgr-domain.workspace = true
 srcmgr-git.workspace = true
 minicon-core.workspace = true
+srcmgr-state.workspace = true
 
 [lints]
 workspace = true

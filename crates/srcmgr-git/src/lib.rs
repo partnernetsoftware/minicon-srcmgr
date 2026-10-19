@@ -18,7 +18,7 @@ use srcmgr_domain::{BackendKind, Capability, CapabilityState, VcsBackend};
 
 pub use error::GitError;
 pub use installation::{GitInstallation, MINIMUM_GIT, parse_version};
-pub use repository::{RepositoryIdentity, locate, read_status};
+pub use repository::{RepositoryIdentity, commit, locate, read_status, stage, unstage};
 pub use status::parse_status;
 
 /// Capability routing for an installed Git.

@@ -139,7 +139,7 @@ fn head_state(oid: Option<&[u8]>, name: Option<&[u8]>) -> Result<HeadState, GitE
 
 /// Object names are opaque: the two defined Git object formats are 40 (SHA-1)
 /// and 64 (SHA-256) hexadecimal digits. Nothing else is accepted.
-fn revision(oid: &[u8]) -> Result<RevisionToken, GitError> {
+pub(crate) fn revision(oid: &[u8]) -> Result<RevisionToken, GitError> {
     let valid = matches!(oid.len(), 40 | 64) && oid.iter().all(u8::is_ascii_hexdigit);
     if !valid {
         return Err(GitError::MalformedOutput { record: 0 });

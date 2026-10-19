@@ -78,6 +78,14 @@ impl Limits {
         stderr_bytes: 4 * 1024,
     };
 
+    /// Bounds for a mutation. Hooks may print, so stderr is allowed more room;
+    /// the timeout covers hook execution.
+    pub const MUTATION: Self = Self {
+        timeout: Duration::from_secs(300),
+        stdout_bytes: 1024 * 1024,
+        stderr_bytes: 256 * 1024,
+    };
+
     /// Bounds for a status read. Large repositories still fit; a runaway
     /// stream does not.
     pub const STATUS: Self = Self {
@@ -98,14 +106,20 @@ pub struct Output {
 /// The child inherits the environment except for the removed and pinned
 /// variables above. `current_dir` is the worktree for repository commands and
 /// `None` for the version probe.
-pub(crate) fn run(
+pub(crate) fn run<S: AsRef<OsStr>>(
     executable: &Path,
     current_dir: Option<&Path>,
-    arguments: &[&str],
+    arguments: &[S],
+    input: Option<&str>,
     limits: Limits,
 ) -> Result<Output, GitError> {
     let mut command = ContainedHeadlessCommand::new(executable);
-    command.args(arguments.iter().map(OsStr::new)).capture_output();
+    command
+        .args(arguments.iter().map(|argument| argument.as_ref().to_os_string()))
+        .capture_output();
+    if let Some(text) = input {
+        command.stdin_text(text);
+    }
     if let Some(directory) = current_dir {
         command.current_dir(directory);
     }
@@ -207,7 +221,7 @@ mod tests {
             stderr_bytes: 4 * 1024,
         };
         assert!(matches!(
-            run(&git_executable(), None, &["--version"], limits),
+            run(&git_executable(), None, &["--version"], None, limits),
             Err(GitError::OutputLimit)
         ));
     }
@@ -219,14 +233,15 @@ mod tests {
             ..Limits::PROBE
         };
         assert!(matches!(
-            run(&git_executable(), None, &["--version"], limits),
+            run(&git_executable(), None, &["--version"], None, limits),
             Err(GitError::Timeout)
         ));
     }
 
     #[test]
     fn successful_probe_returns_its_captured_stdout() {
-        let output = run(&git_executable(), None, &["--version"], Limits::PROBE).expect("git --version");
+        let output = run(&git_executable(), None, &["--version"], None, Limits::PROBE)
+            .expect("git --version");
         assert!(output.stdout.starts_with(b"git version "));
     }
 }

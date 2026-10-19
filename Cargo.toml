@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/srcmgr-domain",
     "crates/srcmgr-git",
+    "crates/srcmgr-state",
     "crates/srcmgr-cli",
 ]
 
@@ -21,6 +22,9 @@ minicon-platform = { git = "https://github.com/partnernetsoftware/minicon", rev 
 
 srcmgr-domain = { path = "crates/srcmgr-domain" }
 srcmgr-git = { path = "crates/srcmgr-git" }
+srcmgr-state = { path = "crates/srcmgr-state" }
+# Trust fingerprints need a collision-resistant hash; MiniCon checksums are not one.
+sha2 = { version = "0.11", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

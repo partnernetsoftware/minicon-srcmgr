@@ -28,7 +28,7 @@ impl GitInstallation {
     /// reported version.
     pub fn probe(executable: impl Into<PathBuf>) -> Result<Self, GitError> {
         let executable = executable.into();
-        let output = runner::run(&executable, None, &["--version"], Limits::PROBE)?;
+        let output = runner::run(&executable, None, &["--version"], None, Limits::PROBE)?;
         let version = parse_version(&output.stdout)?;
         Ok(Self { executable, version })
     }

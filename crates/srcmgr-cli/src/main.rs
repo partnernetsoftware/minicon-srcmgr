@@ -1,8 +1,9 @@
-//! `minicon-srcmgr`: read-only command-line slice of the Git adapter.
+//! `minicon-srcmgr`: command-line slice of the Git adapter.
 //!
-//! This is not the GUI. It exists to exercise the real domain contracts, the
-//! supervised Git runner and the JSON codec from MiniCon before the window
-//! layer is built on top of them.
+//! This is not the GUI. It exercises the real domain contracts, the supervised
+//! Git runner, the trust gate and the JSON codec before the window layer is
+//! built on top of them. Every command that reads or writes a repository first
+//! passes the trust gate, which checks only filesystem metadata before Git runs.
 
 use std::env;
 use std::ffi::OsString;
@@ -12,18 +13,28 @@ use std::process::ExitCode;
 
 use minicon_core::json::{self, JsonValue};
 use srcmgr_domain::{
-    Capability, CapabilityState, ChangeKind, Generation, HeadState, StatusSnapshot, VcsBackend,
+    Capability, CapabilityState, ChangeKind, Generation, HeadState, NativePath, StatusSnapshot,
+    VcsBackend,
 };
-use srcmgr_git::{GitBackend, GitInstallation, locate, read_status};
+use srcmgr_git::{GitBackend, GitInstallation, RepositoryIdentity, commit, locate, read_status, stage, unstage};
+use srcmgr_state::{TrustStore, default_root, fingerprint};
 
-const USAGE: &str = "usage: minicon-srcmgr status <worktree> [--git <executable>] [--json] --approve-git-execution";
+const USAGE: &str = "usage:
+  minicon-srcmgr [--profile DIR] [--git EXE] status <worktree> [--json]
+  minicon-srcmgr [--profile DIR] trust grant|revoke <worktree>
+  minicon-srcmgr [--profile DIR] [--git EXE] stage <worktree> <path>...
+  minicon-srcmgr [--profile DIR] [--git EXE] unstage <worktree> <path>...
+  minicon-srcmgr [--profile DIR] [--git EXE] commit <worktree> -m <message>";
 const SCHEMA: &str = "minicon-srcmgr.status/1";
+const TRUST_FILE: &str = "trust.v1";
 
-struct StatusRequest {
-    worktree: PathBuf,
+#[derive(Default)]
+struct Options {
+    profile: Option<PathBuf>,
     git: Option<PathBuf>,
     json: bool,
-    approved: bool,
+    message: Option<OsString>,
+    positional: Vec<OsString>,
 }
 
 fn main() -> ExitCode {
@@ -37,40 +48,123 @@ fn main() -> ExitCode {
 }
 
 fn run(arguments: Vec<OsString>) -> Result<(), String> {
-    let request = parse_status(arguments)?;
-    if !request.approved {
-        return Err(
-            "reading this repository runs Git and any configured hooks or helpers; \
-             pass --approve-git-execution to allow it for this invocation (interim until the trust gate lands)"
-                .to_owned(),
-        );
+    let options = parse(arguments)?;
+    let command = options.positional.first().and_then(|word| word.to_str()).ok_or(USAGE)?;
+    match command {
+        "status" => status(&options),
+        "trust" => trust(&options),
+        "stage" => change_paths(&options, Change::Stage),
+        "unstage" => change_paths(&options, Change::Unstage),
+        "commit" => commit_command(&options),
+        _ => Err(USAGE.to_owned()),
     }
+}
 
-    let executable = match &request.git {
-        Some(path) => path.clone(),
-        None => find_git_on_path().ok_or("no git executable was found on PATH; pass --git")?,
-    };
-    let installation = GitInstallation::probe(&executable).map_err(|error| error.to_string())?;
+fn parse(arguments: Vec<OsString>) -> Result<Options, String> {
+    let mut options = Options::default();
+    let mut arguments = arguments.into_iter();
+    while let Some(argument) = arguments.next() {
+        match argument.to_str() {
+            Some("--profile") => {
+                options.profile = Some(PathBuf::from(arguments.next().ok_or("--profile needs a directory")?));
+            }
+            Some("--git") => {
+                options.git = Some(PathBuf::from(arguments.next().ok_or("--git needs an executable path")?));
+            }
+            Some("--json") => options.json = true,
+            Some("-m") => options.message = Some(arguments.next().ok_or("-m needs a message")?),
+            _ => options.positional.push(argument),
+        }
+    }
+    Ok(options)
+}
+
+fn profile_root(options: &Options) -> Result<PathBuf, String> {
+    options
+        .profile
+        .clone()
+        .or_else(|| env::var_os("MINICON_SRCMGR_PROFILE").map(PathBuf::from))
+        .or_else(default_root)
+        .ok_or_else(|| "no profile directory: pass --profile".to_owned())
+}
+
+fn worktree_argument(options: &Options, index: usize) -> Result<&Path, String> {
+    options
+        .positional
+        .get(index)
+        .map(|value| Path::new(value.as_os_str()))
+        .ok_or_else(|| USAGE.to_owned())
+}
+
+/// Metadata-only: the worktree's `.git` must be a plain directory. A `.git`
+/// file, a link, or a parent-directory repository is refused, never followed.
+fn git_dir_of(worktree: &Path) -> Result<PathBuf, String> {
+    let dotgit = worktree.join(".git");
+    let metadata = std::fs::symlink_metadata(&dotgit)
+        .map_err(|_| "no readable .git directory at this path".to_owned())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("no readable .git directory at this path".to_owned());
+    }
+    dotgit
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve the .git directory: {error}"))
+}
+
+fn canonical_worktree(path: &Path) -> Result<PathBuf, String> {
+    path.canonicalize()
+        .map_err(|error| format!("cannot open the worktree: {error}"))
+}
+
+fn trust_store(options: &Options) -> Result<(PathBuf, TrustStore), String> {
+    let path = profile_root(options)?.join(TRUST_FILE);
+    let store = TrustStore::open(&path).map_err(|error| error.to_string())?;
+    Ok((path, store))
+}
+
+/// Everything a repository-touching command needs after the trust gate passed.
+struct Session {
+    installation: GitInstallation,
+    identity: RepositoryIdentity,
+}
+
+fn open_trusted(options: &Options, worktree: &Path) -> Result<Session, String> {
+    let worktree = canonical_worktree(worktree)?;
+    let git_dir = git_dir_of(&worktree)?;
+    let (_, store) = trust_store(options)?;
+    store
+        .verify(&git_dir, &worktree)
+        .map_err(|error| format!("{error}; run `minicon-srcmgr trust grant <worktree>` after review"))?;
+
+    let installation = probe_git(options)?;
     let backend = GitBackend::new(installation.clone());
     if let CapabilityState::Unavailable { reason } | CapabilityState::Unsupported { reason } =
         backend.capability(Capability::ReadStatus)
     {
         return Err(format!("status is unavailable: {reason}"));
     }
-
-    let worktree = request
-        .worktree
-        .canonicalize()
-        .map_err(|error| format!("cannot open the worktree: {error}"))?;
     refuse_repository_local_executable(&installation, &worktree)?;
 
     let identity = locate(&installation, &worktree).map_err(|error| error.to_string())?;
-    let snapshot =
-        read_status(&installation, &identity, Generation(1)).map_err(|error| error.to_string())?;
+    if identity.common_dir != git_dir {
+        return Err("the repository identity changed after the trust check; nothing was run".to_owned());
+    }
+    Ok(Session { installation, identity })
+}
 
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
-    if request.json {
+fn probe_git(options: &Options) -> Result<GitInstallation, String> {
+    let executable = match &options.git {
+        Some(path) => path.clone(),
+        None => find_git_on_path().ok_or("no git executable was found on PATH; pass --git")?,
+    };
+    GitInstallation::probe(&executable).map_err(|error| error.to_string())
+}
+
+fn status(options: &Options) -> Result<(), String> {
+    let session = open_trusted(options, worktree_argument(options, 1)?)?;
+    let snapshot = read_status(&session.installation, &session.identity, Generation(1))
+        .map_err(|error| error.to_string())?;
+    let mut stdout = io::stdout().lock();
+    if options.json {
         let mut bytes = json::to_vec_pretty(&status_json(&snapshot));
         bytes.push(b'\n');
         stdout.write_all(&bytes).map_err(|error| error.to_string())?;
@@ -82,38 +176,104 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_status(arguments: Vec<OsString>) -> Result<StatusRequest, String> {
-    let mut arguments = arguments.into_iter();
-    match arguments.next() {
-        Some(command) if command == "status" => {}
+fn trust(options: &Options) -> Result<(), String> {
+    let action = options.positional.get(1).and_then(|word| word.to_str()).ok_or(USAGE)?;
+    let worktree = canonical_worktree(worktree_argument(options, 2)?)?;
+    let git_dir = git_dir_of(&worktree)?;
+    let (path, mut store) = trust_store(options)?;
+    match action {
+        "grant" => {
+            let digest = fingerprint(&git_dir, &worktree).map_err(|error| error.to_string())?;
+            store.grant(git_dir.clone(), digest.clone());
+            store.save().map_err(|error| error.to_string())?;
+            println!("trusted {} (fingerprint {})", git_dir.display(), &digest[..12]);
+            println!("hooks, filters and helpers configured there may now run as you; re-grant after any change");
+        }
+        "revoke" => {
+            let removed = store.revoke(&git_dir);
+            store.save().map_err(|error| error.to_string())?;
+            if removed {
+                println!("revoked trust for {}", git_dir.display());
+            } else {
+                println!("no grant existed for {} (store: {})", git_dir.display(), path.display());
+            }
+        }
         _ => return Err(USAGE.to_owned()),
     }
+    Ok(())
+}
 
-    let mut worktree = None;
-    let mut git = None;
-    let mut json = false;
-    let mut approved = false;
-    while let Some(argument) = arguments.next() {
-        if argument == "--git" {
-            git = Some(PathBuf::from(
-                arguments.next().ok_or("--git needs an executable path")?,
-            ));
-        } else if argument == "--json" {
-            json = true;
-        } else if argument == "--approve-git-execution" {
-            approved = true;
-        } else if worktree.is_none() {
-            worktree = Some(PathBuf::from(argument));
-        } else {
-            return Err(USAGE.to_owned());
+#[derive(Clone, Copy)]
+enum Change {
+    Stage,
+    Unstage,
+}
+
+fn change_paths(options: &Options, change: Change) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let paths: Vec<OsString> = options.positional.iter().skip(2).cloned().collect();
+    if paths.is_empty() {
+        return Err(USAGE.to_owned());
+    }
+    let session = open_trusted(options, worktree)?;
+    let snapshot = read_status(&session.installation, &session.identity, Generation(1))
+        .map_err(|error| error.to_string())?;
+
+    // Only paths the status read reports as changed may be targeted; the
+    // paths are literal, never patterns.
+    for path in &paths {
+        let entry = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.path.as_os_str() == path.as_os_str())
+            .ok_or_else(|| format!("not a changed path: {}", NativePath::new(path.clone()).display_label()))?;
+        if matches!(change, Change::Unstage) && entry.staged == ChangeKind::Unmodified {
+            return Err(format!("not staged: {}", entry.path.display_label()));
         }
     }
-    Ok(StatusRequest {
-        worktree: worktree.ok_or(USAGE)?,
-        git,
-        json,
-        approved,
-    })
+
+    match change {
+        Change::Stage => stage(&session.installation, &session.identity, &paths),
+        Change::Unstage => unstage(&session.installation, &session.identity, &paths),
+    }
+    .map_err(|error| error.to_string())?;
+    println!("{} {} path(s)", match change { Change::Stage => "staged", Change::Unstage => "unstaged" }, paths.len());
+    Ok(())
+}
+
+fn commit_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let message = options
+        .message
+        .as_ref()
+        .ok_or("commit needs -m <message>")?
+        .to_str()
+        .ok_or("the commit message must be valid UTF-8")?
+        .to_owned();
+    if message.trim().is_empty() {
+        return Err("the commit message is empty".to_owned());
+    }
+    let session = open_trusted(options, worktree)?;
+    let snapshot = read_status(&session.installation, &session.identity, Generation(1))
+        .map_err(|error| error.to_string())?;
+    if !snapshot.entries.iter().any(|entry| entry.staged != ChangeKind::Unmodified) {
+        return Err("nothing is staged to commit".to_owned());
+    }
+    let revision = commit(&session.installation, &session.identity, &message)
+        .map_err(|error| error.to_string())?;
+    println!("committed {}", short(revision.token()));
+    Ok(())
+}
+
+fn refuse_repository_local_executable(installation: &GitInstallation, worktree: &Path) -> Result<(), String> {
+    let executable = installation
+        .executable()
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve the git executable: {error}"))?;
+    if executable.starts_with(worktree) {
+        return Err("the selected git executable lies inside the repository being inspected; choose an installed Git".to_owned());
+    }
+    Ok(())
 }
 
 /// Finds the first `git` on PATH. Only the process environment is consulted;
@@ -127,19 +287,6 @@ fn find_git_on_path() -> Option<PathBuf> {
             .map(|name| directory.join(name))
             .find(|candidate| candidate.is_file())
     })
-}
-
-/// PRD 11: a Git executable inside the repository under inspection could be
-/// planted by that repository, so it is refused.
-fn refuse_repository_local_executable(installation: &GitInstallation, worktree: &Path) -> Result<(), String> {
-    let executable = installation
-        .executable()
-        .canonicalize()
-        .map_err(|error| format!("cannot resolve the git executable: {error}"))?;
-    if executable.starts_with(worktree) {
-        return Err("the selected git executable lies inside the repository being inspected; choose an installed Git".to_owned());
-    }
-    Ok(())
 }
 
 fn status_json(snapshot: &StatusSnapshot) -> JsonValue {
@@ -184,9 +331,7 @@ fn status_text(snapshot: &StatusSnapshot) -> String {
     let mut text = String::new();
     match &snapshot.head {
         HeadState::Branch { name, revision } => {
-            let at = revision
-                .as_ref()
-                .map_or("no commits yet", |value| short(value.token()));
+            let at = revision.as_ref().map_or("no commits yet", |value| short(value.token()));
             text.push_str(&format!("On branch {name} ({at})\n"));
         }
         HeadState::Detached { revision } => {
