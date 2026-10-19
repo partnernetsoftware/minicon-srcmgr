@@ -327,3 +327,61 @@ mod ignore_rule_tests {
         assert_eq!(rule_pattern(".gitignore:3:a:b:c"), Some("a:b:c"));
     }
 }
+
+/// One commit in the history list.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommitSummary {
+    pub id: RevisionToken,
+    pub parents: Vec<RevisionToken>,
+    /// The subject with control and bidirectional characters escaped for display.
+    pub subject: String,
+}
+
+/// Lists up to `limit` commits reachable from HEAD, newest first. An unborn
+/// branch has no history and yields an empty list. Records are split on the
+/// ASCII record separator so a subject cannot forge a record boundary.
+pub fn log(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    limit: usize,
+) -> Result<Vec<CommitSummary>, GitError> {
+    let head = run_mutation(
+        installation,
+        identity,
+        &[OsString::from("rev-parse"), "--verify".into(), "-q".into(), "HEAD".into()],
+        None,
+    );
+    if matches!(head, Err(GitError::Exit { .. })) {
+        return Ok(Vec::new());
+    }
+    head?;
+    let output = run_mutation(
+        installation,
+        identity,
+        &[
+            OsString::from("log"),
+            format!("--max-count={limit}").into(),
+            "--format=%H%x1f%P%x1f%s%x1e".into(),
+        ],
+        None,
+    )?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.split('\x1e')
+        .map(str::trim)
+        .filter(|record| !record.is_empty())
+        .map(|record| {
+            let mut fields = record.split('\x1f');
+            let (Some(id), Some(parents), Some(subject)) = (fields.next(), fields.next(), fields.next()) else {
+                return Err(GitError::MalformedOutput { record: 0 });
+            };
+            Ok(CommitSummary {
+                id: crate::status::revision(id.as_bytes())?,
+                parents: parents
+                    .split_whitespace()
+                    .map(|parent| crate::status::revision(parent.as_bytes()))
+                    .collect::<Result<_, _>>()?,
+                subject: srcmgr_domain::NativePath::new(subject).display_label(),
+            })
+        })
+        .collect()
+}

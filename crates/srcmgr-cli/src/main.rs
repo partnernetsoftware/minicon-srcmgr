@@ -30,6 +30,7 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>
   minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> create|switch <name>
+  minicon-srcmgr [--profile DIR] [--git EXE] history <worktree> [--limit N]
   minicon-srcmgr [--profile DIR] [--git EXE] ignore <worktree> <path>
   minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> list <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> stage|unstage <path> <number>";
@@ -70,6 +71,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "branch" => branch_command(&options),
         "hunk" => hunk_command(&options),
         "ignore" => ignore_command(&options),
+        "history" => history_command(&options),
         _ => Err(USAGE.to_owned()),
     }
 }
@@ -133,6 +135,32 @@ fn branch_command(options: &Options) -> Result<(), String> {
             println!("switched to {}", name.to_string_lossy());
         }
         _ => return Err(USAGE.to_owned()),
+    }
+    Ok(())
+}
+
+/// `history <worktree> [--limit N]`: a newest-first commit list from HEAD.
+/// Merges are marked `M`. This is a list, not a lane graph.
+fn history_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let limit: usize = match options.positional.iter().position(|word| word == "--limit") {
+        Some(position) => options
+            .positional
+            .get(position + 1)
+            .and_then(|word| word.to_str())
+            .and_then(|text| text.parse().ok())
+            .ok_or("--limit needs a number")?,
+        None => 20,
+    };
+    let session = open_trusted(options, worktree)?;
+    let commits = srcmgr_git::log(&session.installation, &session.identity, limit)
+        .map_err(|error| error.to_string())?;
+    if commits.is_empty() {
+        println!("no commits yet");
+    }
+    for commit in &commits {
+        let marker = if commit.parents.len() > 1 { 'M' } else { ' ' };
+        println!("{marker} {} {}", short(commit.id.token()), commit.subject);
     }
     Ok(())
 }
