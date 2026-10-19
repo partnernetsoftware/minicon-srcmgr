@@ -328,6 +328,48 @@ mod ignore_rule_tests {
     }
 }
 
+/// One local branch. `name` is the exact ref name, safe to pass back to
+/// `switch_branch`; `label` is the same name with controls escaped for display.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BranchSummary {
+    pub name: String,
+    pub label: String,
+    pub current: bool,
+}
+
+/// Lists the local branches in name order. Git marks the checked-out branch.
+/// A branch name that is not UTF-8 is reported as malformed output rather than
+/// shown lossily, because the name could not be passed back to `switch`.
+pub fn local_branches(installation: &GitInstallation, identity: &RepositoryIdentity) -> Result<Vec<BranchSummary>, GitError> {
+    let output = run_mutation(
+        installation,
+        identity,
+        &[
+            OsString::from("for-each-ref"),
+            "--format=%(HEAD) %(refname:lstrip=2)".into(),
+            "--sort=refname".into(),
+            "refs/heads/".into(),
+        ],
+        None,
+    )?;
+    // `%(HEAD)` is always one character ('*' or a space), followed by a space
+    // and the name. A ref name cannot contain a space or a control character, so
+    // one line per branch is unambiguous.
+    let text = String::from_utf8(output.stdout).map_err(|_| GitError::MalformedOutput { record: 0 })?;
+    text.lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let marker = line.get(..1).ok_or(GitError::MalformedOutput { record: 0 })?;
+            let name = line.get(2..).ok_or(GitError::MalformedOutput { record: 0 })?;
+            Ok(BranchSummary {
+                name: name.to_owned(),
+                label: srcmgr_domain::NativePath::new(name).display_label(),
+                current: marker == "*",
+            })
+        })
+        .collect()
+}
+
 /// One commit in the history list.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommitSummary {

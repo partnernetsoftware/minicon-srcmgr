@@ -29,7 +29,7 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] draft <worktree> save -m <message> | show | clear
   minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>
   minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
-  minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> create|switch <name>
+  minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> list|create|switch <name>
   minicon-srcmgr [--profile DIR] [--git EXE] history <worktree> [--skip N] [--limit N]
   minicon-srcmgr [--profile DIR] setting get|set <key> [value]   (keys: history.limit)
   minicon-srcmgr [--profile DIR] [--git EXE] ignore <worktree> <path>
@@ -123,8 +123,16 @@ fn entry_diffs(session: &Session, snapshot: &StatusSnapshot) -> Vec<String> {
 fn branch_command(options: &Options) -> Result<(), String> {
     let worktree = worktree_argument(options, 1)?;
     let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    let name = options.positional.get(3).ok_or(USAGE)?;
     let session = open_trusted(options, worktree)?;
+    if action == "list" {
+        for branch in srcmgr_git::local_branches(&session.installation, &session.identity)
+            .map_err(|error| error.to_string())?
+        {
+            println!("{} {}", if branch.current { '*' } else { ' ' }, branch.label);
+        }
+        return Ok(());
+    }
+    let name = options.positional.get(3).ok_or(USAGE)?;
     match action {
         "create" => {
             srcmgr_git::create_branch(&session.installation, &session.identity, name)
