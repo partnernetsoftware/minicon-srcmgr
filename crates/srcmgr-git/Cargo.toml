@@ -1,0 +1,16 @@
+[package]
+name = "srcmgr-git"
+description = "Git adapter for MiniCon SrcMgr: supervised installed-Git runner and porcelain v2 reader"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+srcmgr-domain.workspace = true
+minicon-core.workspace = true
+minicon-platform.workspace = true
+
+[lints]
+workspace = true

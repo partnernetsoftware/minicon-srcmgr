@@ -1,0 +1,20 @@
+[package]
+name = "srcmgr-cli"
+description = "Command-line front end for MiniCon SrcMgr read-only Git slices"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "minicon-srcmgr"
+path = "src/main.rs"
+
+[dependencies]
+srcmgr-domain.workspace = true
+srcmgr-git.workspace = true
+minicon-core.workspace = true
+
+[lints]
+workspace = true

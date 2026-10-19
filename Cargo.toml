@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/srcmgr-domain",
+    "crates/srcmgr-git",
+    "crates/srcmgr-cli",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+repository = "https://github.com/partnernetsoftware/minicon-srcmgr"
+
+# MiniCon is consumed only at an immutable, published revision (PRD 02, ARCH-01).
+# Never switch these to a path, branch or uncommitted sibling checkout.
+[workspace.dependencies]
+minicon-core = { git = "https://github.com/partnernetsoftware/minicon", rev = "5aa3a8a8893b311d07b503f4b0a45e896727f3b9" }
+minicon-platform = { git = "https://github.com/partnernetsoftware/minicon", rev = "5aa3a8a8893b311d07b503f4b0a45e896727f3b9", default-features = false, features = ["contained-process-spawn"] }
+
+srcmgr-domain = { path = "crates/srcmgr-domain" }
+srcmgr-git = { path = "crates/srcmgr-git" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
