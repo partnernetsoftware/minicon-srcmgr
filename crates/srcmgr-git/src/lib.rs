@@ -18,7 +18,7 @@ use srcmgr_domain::{BackendKind, Capability, CapabilityState, VcsBackend};
 
 pub use error::GitError;
 pub use installation::{GitInstallation, MINIMUM_GIT, parse_version};
-pub use repository::{RepositoryIdentity, commit, locate, read_status, stage, unstage};
+pub use repository::{RepositoryIdentity, commit, diff, locate, read_status, stage, unstage};
 pub use status::parse_status;
 
 /// Capability routing for an installed Git.
@@ -46,17 +46,17 @@ impl VcsBackend for GitBackend {
 
     fn capability(&self, capability: Capability) -> CapabilityState {
         match capability {
-            Capability::ReadStatus => match self.installation.require_supported() {
-                Ok(()) => CapabilityState::Available,
-                Err(_) => CapabilityState::Unavailable {
-                    reason: "installed Git is older than the 2.43 product floor",
-                },
-            },
-            Capability::ReadDiff | Capability::Stage | Capability::Commit | Capability::Push => {
-                CapabilityState::Unsupported {
-                    reason: "not implemented in the current slice",
+            Capability::ReadStatus | Capability::ReadDiff | Capability::Stage | Capability::Commit => {
+                match self.installation.require_supported() {
+                    Ok(()) => CapabilityState::Available,
+                    Err(_) => CapabilityState::Unavailable {
+                        reason: "installed Git is older than the 2.43 product floor",
+                    },
                 }
             }
+            Capability::Push => CapabilityState::Unsupported {
+                reason: "remote publication is not implemented in the current slice",
+            },
         }
     }
 }

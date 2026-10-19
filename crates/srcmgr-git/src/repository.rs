@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use srcmgr_domain::RevisionToken;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -142,4 +142,30 @@ fn run_mutation(
         input,
         Limits::MUTATION,
     )
+}
+
+/// Returns the textual diff of one path, either index-against-HEAD (`staged`)
+/// or working-tree-against-index. External diff and textconv drivers are
+/// disabled, so repository-configured programs do not run for display.
+/// Output is decoded lossily because it is shown, never applied.
+pub fn diff(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    path: &OsStr,
+    staged: bool,
+) -> Result<String, GitError> {
+    let mut arguments = vec![
+        OsString::from("--literal-pathspecs"),
+        OsString::from("diff"),
+        OsString::from("--no-color"),
+        OsString::from("--no-ext-diff"),
+        OsString::from("--no-textconv"),
+    ];
+    if staged {
+        arguments.push(OsString::from("--cached"));
+    }
+    arguments.push(OsString::from("--"));
+    arguments.push(path.to_os_string());
+    let output = run_mutation(installation, identity, &arguments, None)?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }

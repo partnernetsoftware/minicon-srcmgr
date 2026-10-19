@@ -210,3 +210,22 @@ fn revoke_blocks_later_commands() {
     assert!(!output.status.success());
     assert!(stderr(&output).contains("not trusted yet"));
 }
+
+#[test]
+fn diff_shows_the_unstaged_and_staged_change_of_a_path() {
+    let scratch = Scratch::new("diff");
+    let repo = repository(&scratch);
+    let profile = scratch.root.join("profile");
+    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
+
+    fs::write(repo.join("a.txt"), "two\n").expect("modify");
+    let unstaged = cli(&profile, &["diff", path_str(&repo), "a.txt"]);
+    assert!(unstaged.status.success(), "{}", stderr(&unstaged));
+    let text = stdout(&unstaged);
+    assert!(text.contains("-one") && text.contains("+two"), "{text}");
+
+    assert!(cli(&profile, &["stage", path_str(&repo), "a.txt"]).status.success());
+    let staged = cli(&profile, &["diff", path_str(&repo), "a.txt", "--staged"]);
+    assert!(stdout(&staged).contains("+two"), "{}", stdout(&staged));
+    assert!(stdout(&cli(&profile, &["diff", path_str(&repo), "a.txt"])).is_empty());
+}

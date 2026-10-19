@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use minicon_platform::contract::font::RasterGlyph;
+use minicon_platform::contract::input::{KeyPressState, LogicalKey, NamedKey, NormalizedKeyEvent};
 use minicon_platform::font;
 use minicon_platform::window_host::{
     LogicalSize, PixelWindow, PixelWindowApplication, PixelWindowDirective, PixelWindowError,
@@ -18,9 +19,10 @@ use minicon_ui_core::pixel::{blend_mask_xrgb, fill_xrgb_rect};
 use crate::view::{StatusView, Tone};
 
 const BASE_SIZE_PX: f64 = 16.0;
-const MARGIN_PX: i64 = 16;
+const MARGIN_PX: f64 = 16.0;
 const GLYPH_CACHE_ENTRIES: usize = 512;
 const BACKGROUND: u32 = 0x001E_1E1E;
+const SELECTION: u32 = 0x0026_4F78;
 
 fn colour(tone: Tone) -> u32 {
     match tone {
@@ -30,6 +32,9 @@ fn colour(tone: Tone) -> u32 {
         Tone::Staged => 0x00B5_CEA8,
         Tone::Changed => 0x00DC_DCAA,
         Tone::Untracked => 0x0073_C991,
+        Tone::Added => 0x0068_D391,
+        Tone::Removed => 0x00F4_8771,
+        Tone::Hunk => 0x0056_9CD6,
     }
 }
 
@@ -139,11 +144,21 @@ impl PixelWindowApplication for StatusWindow {
 
     fn event(
         &mut self,
-        _window: &PixelWindow,
+        window: &PixelWindow,
         event: PixelWindowEvent,
     ) -> Result<PixelWindowDirective, PixelWindowError> {
         match event {
             PixelWindowEvent::CloseRequested => Ok(PixelWindowDirective::Exit),
+            PixelWindowEvent::Keyboard(key) => {
+                if let Some(forward) = arrow_direction(&key) {
+                    let before = self.view.selected();
+                    self.view.move_selection(forward);
+                    if self.view.selected() != before {
+                        window.request_redraw();
+                    }
+                }
+                Ok(PixelWindowDirective::Continue)
+            }
             _ => Ok(PixelWindowDirective::Continue),
         }
     }
@@ -160,10 +175,14 @@ impl PixelWindowApplication for StatusWindow {
         let line_height = metrics.cell_height.ceil().max(1.0) as i64;
         let ascent = metrics.ascent.round() as i64;
         let advance = metrics.cell_width;
-        let margin = (MARGIN_PX as f64 * scale).round() as i64;
+        let margin = (MARGIN_PX * scale).round() as i64;
 
         let width = frame.width();
         let height = frame.height();
+        let lines = self.view.lines.clone();
+        let title = self.view.title.clone();
+        let selected_row = (self.view.entry_count() > 0).then(|| self.view.selected() + 1);
+        let diff = self.view.selected_diff().to_vec();
         let mut canvas = Canvas {
             pixels: frame.pixels_mut(),
             stride: width,
@@ -171,24 +190,35 @@ impl PixelWindowApplication for StatusWindow {
         };
         fill_xrgb_rect(canvas.pixels, width, 0, 0, width, height, BACKGROUND);
 
-        let lines = self.view.lines.clone();
-        let title = self.view.title.clone();
-        let title_style = Style {
+        let style = |colour: u32| Style {
             size,
-            colour: colour(Tone::Muted),
+            colour,
             advance,
             ascent,
         };
-        self.draw_text(&mut canvas, Pen { x: margin, baseline: margin + ascent }, &title, title_style)?;
+        let title_at = Pen {
+            x: margin,
+            baseline: margin + ascent,
+        };
+        self.draw_text(&mut canvas, title_at, &title, style(colour(Tone::Muted)))?;
+
         let mut baseline = margin + line_height + ascent;
-        for line in &lines {
-            let style = Style {
-                size,
-                colour: colour(line.tone),
-                advance,
-                ascent,
-            };
-            self.draw_text(&mut canvas, Pen { x: margin, baseline }, &line.text, style)?;
+        for (index, line) in lines.iter().enumerate() {
+            if Some(index) == selected_row {
+                let top = baseline - ascent;
+                fill_xrgb_rect(canvas.pixels, width, 0, top.max(0) as u32, width, line_height as u32, SELECTION);
+            }
+            self.draw_text(&mut canvas, Pen { x: margin, baseline }, &line.text, style(colour(line.tone)))?;
+            baseline += line_height;
+        }
+
+        // The diff of the selected entry sits below the list, separated by a gap.
+        baseline += line_height;
+        for line in &diff {
+            if baseline > i64::from(height) {
+                break;
+            }
+            self.draw_text(&mut canvas, Pen { x: margin, baseline }, &line.text, style(colour(line.tone)))?;
             baseline += line_height;
         }
         Ok(PixelWindowDirective::Wait)
@@ -200,5 +230,18 @@ impl PixelWindowApplication for StatusWindow {
         _now: Instant,
     ) -> Result<PixelWindowDirective, PixelWindowError> {
         Ok(PixelWindowDirective::Wait)
+    }
+}
+
+/// `Some(true)` for Down, `Some(false)` for Up, and `None` for any other key
+/// or for a release, so only presses move the selection.
+fn arrow_direction(key: &NormalizedKeyEvent) -> Option<bool> {
+    if key.state != KeyPressState::Pressed {
+        return None;
+    }
+    match &key.logical {
+        LogicalKey::Named(NamedKey::ArrowDown) => Some(true),
+        LogicalKey::Named(NamedKey::ArrowUp) => Some(false),
+        _ => None,
     }
 }

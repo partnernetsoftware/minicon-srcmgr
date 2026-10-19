@@ -26,7 +26,8 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] stage <worktree> <path>...
   minicon-srcmgr [--profile DIR] [--git EXE] unstage <worktree> <path>...
   minicon-srcmgr [--profile DIR] [--git EXE] commit <worktree> -m <message>
-  minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>";
+  minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>
+  minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]";
 const SCHEMA: &str = "minicon-srcmgr.status/1";
 const TRUST_FILE: &str = "trust.v1";
 
@@ -59,6 +60,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "unstage" => change_paths(&options, Change::Unstage),
         "commit" => commit_command(&options),
         "gui" => gui(&options),
+        "diff" => diff_command(&options),
         _ => Err(USAGE.to_owned()),
     }
 }
@@ -73,8 +75,44 @@ fn gui(options: &Options) -> Result<(), String> {
     let name = worktree
         .file_name()
         .map_or_else(|| "repository".to_owned(), |name| name.to_string_lossy().into_owned());
-    let view = StatusView::from_snapshot(&snapshot, format!("MiniCon SrcMgr - {name}"));
+    let mut view = StatusView::from_snapshot(&snapshot, format!("MiniCon SrcMgr - {name}"));
+    view.attach_diffs(entry_diffs(&session, &snapshot));
     srcmgr_ui::show(view).map_err(|error| format!("the status window could not be shown: {error}"))
+}
+
+/// Upper bound on diffs computed for the status window, so a very large change
+/// set cannot stall the first paint.
+const MAX_WINDOW_DIFFS: usize = 200;
+
+/// One diff text per entry, in snapshot order. Untracked files have no index
+/// diff; a failed read is shown in place rather than hidden.
+fn entry_diffs(session: &Session, snapshot: &StatusSnapshot) -> Vec<String> {
+    snapshot
+        .entries
+        .iter()
+        .take(MAX_WINDOW_DIFFS)
+        .map(|entry| {
+            if entry.unstaged == ChangeKind::Untracked {
+                return "(untracked file: no diff against the index)".to_owned();
+            }
+            let staged = entry.unstaged == ChangeKind::Unmodified;
+            srcmgr_git::diff(&session.installation, &session.identity, entry.path.as_os_str(), staged)
+                .unwrap_or_else(|error| format!("(diff unavailable: {error})"))
+        })
+        .collect()
+}
+
+/// Prints the textual diff of one path, unstaged by default and staged with
+/// `--staged`. The same trust gate as `status` applies.
+fn diff_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let path = options.positional.get(2).ok_or(USAGE)?;
+    let staged = options.positional.iter().any(|word| word == "--staged");
+    let session = open_trusted(options, worktree)?;
+    let text = srcmgr_git::diff(&session.installation, &session.identity, path, staged)
+        .map_err(|error| error.to_string())?;
+    print!("{text}");
+    Ok(())
 }
 
 fn parse(arguments: Vec<OsString>) -> Result<Options, String> {
