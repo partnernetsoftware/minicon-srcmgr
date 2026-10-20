@@ -319,3 +319,20 @@ Known limits for 0.0.2: no IME composition beyond committed text, no screen-read
 - Gate at the release commit: `cargo test --workspace` 139 passing with MinGit 2.56.0 through `SRCMGR_TEST_GIT`; `cargo clippy --workspace --all-targets` zero warnings; `python scripts/check_docs.py` PASS.
 - Created a local annotated tag `v0.0.2` on the release commit. It is not pushed, no GitHub Release is created, and no binary is built, because the owner asked for a local release that is not public.
 - Still open at this release: the OPEN items under each package in the 0.0.2 plan, measured responsiveness and resource budgets, and live key-driven verification of the window.
+
+### Release 0.0.3 plan (lazygit alignment, in progress)
+
+Scope is the behaviour in [10](PRD_10_desktop_ux.md#release-003-shell-target-closer-to-lazygit). Each package was implemented as a slice and checked by the cheapest test that proves it; live window checks were limited to the paths that need a real window.
+
+| Package | Scope | Evidence |
+| --- | --- | --- |
+| P1 resize | Redraw on geometry change; the main panel keeps the cursor on screen | Desktop capture after `SetWindowPos` to 720×480: panels and footer re-flow. Not automated. |
+| P2 panels | Status panel; numbers 1–4 as in lazygit | Scene unit test checks titles and panel order; capture shows `[1] Status` and `[2]`–`[4]`. |
+| P3 line staging | Cursor in the main panel; Space stages the cursor line; `v` range within a hunk | `select_lines` has 3 unit tests in `srcmgr-git`; workspace tests cover the cursor, range and the not-a-change notice; a backend test checks the index and that the worktree is unchanged; a live run (Enter, Down, Space) staged exactly the added line, and `git show :notes.txt` matched. |
+| P4 hunk and file keys | `a` stages the hunk; `a` on Files toggles stage-all and unstage-all | Workspace tests; live run: after the line stage, Escape and `a` unstaged everything, as the toggle requires. |
+| P5 branch delete | `d` asks; `y` runs `git branch -d`; `n` and Escape keep the branch | Workspace test for the question and answers; backend test refuses the checked-out branch and deletes a merged one. |
+| P6 list motion | `<`/`>`, PgUp/PgDn, Ctrl+U/Ctrl+D | Workspace paging test covers PgUp/PgDn, Home/End and Ctrl+D through `HalfPageDown`. Ctrl+U and `<`/`>` have no test of their own. |
+
+Gate at this slice: `cargo test --workspace` 154 passing with MinGit 2.56.0 through `SRCMGR_TEST_GIT`; `cargo clippy --workspace --all-targets` zero warnings; `python scripts/check_docs.py` PASS.
+
+Still open for 0.0.3: the workspace version stays `0.0.2` and no tag is created, because the release has not been cut. Not yet measured: key-to-redraw latency and resource budgets. Not yet exercised live: the wheel over the list and the main panel, `<`/`>`, Ctrl+U, and the delete confirmation in the window. Not part of 0.0.3: checkout of a commit, commit files, search and filter, discard, stash, and rebase.

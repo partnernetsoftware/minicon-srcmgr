@@ -167,8 +167,22 @@ pub enum Job {
         staged_view: bool,
         number: usize,
     },
+    /// Stages or unstages the changed lines `lines` of one hunk. `number` starts at
+    /// 1; a line index counts from 0 at the hunk's `@@` line.
+    SetLines {
+        path: NativePath,
+        staged_view: bool,
+        number: usize,
+        lines: Vec<usize>,
+    },
+    /// Stages every changed path, or removes every path from the index.
+    SetAll {
+        stage: bool,
+    },
     Switch(String),
     CreateBranch(String),
+    /// Deletes a local branch that Git considers merged.
+    DeleteBranch(String),
     Commit(String),
     /// Replaces the saved draft; an empty text clears it.
     SaveDraft(String),

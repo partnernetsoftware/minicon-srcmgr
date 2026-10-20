@@ -40,6 +40,8 @@ pub enum GitError {
     NoHunks,
     /// The requested hunk index is outside the diff's hunks.
     HunkOutOfRange,
+    /// The selection holds no changed line, so there is nothing to stage.
+    NoChangedLines,
     /// The worktree has no `.git` entry that this slice can read directly.
     NotARepository,
 }
@@ -66,6 +68,7 @@ impl fmt::Display for GitError {
             Self::InvalidName => formatter.write_str("the branch name is not valid"),
             Self::NoHunks => formatter.write_str("this change has no text hunks to stage"),
             Self::HunkOutOfRange => formatter.write_str("no hunk has that number"),
+            Self::NoChangedLines => formatter.write_str("select at least one changed line"),
             Self::UnrepresentableName => {
                 formatter.write_str("a path or branch name cannot be represented on this platform")
             }

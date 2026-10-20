@@ -86,10 +86,25 @@ Scope: the first native window that can carry the daily local loop without the C
 - **Scrolling.** PgUp and PgDn (or `K` and `J`) scroll the main panel a page at a time; Home and End jump to the ends. Only visible rows are drawn.
 - **Pointer.** A left click on a list row focuses that list and selects the row, which shows its diff or detail the same as moving with `j`/`k`; a click on blank space in a list only focuses it. A left click in the main panel focuses it and selects the hunk under the pointer. The wheel over a list moves its selection, and over the main panel it scrolls the content. Clicks and wheel input are ignored while the commit composer, the branch name field or help is open, so they cannot move the panel under the text being typed. Clicking a branch selects it; checkout stays on Space, so a stray click never changes the working tree.
 - **Responsiveness.** Every Git call runs on one worker thread, which wakes the window when it has an answer. The footer shows "working..." while jobs are pending, and the window keeps handling keys and resizing. A late answer for an earlier selection is dropped. This closes the risk recorded in 14 for the M1 branch switch, which ran on the UI thread.
-- **Deliberate differences from lazygit.** `1`–`3` focus panels by number (the reference page does not list panel keys); `q` quits; `B` (the 0.0.1 next-branch key) is removed in favour of the Branches panel; `r` reloads. Commit from the editor (`C`), line-level staging, and screen modes are not part of 0.0.2.
+- **Deliberate differences from lazygit.** `1`–`3` focus panels by number (superseded in 0.0.3, where the numbers follow lazygit's 1–4); `q` quits; `B` (the 0.0.1 next-branch key) is removed in favour of the Branches panel; `r` reloads. Commit from the editor (`C`), line-level staging, and screen modes are not part of 0.0.2.
 - **Non-goals for 0.0.2.** Graph lanes, interactive rebase, cherry-pick, stash, worktrees, search and filter, remote operations, IME composition beyond committed text, screen-reader bridges, Linux and macOS shells, and any destructive one-key action.
 
 Acceptance is recorded in the work order in [14](PRD_14_verification_roadmap.md#release-002-plan-lazygit-level-minimum). Input feedback and idle resource use are measured against the budgets in 14, not inferred from the layout.
+
+## Release 0.0.3 shell target (closer to lazygit)
+
+0.0.3 aligns the window with lazygit's panel numbers and core keys, and adds line-level staging, which 0.0.2 left out. The 0.0.2 list above keeps its record; where 0.0.3 changes a key, the new rule here wins.
+
+- **Panels.** `1` Status, `2` Files, `3` Branches, `4` Commits, as in lazygit. Status is a one-row panel that shows the current branch and HEAD; it takes focus but has no action. Tab and Shift+Tab cycle Status, the three lists and the main panel. The top line shows only the window title, because the branch now lives in Status.
+- **Main panel cursor.** In a diff, Up and Down (and `j`/`k`) move a cursor over the lines, not the scroll position; the view follows the cursor. The cursor starts on the first changed line. Clicking a line moves the cursor there.
+- **Line staging.** Space stages or unstages the cursor line. `v` starts a range from the cursor and a second `v` ends it; Space then acts on every changed line in the range. A range never crosses into another hunk: lines outside the cursor's hunk are ignored. Space on a line that is not a change says so. Git's index is changed through the same trust gate and index checks as the CLI; the working tree is never written. The patch keeps the unselected removals as context and drops the unselected additions, so the rest of the hunk still applies.
+- **Hunks.** `a` in the main panel stages or unstages the whole hunk under the cursor (lazygit's hunk key). `h` and `l` (or Left and Right) move to the previous or next hunk.
+- **Files.** `a` stages every changed path, untracked files included, when any path has unstaged changes; otherwise it unstages everything. This is lazygit's toggle.
+- **Branches.** `d` asks `Delete branch NAME? y deletes it   n keeps it` in the main panel. `y` runs `git branch -d`, which Git refuses for a branch that is not merged; `n` or Escape keeps it. The checked-out branch is refused before the question. Force delete is not offered.
+- **Movement in lists.** `<` and Home go to the first row, `>` and End to the last. PgUp and PgDn (`K` and `J`) move a page, and Ctrl+U and Ctrl+D move half a page, in lists and in the main panel.
+- **Mouse.** The 0.0.2 pointer rules still apply. A click on a line in the main panel moves the cursor there and selects its hunk.
+- **Resize.** The window redraws at the new size when it is resized, including the end of an interactive resize. The main panel keeps the cursor on screen after a resize.
+- **Deliberate differences from lazygit.** Checkout of a commit, commit files under the commit list, search and filter, discard, stash, rebase and the merge-from-branch actions are not part of 0.0.3. `B` stays removed, `r` reloads, and `q` quits. Changes that would discard work have no one-key shortcut; they need the confirmation the Branches panel uses.
 
 ## Delivery contracts
 

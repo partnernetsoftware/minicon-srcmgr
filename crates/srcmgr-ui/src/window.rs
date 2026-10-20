@@ -20,7 +20,7 @@ use minicon_ui_core::GlyphCache;
 use minicon_ui_core::pixel::{blend_mask_xrgb, fill_xrgb_rect};
 
 use crate::model::{Backend, Job, Line, Reply, Snapshot, Tone, short};
-use crate::workspace::{Effect, Key, Pane, PromptKind, Workspace};
+use crate::workspace::{Confirm, Effect, Key, Pane, PromptKind, Workspace};
 
 const BASE_SIZE_PX: f64 = 16.0;
 const MARGIN_PX: f64 = 12.0;
@@ -34,18 +34,21 @@ const SELECTION: u32 = 0x0026_4F78;
 const SELECTION_DIM: u32 = 0x0033_3740;
 const MUTED_TEXT: u32 = 0x0080_8080;
 
-const HELP_LINES: [&str; 11] = [
-    "1 2 3        focus Files, Branches or Commits",
+const HELP_LINES: &[&str] = &[
+    "1 2 3 4      focus Status, Files, Branches or Commits",
     "Tab          next pane (Shift+Tab previous)",
-    "Up/Down j/k  move in the list, or scroll the main panel",
+    "Up/Down j/k  move in a list, or the cursor in the main panel",
+    "PgUp/PgDn    page (K / J too); Ctrl+U / Ctrl+D half page",
+    "< and >      first and last row; Home and End do the same",
     "Enter        move into the main panel; Esc goes back",
     "Space        stage or unstage a file; checkout a branch",
-    "             in the main panel: stage or unstage the hunk",
+    "             main panel: stage or unstage the cursor line",
+    "v            main panel: start or end a range of lines",
+    "a            stage or unstage all (Files); stage the hunk",
     "h / l        previous or next hunk in the main panel",
-    "PgUp/PgDn    scroll the main panel (K / J too); Home, End",
     "c            commit: Ctrl+Enter commits, Esc keeps the draft",
-    "n            new branch (Branches panel); r reloads",
-    "?            this help; q or Ctrl+C quits",
+    "n / d        new branch / delete branch (Branches panel)",
+    "r            reload;  ?  this help;  q or Ctrl+C quits",
 ];
 
 fn colour(tone: Tone) -> u32 {
@@ -354,6 +357,9 @@ impl PixelWindowApplication for StatusWindow {
         let width = frame.width();
         let height = frame.height();
         self.surface = Some(Surface { width: i64::from(width), height: i64::from(height), grid });
+        // The main panel's visible rows, so the cursor stays on screen after a resize.
+        let main_rows = inner_of(layout(i64::from(width), i64::from(height), grid).main, grid).rows;
+        self.workspace.set_view_rows(main_rows.max(0) as usize);
         let draws = scene(&self.workspace, i64::from(width), i64::from(height), grid, self.pending);
         let mut canvas = Canvas { pixels: frame.pixels_mut(), stride: width, height };
         fill_xrgb_rect(canvas.pixels, width, 0, 0, width, height, BACKGROUND);
@@ -426,7 +432,7 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
     let Grid { row, ascent, margin, .. } = grid;
     let snapshot = workspace.snapshot();
 
-    let header = format!("{}  |  {}", snapshot.title, snapshot.head);
+    let header = snapshot.title.clone();
     draws.push(Draw::Text {
         x: margin,
         baseline: margin + ascent,
@@ -434,11 +440,25 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         colour: colour(Tone::Heading),
     });
 
-    let Layout { footer_top, files: files_rect, branches: branches_rect, commits: commits_rect, main: main_rect } =
-        layout(width, height, grid);
+    let Layout {
+        footer_top,
+        status: status_rect,
+        files: files_rect,
+        branches: branches_rect,
+        commits: commits_rect,
+        main: main_rect,
+    } = layout(width, height, grid);
 
     let focus = workspace.focus();
     let selected = |pane| workspace.selected(pane);
+    list_panel(
+        &mut draws,
+        status_rect,
+        grid,
+        Panel { focused: focus == Pane::Status, title: "[1] Status", empty: "" },
+        &[Line { tone: Tone::Text, text: snapshot.head.clone() }],
+        selected(Pane::Status),
+    );
     let file_rows: Vec<Line> =
         snapshot.files.iter().map(|file| Line { tone: file.tone, text: file.label.clone() }).collect();
     list_panel(
@@ -447,7 +467,7 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         grid,
         Panel {
             focused: focus == Pane::Files,
-            title: &format!("[1] Files ({})", snapshot.files.len()),
+            title: &format!("[2] Files ({})", snapshot.files.len()),
             empty: "Working tree clean",
         },
         &file_rows,
@@ -467,7 +487,7 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         grid,
         Panel {
             focused: focus == Pane::Branches,
-            title: &format!("[2] Branches ({})", snapshot.branches.len()),
+            title: &format!("[3] Branches ({})", snapshot.branches.len()),
             empty: "No local branches",
         },
         &branch_rows,
@@ -487,7 +507,7 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         grid,
         Panel {
             focused: focus == Pane::Commits,
-            title: &format!("[3] Commits ({})", snapshot.commits.len()),
+            title: &format!("[4] Commits ({})", snapshot.commits.len()),
             empty: "No commits yet",
         },
         &commit_rows,
@@ -517,6 +537,7 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Layout {
     footer_top: i64,
+    status: Rect,
     files: Rect,
     branches: Rect,
     commits: Rect,
@@ -532,15 +553,20 @@ fn layout(width: i64, height: i64, grid: Grid) -> Layout {
     let right_x = margin + left_width + gap;
     let right_width = (width - margin - right_x).max(0);
 
-    let avail = (body_height - 2 * gap).max(0);
+    // The Status panel is two rows including its frame title; the other three
+    // share what is left, with a gap between each pair of panels.
+    let status_height = 2 * row + 2 * gap;
+    let status = Rect { x: margin, y: body_top, width: left_width, height: status_height };
+    let lists_top = status.y + status_height + gap;
+    let avail = (body_height - status_height - 3 * gap).max(0);
     let files_height = avail * 50 / 100;
     let branches_height = avail * 25 / 100;
     let commits_height = avail - files_height - branches_height;
-    let files = Rect { x: margin, y: body_top, width: left_width, height: files_height };
+    let files = Rect { x: margin, y: lists_top, width: left_width, height: files_height };
     let branches = Rect { x: margin, y: files.y + files_height + gap, width: left_width, height: branches_height };
     let commits = Rect { x: margin, y: branches.y + branches_height + gap, width: left_width, height: commits_height };
     let main = Rect { x: right_x, y: body_top, width: right_width, height: body_height };
-    Layout { footer_top, files, branches, commits, main }
+    Layout { footer_top, status, files, branches, commits, main }
 }
 
 /// The size and grid of the last frame drawn.
@@ -575,6 +601,7 @@ fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
     let panels = layout(surface.width, surface.height, grid);
     let snapshot = workspace.snapshot();
     let lists = [
+        (Pane::Status, panels.status, 1),
         (Pane::Files, panels.files, snapshot.files.len()),
         (Pane::Branches, panels.branches, snapshot.branches.len()),
         (Pane::Commits, panels.commits, snapshot.commits.len()),
@@ -684,13 +711,20 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         text_panel(draws, rect, grid, true, title, &lines, 0, None);
         return;
     }
+    if let Some(confirm) = workspace.confirm() {
+        let text = match confirm {
+            Confirm::DeleteBranch(name) => format!("Delete branch {name}?   y deletes it   n keeps it"),
+        };
+        text_panel(draws, rect, grid, true, "Confirm", &[Line { tone: Tone::Removed, text }], 0, None);
+        return;
+    }
     let main = workspace.main();
     let title = match workspace.source() {
         Pane::Commits => "Commit",
         Pane::Branches => "Branch",
-        Pane::Files | Pane::Main => "Diff",
+        Pane::Status | Pane::Files | Pane::Main => "Diff",
     };
-    let highlight = if focused { main.hunks.get(workspace.hunk()).copied() } else { None };
+    let highlight = if focused { Some(workspace.selection()) } else { None };
     text_panel(draws, rect, grid, focused, title, &main.lines, workspace.scroll(), highlight);
 }
 
@@ -703,12 +737,12 @@ fn text_panel(
     title: &str,
     lines: &[Line],
     scroll: usize,
-    highlight: Option<usize>,
+    highlight: Option<(usize, usize)>,
 ) {
     let inner = frame(draws, rect, grid, focused, title);
     for (index, line) in lines.iter().enumerate().skip(scroll).take(inner.rows as usize) {
         let top = inner.top + (index - scroll) as i64 * grid.row;
-        if highlight == Some(index) {
+        if highlight.is_some_and(|(first, last)| (first..=last).contains(&index)) {
             draws.push(Draw::Rect {
                 rect: Rect { x: inner.x, y: top, width: inner.width, height: grid.row },
                 colour: SELECTION,
@@ -778,6 +812,9 @@ fn hints(workspace: &Workspace) -> String {
     if workspace.help() {
         return "Esc close help".to_owned();
     }
+    if workspace.confirm().is_some() {
+        return "y confirm   n keep".to_owned();
+    }
     if let Some(prompt) = workspace.prompt() {
         return match prompt.kind() {
             PromptKind::Commit => "Ctrl+Enter commit   Enter new line   Esc save draft".to_owned(),
@@ -785,10 +822,12 @@ fn hints(workspace: &Workspace) -> String {
         };
     }
     let focus = match workspace.focus() {
-        Pane::Files => "Space stage/unstage   c commit   Enter diff",
-        Pane::Branches => "Space checkout   n new branch   Enter details",
+        Pane::Status => "2 3 4 focus lists",
+        Pane::Files => "Space stage/unstage   a all   c commit   Enter diff",
+        Pane::Branches => "Space checkout   n new   d delete   Enter details",
         Pane::Commits => "Enter details",
-        Pane::Main => "Space stage hunk   h/l hunk   PgUp/PgDn scroll   Esc back",
+        Pane::Main if workspace.anchor_set() => "Space stage lines   v end range   a stage hunk   Esc back",
+        Pane::Main => "Space stage line   v range   a stage hunk   h/l hunk   Esc back",
     };
     format!("{focus}   Tab panels   ? help   q quit")
 }
@@ -837,7 +876,12 @@ fn key_of(event: &NormalizedKeyEvent) -> Option<Key> {
         }),
         LogicalKey::Character(text) => {
             if control {
-                return (text == "c" || text == "C").then_some(Key::CtrlC);
+                return match text.as_str() {
+                    "c" | "C" => Some(Key::CtrlC),
+                    "d" | "D" => Some(Key::HalfPageDown),
+                    "u" | "U" => Some(Key::HalfPageUp),
+                    _ => None,
+                };
             }
             let mut characters = text.chars();
             match (characters.next(), characters.next()) {
@@ -913,10 +957,22 @@ mod tests {
         let draws = scene(&workspace, 1040, 680, GRID, 0);
         let all = texts(&draws);
         assert!(all.iter().any(|text| text.contains("MiniCon SrcMgr - demo")));
-        assert!(all.iter().any(|text| text.starts_with("[1] Files (2)")));
-        assert!(all.iter().any(|text| text.starts_with("[2] Branches (1)")));
-        assert!(all.iter().any(|text| text.starts_with("[3] Commits (1)")));
+        assert!(all.iter().any(|text| text.starts_with("[1] Status")));
+        assert!(all.iter().any(|text| text.starts_with("[2] Files (2)")));
+        assert!(all.iter().any(|text| text.starts_with("[3] Branches (1)")));
+        assert!(all.iter().any(|text| text.starts_with("[4] Commits (1)")));
         assert!(all.iter().any(|text| text.contains("Space stage/unstage")));
+    }
+
+    #[test]
+    fn the_status_panel_sits_above_the_lists_and_the_files_hints_show_by_default() {
+        let mut workspace = Workspace::new(snapshot(2));
+        workspace.open();
+        let panels = layout(1040, 680, GRID);
+        assert!(panels.status.y < panels.files.y && panels.files.y < panels.branches.y);
+        assert!(panels.branches.y < panels.commits.y && panels.commits.y + panels.commits.height <= panels.footer_top);
+        let draws = scene(&workspace, 1040, 680, GRID, 0);
+        assert!(texts(&draws).iter().any(|text| text.contains("a all")), "the Files hints show while Files has focus");
     }
 
     #[test]

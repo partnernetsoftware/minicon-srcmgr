@@ -250,7 +250,37 @@ pub fn apply_hunk(
     let patch = diff(installation, identity, path, reverse)?;
     let parts = crate::hunks::split(&patch).ok_or(GitError::NoHunks)?;
     let hunk = parts.hunks.get(index).ok_or(GitError::HunkOutOfRange)?;
-    let mut text = format!("{}{hunk}", parts.header);
+    apply_cached(installation, identity, &format!("{}{hunk}", parts.header), reverse)
+}
+
+/// Stages (or, with `reverse`, unstages) only the changed lines `selected` of one
+/// hunk. Indexes count from 0 at the hunk's `@@` line; see
+/// [`crate::hunks::select_lines`] for how the rest of the hunk is kept. Applies
+/// to the index only, like [`apply_hunk`].
+pub fn apply_lines(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    path: &OsStr,
+    index: usize,
+    selected: &[usize],
+    reverse: bool,
+) -> Result<(), GitError> {
+    let patch = diff(installation, identity, path, reverse)?;
+    let parts = crate::hunks::split(&patch).ok_or(GitError::NoHunks)?;
+    let hunk = parts.hunks.get(index).ok_or(GitError::HunkOutOfRange)?;
+    let chosen = crate::hunks::select_lines(hunk, selected).ok_or(GitError::NoChangedLines)?;
+    apply_cached(installation, identity, &format!("{}{chosen}", parts.header), reverse)
+}
+
+/// Feeds one patch to `git apply --cached`. `--recount` lets it apply after its
+/// neighbours were changed.
+fn apply_cached(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    patch: &str,
+    reverse: bool,
+) -> Result<(), GitError> {
+    let mut text = patch.to_owned();
     if !text.ends_with('\n') {
         text.push('\n');
     }
@@ -263,6 +293,30 @@ pub fn apply_hunk(
         arguments.push(OsString::from("-R"));
     }
     run_mutation(installation, identity, &arguments, Some(&text))?;
+    Ok(())
+}
+
+/// Stages every changed path, untracked files included (`git add -A`).
+pub fn stage_all(installation: &GitInstallation, identity: &RepositoryIdentity) -> Result<(), GitError> {
+    run_mutation(installation, identity, &[OsString::from("add"), OsString::from("-A")], None)?;
+    Ok(())
+}
+
+/// Removes every path from the index, leaving the working tree unchanged.
+pub fn unstage_all(installation: &GitInstallation, identity: &RepositoryIdentity) -> Result<(), GitError> {
+    run_mutation(installation, identity, &[OsString::from("reset"), OsString::from("-q")], None)?;
+    Ok(())
+}
+
+/// Deletes a local branch with `git branch -d`, which refuses a branch whose
+/// commits are not merged. Git also refuses the checked-out branch.
+pub fn delete_branch(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    name: &OsStr,
+) -> Result<(), GitError> {
+    let name = checked_branch_name(installation, identity, name)?;
+    run_mutation(installation, identity, &[OsString::from("branch"), OsString::from("-d"), name], None)?;
     Ok(())
 }
 

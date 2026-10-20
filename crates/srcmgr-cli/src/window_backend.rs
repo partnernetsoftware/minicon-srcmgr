@@ -72,6 +72,36 @@ impl WindowBackend {
                     .map_err(|e| e.to_string())?;
                 Reply::Full(self.snapshot()?)
             }
+            Job::SetLines { path, staged_view, number, lines } => {
+                let index = number.checked_sub(1).ok_or("hunk numbers start at 1")?;
+                let session = open_trusted(&self.options, &self.worktree)?;
+                srcmgr_git::apply_lines(
+                    &session.installation,
+                    &session.identity,
+                    path.as_os_str(),
+                    index,
+                    &lines,
+                    staged_view,
+                )
+                .map_err(|e| e.to_string())?;
+                Reply::Full(self.snapshot()?)
+            }
+            Job::SetAll { stage } => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let result = if stage {
+                    srcmgr_git::stage_all(&session.installation, &session.identity)
+                } else {
+                    srcmgr_git::unstage_all(&session.installation, &session.identity)
+                };
+                result.map_err(|e| e.to_string())?;
+                Reply::Full(self.snapshot()?)
+            }
+            Job::DeleteBranch(name) => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                srcmgr_git::delete_branch(&session.installation, &session.identity, name.as_ref())
+                    .map_err(|e| e.to_string())?;
+                Reply::Full(self.snapshot()?)
+            }
             Job::Switch(name) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
                 srcmgr_git::switch_branch(&session.installation, &session.identity, name.as_ref())
@@ -424,6 +454,43 @@ mod tests {
             number: 0,
         }));
         assert_eq!(text, "hunk numbers start at 1");
+    }
+
+    #[test]
+    fn a_selected_line_stages_only_that_line_and_leaves_the_worktree_alone() {
+        let scratch = Scratch::new("lines");
+        let repo = repository(&scratch.0, "repo");
+        let mut backend = backend(&scratch.0, &repo, true);
+        // Line 2 of the hunk is the added `two`; the removed `one` stays in the index.
+        full(backend.run(Job::SetLines {
+            path: NativePath::new("a.txt"),
+            staged_view: false,
+            number: 1,
+            lines: vec![2],
+        }));
+        let index = Command::new(git_executable())
+            .current_dir(&repo)
+            .args(["show", ":a.txt"])
+            .output()
+            .expect("git");
+        assert_eq!(String::from_utf8_lossy(&index.stdout), "one\ntwo\n");
+        assert_eq!(fs::read_to_string(repo.join("a.txt")).expect("read"), "two\n");
+    }
+
+    #[test]
+    fn deleting_the_checked_out_branch_is_refused_and_a_merged_one_is_deleted() {
+        let scratch = Scratch::new("delete");
+        let repo = repository(&scratch.0, "repo");
+        fixture_git(&repo, &["branch", "old"]);
+        let mut backend = backend(&scratch.0, &repo, true);
+        assert!(!notice(backend.run(Job::DeleteBranch("main".to_owned()))).is_empty());
+        full(backend.run(Job::DeleteBranch("old".to_owned())));
+        let branches = Command::new(git_executable())
+            .current_dir(&repo)
+            .args(["branch", "--list", "old"])
+            .output()
+            .expect("git");
+        assert!(String::from_utf8_lossy(&branches.stdout).trim().is_empty());
     }
 
     #[test]
