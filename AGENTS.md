@@ -11,3 +11,5 @@ Reuse MiniCon platform mechanisms and keep native extensions behind the typed bo
 The repository holds the documentation baseline plus the M0-A/M0-B Rust foundation (`crates/`). Only the commands in the evidence section of [PRD 14](prd/PRD_14_verification_roadmap.md#implementation-work-order-and-evidence) are real; do not claim build, runtime, signing or release success beyond the recorded evidence. Future checks and evidence follow [verification](prd/PRD_14_verification_roadmap.md) and [delivery](prd/PRD_12_platform_delivery.md).
 
 For implementation, follow [the work order](prd/PRD_14_verification_roadmap.md#implementation-work-order-and-evidence) and update this documentation-only status when evidence exists. Product behavior remains owned by the PRD series.
+
+Choose verification by changed behavior, risk and dependency impact under [PRD 14](prd/PRD_14_verification_roadmap.md#risk-based-test-selection-and-stopping). State the minimum check and stopping condition first; reuse unaffected evidence and stop when the selected checks pass without unresolved issues. Do not default to full suites, six-cell matrices or long runs for every change.

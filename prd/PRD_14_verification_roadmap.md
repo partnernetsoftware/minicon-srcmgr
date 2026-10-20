@@ -43,11 +43,36 @@ These are **specified cases, not existing tests**. Every case currently has verd
 | QA-J13 · distribution | SHIP-03/04 | Signature/metadata validation, candidate versus public bytes, wrong-ISA/tamper/replay, failed update/full disk/rollback; exact artifact identities and usable prior version |
 | QA-J14 · backend contract | VCS-01/02/03 | Inert non-Git fixture with opaque revisions, no index/push, optional property data; capability-driven UI/control dispatch, durable round-trip and backend mismatch rejection; verify inactive adapters spawn/probe nothing |
 
+## Risk-based test selection and stopping
+
+Owner instruction, 2026-10-20: verification is layered, staged and selected by functional dependencies. The journey registry is a coverage map, not an instruction to execute every journey after each change. This selection policy governs the timing/repetition of the gates below and in 12; it preserves their actual qualification scope.
+
+Before running checks, state **change → possible user failure → affected dependency/contract → minimum verification → stopping condition**. One line is enough for an ordinary change; do not introduce a report template or framework for this. A test without an identifiable failure it could detect is not selected. File/import changes suggest dependencies but do not alone prove behavioral impact.
+
+| Change / affected path | Minimum useful verification | Expand only when justified |
+|---|---|---|
+| PRD, README, evidence wording | Documentation structure/links and review of the changed facts | No Rust build, GUI launch, resource run or native matrix for documentation alone |
+| Local label/layout → affected widget | Relevant static check and one real target-widget/input/exit smoke; changed locale/size boundary if applicable | Common widget/theme/input changes justify representative consumer views, not all unrelated Git operations |
+| Parser, path or hunk rule → caller/index result | Targeted rule boundaries and one actual Git-state oracle for the affected mutation | Shared path/encoding contract changes expand to its consumers/affected OS cases; no automatic network/signing/soak suite |
+| Worker/job/cancellation → UI snapshot/action | Targeted completion, stale result, failure/cancel cases and actual responsive entry/exit path | Shared scheduler/thread model or a systemic race can justify broader interaction/resource/native coverage |
+| State/trust/recovery → affected command | Relevant durability/deny/grant/recovery boundaries plus one actual entry | Changed destructive/security guards need meaningful negative controls; unrelated full fault catalogs do not |
+| Rendering/cache/polling/lifetime → resource use | Affected latency/memory/CPU scenario and repeated-use check where retention is implicated | First qualification, affected lifetime mechanism, unexplained growth or regression justifies long runs and affected native cells |
+| Dependency/native adapter/toolchain/packaging | Changed consumer contract, affected target build/runtime smoke and artifact boundary | Shared ABI/backend or cross-target changes justify the corresponding matrix; preserve unchanged scope explicitly |
+| Publish/update → exact user artifact | Candidate identity, selected update success/failure/recovery cases, promotion/hash and actual delivery facts | Do not repeat already qualified feature suites merely because the same bytes move to a release |
+
+**Development:** use relevant static checks, targeted tests and the shortest real smoke. **Integration:** run the project's fast quality/ordinary-test gate once as applicable; a documentation-only change remains documentation-only. **Candidate acceptance:** execute selected changed user paths on the actual optimized artifact, including the negative cases needed by their risk. **Delivery:** promote those bytes and verify identity/distribution; a new stage is not itself a reason to replay the same functional evidence.
+
+A smoke proves a real entry → key observable result → normal exit or recovery. Merely launching and sleeping is insufficient. Unit fixtures do not prove a GUI path, and a short resource sample cannot prove an eight-hour claim. New or materially changed loss/security guards require a discriminating negative control; once that test is established, do not repeat implementation-mutation experiments in every unrelated run.
+
+Reuse evidence when its inputs, dependency contracts and relevant environment assumptions remain unchanged. Record the original source/artifact and why its scope still applies; do not relabel an old receipt as execution of a new binary. Changed product bytes need the affected checks and the applicable exact-candidate identity/native smoke, not automatic replay of every case. A test-script or docs-only change does not invalidate an unchanged product candidate by itself. First-time six-cell/stability qualification still requires the declared evidence before those claims can be made; later changes invalidate only justified scopes. An unaffected older result can be reused, never invented for a case that was not run.
+
+Stop when the selected checks pass and there is no unexplained failure or residual risk in the change. A failure triggers diagnosis of that path and necessary neighbors; do not restart the full matrix by default. New edits, new failures or evidence of wider impact justify escalation. Summarize **risk → evidence → conclusion/limits** once, keep raw reports out of normal output, inspect relevant failure excerpts instead of rereading complete logs, and avoid repeated polling or enumerating routine passes. Test counts are not a quality metric. Missing required evidence remains BLOCKED/NOT-RUN; cases not selected for this change are simply outside its validation scope, not newly failed or newly passed.
+
 ## Test layers and evidence integrity
 
 Use pure-rule tests for parsers/geometry/plans only where they guard meaningful behavior; Git integration fixtures for actual object/index/ref changes; public CLI/control and GUI journeys for user-visible effects; native accessibility and real input for platform behavior. Do not substitute mocked Git exit zero for repository-state verification. Deterministic fixtures use local remotes and synthetic identities; HTTPS/SSH/signing tests use dedicated disposable credentials, never real account secrets.
 
-For data-loss/security guards, demonstrate a deliberate broken implementation makes the relevant test fail, then restore it and record the result. Avoid screenshot-only tests for semantic correctness and source-text tests that merely mirror implementation spelling. Capture fixture seed, expected/actual object IDs/content hashes, public command results and redacted failure details. Run isolated parallel tests with independent repositories/profiles/remotes; serially integrate shared gates.
+For new or materially changed data-loss/security guards selected under the policy above, demonstrate that a deliberate broken implementation makes the relevant test fail, then restore it and record the result once. Avoid screenshot-only tests for semantic correctness and source-text tests that merely mirror implementation spelling. Capture fixture seed, expected/actual object IDs/content hashes, public command results and redacted failure details. Isolate independently selected tests with separate repositories/profiles/remotes; serially integrate shared gates.
 
 An evidence receipt includes requirement/case IDs, verdict, source SHA, dependency revision/features, artifact hash, test harness revision, OS/version/display backend, actual process ISA, native/emulated classification, Git path/version/capabilities, fixture seed, timestamps and output references. No real private identities or credentials. `PASS` requires successful assertions; `FAIL` is observed violation; `BLOCKED` is a missing prerequisite; `NOT-RUN` means no attempt. None can be silently converted to PASS. Prior upstream evidence is context only, not SrcMgr qualification.
 
@@ -83,6 +108,8 @@ When an OS lacks an exact aggregate-tree RSS peak counter, a documented conserva
 ## Stability and suite-quality acceptance
 
 These gates qualify the product promise owned by 01 alongside the resource/latency table above. They are specified acceptance cases; existing CLI or screenshot evidence does not certify them.
+
+The durations and cell coverage below define initial qualification and affected-scope requalification, not a per-edit or per-patch routine. Select reruns under the risk-based policy above. In particular, documentation, local wording and unrelated Git rules do not automatically trigger a 30-minute/8-hour run, suite coexistence campaign or six-cell resource matrix. Reuse applicable evidence without expanding what it originally proved.
 
 | Gate | Acceptance scope | Failure / missing evidence |
 |---|---|---|
