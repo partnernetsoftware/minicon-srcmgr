@@ -313,6 +313,10 @@ impl PixelWindowApplication for StatusWindow {
                 self.pointer = Some((position.x, position.y));
                 Ok(PixelWindowDirective::Continue)
             }
+            PixelWindowEvent::GeometryChanged { .. } | PixelWindowEvent::ResizeInteractionEnded => {
+                window.request_redraw();
+                Ok(PixelWindowDirective::Continue)
+            }
             PixelWindowEvent::PointerLeft => {
                 self.pointer = None;
                 Ok(PixelWindowDirective::Continue)
