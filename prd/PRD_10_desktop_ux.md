@@ -102,7 +102,7 @@ Acceptance is recorded in the work order in [14](PRD_14_verification_roadmap.md#
 - **Files.** `a` stages every changed path, untracked files included, when any path has unstaged changes; otherwise it unstages everything. This is lazygit's toggle.
 - **Branches.** `d` asks `Delete branch NAME? y deletes it   n keeps it` in the main panel. `y` runs `git branch -d`, which Git refuses for a branch that is not merged; `n` or Escape keeps it. The checked-out branch is refused before the question. Force delete is not offered.
 - **Movement in lists.** `<` and Home go to the first row, `>` and End to the last. PgUp and PgDn (`K` and `J`) move a page, and Ctrl+U and Ctrl+D move half a page, in lists and in the main panel.
-- **Mouse.** The 0.0.2 pointer rules still apply. A click on a line in the main panel moves the cursor there and selects its hunk.
+- **Mouse.** The 0.0.2 pointer rules still apply. A click on a line in the main panel moves the cursor there and selects its hunk. The wheel over a list moves that list's selection and shows the row in the main panel without changing focus; the wheel over the main panel scrolls it and focuses it.
 - **Resize.** The window redraws at the new size when it is resized, including the end of an interactive resize. The main panel keeps the cursor on screen after a resize.
 - **Deliberate differences from lazygit.** Checkout of a commit, commit files under the commit list, search and filter, discard, stash, rebase and the merge-from-branch actions are not part of 0.0.3. `B` stays removed, `r` reloads, and `q` quits. Changes that would discard work have no one-key shortcut; they need the confirmation the Branches panel uses.
 

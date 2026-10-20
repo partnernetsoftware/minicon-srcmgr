@@ -120,3 +120,25 @@ Source-level release, tagged locally as `v0.0.2` and not published: nothing is p
 - Linux and macOS cells are not run.
 
 See [the implementation work order and evidence](PRD_14_verification_roadmap.md#release-002-plan-lazygit-level-minimum) for the package-by-package record.
+
+## Release 0.0.3 status
+
+Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Release with source only. No binary is built or attached: the signing and six-cell evidence in the release gates above are not available, so a binary would not qualify. The limits of 0.0.1 and 0.0.2 still apply.
+
+### What changed since 0.0.2
+
+- The window follows lazygit's panel numbers (1 Status, 2 Files, 3 Branches, 4 Commits) and has a cursor in the main panel.
+- Line-level and hunk staging from the diff, stage-all and unstage-all on Files, branch delete with a confirmation, and list motion keys (`<`/`>`, PgUp/PgDn, Ctrl+U/Ctrl+D).
+- The window redraws when it is resized, and it responds to the mouse: clicks select rows and lines, and the wheel moves lists and the diff.
+
+### Verified on the Windows host
+
+- `cargo test --workspace` with MinGit 2.56.0 through `SRCMGR_TEST_GIT`: 154 tests pass.
+- `cargo clippy --workspace --all-targets`: zero warnings. `python scripts/check_docs.py`: PASS.
+- A live window run, driven by posted keys and clicks and by real keys in the foreground window: a click selects a branch; a line stage put only the added line in the index; `a` unstaged everything; the wheel scrolls the diff and End/Home move it; Ctrl+D and Ctrl+U move the view; `d` asks, `n` keeps the branch and `y` deletes it; a click on the Status row changes focus; a resize redraws the panels.
+
+### Known limits
+
+- Key-to-redraw latency and resource use are not measured against the budgets in [14](PRD_14_verification_roadmap.md#performance-and-resource-budgets).
+- No IME composition beyond committed text, no screen-reader bridge, no checkout of a commit, no commit files, no search or filter, no discard, stash or rebase.
+- Linux and macOS cells are not run.

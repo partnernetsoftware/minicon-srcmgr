@@ -431,8 +431,10 @@ impl Workspace {
         Effect::Nothing
     }
 
-    /// The wheel over a list moves its selection and focuses it; over the main
-    /// panel it scrolls the content and focuses it.
+    /// The wheel over a list moves its selection and shows it in the main panel,
+    /// but keeps the focus where it is, as the wheel scrolls a view under the
+    /// pointer rather than switching panels. Over the main panel it scrolls the
+    /// content and focuses it.
     pub fn wheel(&mut self, pane: Pane, lines: isize) -> Effect {
         if pane == Pane::Main {
             self.focus = Pane::Main;
@@ -440,10 +442,16 @@ impl Workspace {
         }
         let length = self.list_length(pane);
         if pane == Pane::Status || length == 0 {
-            return self.focus_list(pane);
+            return Effect::Nothing;
         }
         let index = (self.selected(pane) as isize + lines).clamp(0, length as isize - 1) as usize;
-        self.click_row(pane, index)
+        if self.selected(pane) == index {
+            return Effect::Nothing;
+        }
+        self.notice = None;
+        self.set_selected(pane, index);
+        self.source = pane;
+        self.show_source()
     }
 
     fn answer(&mut self, confirm: Confirm, key: Key) -> Effect {
@@ -1051,8 +1059,10 @@ mod tests {
     fn the_wheel_moves_the_list_selection_and_scrolls_the_main_panel() {
         let mut workspace = Workspace::new(snapshot(None));
         workspace.open();
+        let focus = workspace.focus();
         workspace.wheel(Pane::Files, 9);
         assert_eq!(workspace.selected(Pane::Files), 2, "the wheel stops at the last row");
+        assert_eq!(workspace.focus(), focus, "the wheel over a list keeps the focus");
         workspace.reply(Reply::Main {
             generation: workspace.generation,
             view: MainView { lines: lines_of(12), hunks: Vec::new(), file: None },
