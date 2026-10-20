@@ -54,3 +54,7 @@ Export raw selected tree diffs or selected commits via distinct Patch versus Com
 | ADV-02 · worktrees | Independent worktree state shares coordinated writer ownership | QA-J07 multiple worktrees and removed mount | Busy/occupied/missing with no deletion | 02, 03, 08 | Copy folders instead of Git worktrees |
 | ADV-03 · composite | Parent/child and pointer/materialized content stay distinct | QA-J07/J10 submodule URL and missing LFS | Quarantine or show capability unavailable | 07, 11 | Transparent recursive trust |
 | ADV-04 · patches | Import paths and actual post-state remain bounded to intended repo | QA-J11 malformed/traversal/partial patch corpus | No outside write; preserve recoverable partial state | 02, 08, 11 | Arbitrary archive import |
+
+## Release 0.0.4 status
+
+The window stashes tracked changes with `s` in Files and applies the newest stash with `S`, which keeps the stash as PRD 09 prefers. The stash list, pop, drop and messages are not in 0.0.4. Untracked files are not stashed. See [10](PRD_10_desktop_ux.md#release-004-shell-target-discard-stash-and-detached-checkout) and [14](PRD_14_verification_roadmap.md#release-004-plan-discard-stash-detached-checkout).

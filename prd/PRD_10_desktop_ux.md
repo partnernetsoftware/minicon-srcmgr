@@ -106,6 +106,29 @@ Acceptance is recorded in the work order in [14](PRD_14_verification_roadmap.md#
 - **Resize.** The window redraws at the new size when it is resized, including the end of an interactive resize. The main panel keeps the cursor on screen after a resize.
 - **Deliberate differences from lazygit.** Checkout of a commit, commit files under the commit list, search and filter, discard, stash, rebase and the merge-from-branch actions are not part of 0.0.3. `B` stays removed, `r` reloads, and `q` quits. Changes that would discard work have no one-key shortcut; they need the confirmation the Branches panel uses.
 
+## Release 0.0.4 shell target (discard, stash and detached checkout)
+
+0.0.4 adds the three actions that the reference clients offer next to staging, and makes Git's refusals readable. The benchmark below compares the window with lazygit (the target for keys and panels), SourceTree and Git SCM (the target for the action set in a GUI). Where a row says "not yet", the action is planned in a later release, not dropped.
+
+| Action | lazygit | SourceTree | Git SCM (VS Code) | 0.0.4 window |
+|---|---|---|---|---|
+| Discard a file's unstaged changes | `d` in Files | Discard | Discard Changes | `d` in Files; asks `y` / `n`; an untracked file is removed only on `y` |
+| Discard one hunk | `d` in the diff | Discard hunk | Revert Block | `d` in the main panel on the hunk under the cursor; asks first |
+| Discard single lines | `d` on a selected line | Discard lines | Revert Selected Ranges | not yet (a line discard needs the same patch path as staging lines; planned after 0.0.4) |
+| Stash tracked changes | `s` | Stash (with message) | Stash | `s` in Files; saves tracked changes; no message yet |
+| Apply the newest stash | `g` (pop, in the Stash panel) | Apply / Pop | Stash: Pop | `S` applies and keeps the stash (PRD 09: apply is preferred to pop); no stash list yet |
+| Check out a commit detached | `Space` in Commits | Checkout this revision | not offered | `Space` in Commits; asks `y` / `n`; HEAD is detached |
+| Refusal reason | error popup with Git's text | error dialog with Git's text | notification with Git's text | the notice shows Git's first error line |
+
+Rules for these actions:
+
+- **Confirmation.** Every discard and the detached checkout ask first. `n` and Escape keep the state. A discard never runs on the first key, and the question names the file or hunk.
+- **What a discard keeps.** A discard of a file removes only its unstaged change; staged content stays in the index. A hunk discard works on the working tree, and the index is not written.
+- **Stash scope.** `s` saves tracked staged and unstaged changes. Untracked files stay in the working tree, and a list of only untracked files says there is nothing tracked to stash.
+- **Refusals.** Git's refusals (for example a checkout that would overwrite local edits) show Git's own first error line, so the user sees the reason. The notice does not change the repository.
+
+Not part of 0.0.4, and the next candidates in order: the stash list with pop, drop and a message; discard of single lines; commit files under the commit list (lazygit's Enter on a commit); search and filter in lists (`/`); reset and revert with their preview; and the remote actions of M2 (fetch, pull, push), which need PRD 07's trust work first. Status shows the branch and HEAD; a count of stashes and of ahead and behind commits is planned with the stash list.
+
 ## Delivery contracts
 
 | ID / leaf | Invariant | Observable evidence | Safe failure | Dependencies | Non-goal |

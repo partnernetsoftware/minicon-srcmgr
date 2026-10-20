@@ -47,7 +47,10 @@ const HELP_LINES: &[&str] = &[
     "a            stage or unstage all (Files); stage the hunk",
     "h / l        previous or next hunk in the main panel",
     "c            commit: Ctrl+Enter commits, Esc keeps the draft",
-    "n / d        new branch / delete branch (Branches panel)",
+    "n            new branch (Branches panel)",
+    "d            delete a branch (Branches); discard a file or hunk (Files, diff); asks first",
+    "s / S        stash tracked changes / apply the newest stash (Files)",
+    "Space        in Commits: check out that commit detached; asks first",
     "r            reload;  ?  this help;  q or Ctrl+C quits",
 ];
 
@@ -714,6 +717,16 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
     if let Some(confirm) = workspace.confirm() {
         let text = match confirm {
             Confirm::DeleteBranch(name) => format!("Delete branch {name}?   y deletes it   n keeps it"),
+            Confirm::DiscardFile { path, untracked: true } => {
+                format!("Delete untracked file {}?   y deletes it   n keeps it", path.display_label())
+            }
+            Confirm::DiscardFile { path, untracked: false } => {
+                format!("Discard unstaged changes to {}?   y discards   n keeps them", path.display_label())
+            }
+            Confirm::DiscardHunk { path, index } => {
+                format!("Discard hunk {} of {}?   y discards   n keeps it", index + 1, path.display_label())
+            }
+            Confirm::Detach { short, .. } => format!("Check out {short} detached?   y checks out   n keeps HEAD"),
         };
         text_panel(draws, rect, grid, true, "Confirm", &[Line { tone: Tone::Removed, text }], 0, None);
         return;
@@ -823,11 +836,11 @@ fn hints(workspace: &Workspace) -> String {
     }
     let focus = match workspace.focus() {
         Pane::Status => "2 3 4 focus lists",
-        Pane::Files => "Space stage/unstage   a all   c commit   Enter diff",
+        Pane::Files => "Space stage/unstage   a all   d discard   s stash   c commit",
         Pane::Branches => "Space checkout   n new   d delete   Enter details",
-        Pane::Commits => "Enter details",
+        Pane::Commits => "Space checkout detached   Enter details",
         Pane::Main if workspace.anchor_set() => "Space stage lines   v end range   a stage hunk   Esc back",
-        Pane::Main => "Space stage line   v range   a stage hunk   h/l hunk   Esc back",
+        Pane::Main => "Space stage line   v range   a stage hunk   d discard   Esc back",
     };
     format!("{focus}   Tab panels   ? help   q quit")
 }

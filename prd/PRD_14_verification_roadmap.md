@@ -337,3 +337,21 @@ Scope is the behaviour in [10](PRD_10_desktop_ux.md#release-003-shell-target-clo
 Gate at the release commit: `cargo test --workspace` 154 passing with MinGit 2.56.0 through `SRCMGR_TEST_GIT`; `cargo clippy --workspace --all-targets` zero warnings; `python scripts/check_docs.py` PASS.
 
 Release: the workspace version is `0.0.3` and the release commit is tagged `v0.0.3`, published to `origin` as a source-only GitHub Release, as the owner asked for a public release. No binary is built, because signing and the six-cell evidence are not available. Still open: key-to-redraw latency and resource budgets, which are not measured. Not part of 0.0.3: checkout of a commit, commit files, search and filter, discard, stash, and rebase.
+
+### Release 0.0.4 plan (discard, stash, detached checkout)
+
+Scope is the behaviour in [10](PRD_10_desktop_ux.md#release-004-shell-target-discard-stash-and-detached-checkout), benchmarked against lazygit, SourceTree and Git SCM. Each package is a slice with the cheapest test that proves it.
+
+| Package | Scope | Evidence |
+| --- | --- | --- |
+| P1 discard file | `d` in Files asks; `y` runs `git restore --worktree` (tracked) or `git clean -f` (untracked); `n`/Escape keep it | Workspace tests for the question, the answers and the staged-only refusal; backend test restores a tracked file and removes an untracked one only when asked. Live: `d` then `n` kept the change; `d` then `y` restored the file and kept untracked `u.txt`. |
+| P2 discard hunk | `d` in the main panel asks about the hunk under the cursor; `y` reverses it in the working tree | Workspace test for the question and answer; backend test reverts only the first of two hunks and leaves the index alone. Live: the first hunk reverted, the second kept. |
+| P3 stash | `s` in Files saves tracked changes (`git stash push`); `S` applies the newest and keeps it | Workspace tests: `s` sends the job, a list of only untracked files is refused; backend test: stash, then apply restores the change and the stash remains. Live: stash list had one entry, file clean; `S` restored the change. |
+| P4 detached checkout | `Space` in Commits asks; `y` runs `git switch --detach` on a checked hexadecimal id | Workspace test for the question and answer; backend test refuses `--orphan` and detaches HEAD on a real commit. Live: the question shows the short id; `y` left no current branch. A checkout that would overwrite local edits was refused with Git's reason. |
+| P5 refusal reason | Git's first error line is kept in `GitError::Exit` and shown in the notice | Unit test of the line selection in `srcmgr-git`; before the change the notice said only "Git exited with status 1". |
+
+Live verification used SendKeys only after the window was verified as foreground, and a foreground check before every key batch. Two early runs dropped keys (a stash and a discard did nothing); later runs with the foreground check passed. No cause was found in the window, so this is recorded as an observed harness flake, not a fixed product defect.
+
+Gate at the release commit: `cargo test --workspace` 164 passing with MinGit 2.56.0 through `SRCMGR_TEST_GIT`; `cargo clippy --workspace --all-targets` zero warnings; `python scripts/check_docs.py` PASS.
+
+Still open: key-to-redraw latency and resource budgets (not measured); line discard; the stash list with pop, drop and a message; commit files; search and filter; reset and revert; remote actions (M2).

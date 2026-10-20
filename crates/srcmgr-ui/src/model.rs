@@ -183,6 +183,23 @@ pub enum Job {
     CreateBranch(String),
     /// Deletes a local branch that Git considers merged.
     DeleteBranch(String),
+    /// Throws away the working-tree changes of one path. `untracked` selects
+    /// removal of the file instead of a restore from the index.
+    Discard {
+        path: NativePath,
+        untracked: bool,
+    },
+    /// Throws away one unstaged hunk of a tracked path.
+    DiscardHunk {
+        path: NativePath,
+        index: usize,
+    },
+    /// Saves tracked changes as a stash.
+    Stash,
+    /// Applies the newest stash and keeps it.
+    ApplyStash,
+    /// Checks out a commit by its full id, leaving HEAD detached.
+    Detach(String),
     Commit(String),
     /// Replaces the saved draft; an empty text clears it.
     SaveDraft(String),

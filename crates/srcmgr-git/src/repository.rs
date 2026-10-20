@@ -250,7 +250,7 @@ pub fn apply_hunk(
     let patch = diff(installation, identity, path, reverse)?;
     let parts = crate::hunks::split(&patch).ok_or(GitError::NoHunks)?;
     let hunk = parts.hunks.get(index).ok_or(GitError::HunkOutOfRange)?;
-    apply_cached(installation, identity, &format!("{}{hunk}", parts.header), reverse)
+    apply_patch(installation, identity, &format!("{}{hunk}", parts.header), true, reverse)
 }
 
 /// Stages (or, with `reverse`, unstages) only the changed lines `selected` of one
@@ -269,26 +269,26 @@ pub fn apply_lines(
     let parts = crate::hunks::split(&patch).ok_or(GitError::NoHunks)?;
     let hunk = parts.hunks.get(index).ok_or(GitError::HunkOutOfRange)?;
     let chosen = crate::hunks::select_lines(hunk, selected).ok_or(GitError::NoChangedLines)?;
-    apply_cached(installation, identity, &format!("{}{chosen}", parts.header), reverse)
+    apply_patch(installation, identity, &format!("{}{chosen}", parts.header), true, reverse)
 }
 
-/// Feeds one patch to `git apply --cached`. `--recount` lets it apply after its
-/// neighbours were changed.
-fn apply_cached(
+/// Feeds one patch to `git apply`, to the index when `cached` and to the working
+/// tree otherwise. `--recount` lets it apply after its neighbours were changed.
+fn apply_patch(
     installation: &GitInstallation,
     identity: &RepositoryIdentity,
     patch: &str,
+    cached: bool,
     reverse: bool,
 ) -> Result<(), GitError> {
     let mut text = patch.to_owned();
     if !text.ends_with('\n') {
         text.push('\n');
     }
-    let mut arguments = vec![
-        OsString::from("apply"),
-        OsString::from("--cached"),
-        OsString::from("--recount"),
-    ];
+    let mut arguments = vec![OsString::from("apply"), OsString::from("--recount")];
+    if cached {
+        arguments.push(OsString::from("--cached"));
+    }
     if reverse {
         arguments.push(OsString::from("-R"));
     }
@@ -317,6 +317,84 @@ pub fn delete_branch(
 ) -> Result<(), GitError> {
     let name = checked_branch_name(installation, identity, name)?;
     run_mutation(installation, identity, &[OsString::from("branch"), OsString::from("-d"), name], None)?;
+    Ok(())
+}
+
+/// Throws away the working-tree changes of one path, so the work is lost. A tracked
+/// path is restored from the index (`git restore --worktree`); an untracked path is
+/// removed with `git clean`, which only removes untracked files. The index keeps its
+/// staged content. The caller must confirm first (PRD 08).
+pub fn discard_file(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    path: &OsStr,
+    untracked: bool,
+) -> Result<(), GitError> {
+    let arguments = if untracked {
+        vec![OsString::from("clean"), OsString::from("-f"), OsString::from("--"), path.to_os_string()]
+    } else {
+        vec![
+            OsString::from("restore"),
+            OsString::from("--worktree"),
+            OsString::from("--"),
+            path.to_os_string(),
+        ]
+    };
+    run_mutation(installation, identity, &arguments, None)?;
+    Ok(())
+}
+
+/// Throws away one unstaged hunk of a tracked path from the working tree. Like
+/// [`apply_hunk`] it counts hunks from 0, but it reverses the hunk in the working
+/// tree rather than the index. The caller must confirm first (PRD 08).
+pub fn discard_hunk(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    path: &OsStr,
+    index: usize,
+) -> Result<(), GitError> {
+    let patch = diff(installation, identity, path, false)?;
+    let parts = crate::hunks::split(&patch).ok_or(GitError::NoHunks)?;
+    let hunk = parts.hunks.get(index).ok_or(GitError::HunkOutOfRange)?;
+    apply_patch(installation, identity, &format!("{}{hunk}", parts.header), false, true)
+}
+
+/// Saves the tracked staged and unstaged changes as a new stash and cleans them
+/// from the working tree (`git stash push`). Untracked files stay where they are.
+pub fn stash_push(installation: &GitInstallation, identity: &RepositoryIdentity) -> Result<(), GitError> {
+    run_mutation(
+        installation,
+        identity,
+        &[OsString::from("stash"), OsString::from("push"), OsString::from("-m"), OsString::from("minicon-srcmgr")],
+        None,
+    )?;
+    Ok(())
+}
+
+/// Applies the newest stash and keeps it (`git stash apply`), the preferred form
+/// because the source survives a conflict (PRD 09).
+pub fn stash_apply(installation: &GitInstallation, identity: &RepositoryIdentity) -> Result<(), GitError> {
+    run_mutation(installation, identity, &[OsString::from("stash"), OsString::from("apply")], None)?;
+    Ok(())
+}
+
+/// Checks out a commit by its full or abbreviated hexadecimal id, leaving HEAD
+/// detached (`git switch --detach`). Git refuses it when local edits would be
+/// overwritten. The id is checked before it reaches the argument vector.
+pub fn checkout_detached(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    revision: &str,
+) -> Result<(), GitError> {
+    if revision.len() < 4 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(GitError::InvalidRevision);
+    }
+    run_mutation(
+        installation,
+        identity,
+        &[OsString::from("switch"), OsString::from("--detach"), OsString::from(revision)],
+        None,
+    )?;
     Ok(())
 }
 
@@ -356,7 +434,7 @@ pub fn ignore_match(
             Ok(Some(rule.to_owned()))
         }
         // check-ignore exits 1 when nothing matches; that is an answer, not a failure.
-        Err(GitError::Exit { code: 1 }) => Ok(None),
+        Err(GitError::Exit { code: 1, .. }) => Ok(None),
         Err(error) => Err(error),
     }
 }

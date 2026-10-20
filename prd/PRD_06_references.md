@@ -52,3 +52,7 @@ A hard reset can overwrite/remove untracked entries that obstruct target tracked
 ## Acceptance details
 
 Canceling any preview leaves refs/index/worktree unchanged. A branch already checked out elsewhere shows the owning worktree. A merge conflict can be resolved and continued after app restart. Dropped interactive-rebase commits are visible before execution and represented in the recovery record. Ref labels displayed during execution cannot silently retarget an operation if the ref moves; bind resolved OIDs and use expected-old-value checks where Git supports them.
+
+## Release 0.0.4 status
+
+Space on a commit in the Commits panel checks it out detached after a question that names the short id. Git refuses the switch when local edits would be overwritten, and the window shows Git's first error line. Branch switching is unchanged. See [10](PRD_10_desktop_ux.md#release-004-shell-target-discard-stash-and-detached-checkout).

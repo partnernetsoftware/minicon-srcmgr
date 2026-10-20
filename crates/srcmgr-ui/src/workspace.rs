@@ -7,6 +7,7 @@
 //! (or a `v` range of lines) and `a` stages the whole hunk. See PRD 10 for the
 //! full list and the deliberate differences.
 
+use srcmgr_domain::NativePath;
 use crate::model::{Job, Line, MainRequest, MainView, Reply, Snapshot, Tone};
 
 /// Lines moved by PgUp and PgDn.
@@ -134,6 +135,9 @@ impl Prompt {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Confirm {
     DeleteBranch(String),
+    DiscardFile { path: NativePath, untracked: bool },
+    DiscardHunk { path: NativePath, index: usize },
+    Detach { id: String, short: String },
 }
 
 pub struct Workspace {
@@ -360,6 +364,13 @@ impl Workspace {
                 Effect::Nothing
             }
             Key::Char('d') if self.focus == Pane::Branches => self.ask_delete(),
+            Key::Char('d') if self.focus == Pane::Files => self.ask_discard_file(),
+            Key::Char('d') if self.focus == Pane::Main => self.ask_discard_hunk(),
+            Key::Char('s') if self.focus == Pane::Files => self.stash(),
+            Key::Char('S') if self.focus == Pane::Files => {
+                self.notice = None;
+                Effect::Send(Job::ApplyStash)
+            }
             Key::Char('r') => Effect::Send(Job::Reload),
             _ => Effect::Nothing,
         }
@@ -457,7 +468,12 @@ impl Workspace {
     fn answer(&mut self, confirm: Confirm, key: Key) -> Effect {
         match (confirm, key) {
             (Confirm::DeleteBranch(name), Key::Char('y')) => Effect::Send(Job::DeleteBranch(name)),
-            (Confirm::DeleteBranch(_), Key::Char('n') | Key::Escape) => Effect::Nothing,
+            (Confirm::DiscardFile { path, untracked }, Key::Char('y')) => {
+                Effect::Send(Job::Discard { path, untracked })
+            }
+            (Confirm::DiscardHunk { path, index }, Key::Char('y')) => Effect::Send(Job::DiscardHunk { path, index }),
+            (Confirm::Detach { id, .. }, Key::Char('y')) => Effect::Send(Job::Detach(id)),
+            (_, Key::Char('n') | Key::Escape) => Effect::Nothing,
             (confirm, _) => {
                 self.confirm = Some(confirm);
                 Effect::Nothing
@@ -581,10 +597,7 @@ impl Workspace {
                 Some(branch) => Effect::Send(Job::Switch(branch.name.clone())),
                 None => Effect::Nothing,
             },
-            Pane::Commits => {
-                self.notice = Some("Checking out a commit is not available yet".to_owned());
-                Effect::Nothing
-            }
+            Pane::Commits => self.ask_detach(),
             Pane::Main => self.stage_lines(),
         }
     }
@@ -663,6 +676,68 @@ impl Workspace {
             return Effect::Nothing;
         }
         self.confirm = Some(Confirm::DeleteBranch(branch.name.clone()));
+        Effect::Nothing
+    }
+
+    /// `d` in Files: asks before the working-tree changes of the file are lost.
+    /// Staged content is kept, so only the unstaged part is in question.
+    fn ask_discard_file(&mut self) -> Effect {
+        self.notice = None;
+        let Some(row) = self.snapshot.files.get(self.files) else {
+            return Effect::Nothing;
+        };
+        if !row.has_unstaged {
+            self.notice = Some(format!("{} has no unstaged changes to discard", row.path.display_label()));
+            return Effect::Nothing;
+        }
+        self.confirm = Some(Confirm::DiscardFile { path: row.path.clone(), untracked: row.untracked });
+        Effect::Nothing
+    }
+
+    /// `d` in the main panel: asks before the unstaged hunk under the cursor is
+    /// thrown away. Only the unstaged view of a tracked file can be discarded.
+    fn ask_discard_hunk(&mut self) -> Effect {
+        self.notice = None;
+        let Some(target) = self.main.file.clone() else {
+            self.notice = Some("discard works on a file diff".to_owned());
+            return Effect::Nothing;
+        };
+        if target.staged_view {
+            self.notice = Some("discard works on unstaged changes; this view shows staged ones".to_owned());
+            return Effect::Nothing;
+        }
+        if self.snapshot.files.iter().any(|file| file.path == target.path && file.untracked) {
+            self.notice = Some("an untracked file is discarded from the Files panel".to_owned());
+            return Effect::Nothing;
+        }
+        if self.main.hunks.is_empty() {
+            self.notice = Some("this change has no hunk to discard".to_owned());
+            return Effect::Nothing;
+        }
+        let index = self.hunk();
+        self.confirm = Some(Confirm::DiscardHunk { path: target.path, index });
+        Effect::Nothing
+    }
+
+    /// `s` in Files: saves the tracked changes as a stash. Untracked files are
+    /// left alone, so a list of only untracked files has nothing to save.
+    fn stash(&mut self) -> Effect {
+        self.notice = None;
+        if self.snapshot.files.iter().all(|file| file.untracked) {
+            self.notice = Some("no tracked changes to stash".to_owned());
+            return Effect::Nothing;
+        }
+        Effect::Send(Job::Stash)
+    }
+
+    /// Space in Commits: asks before HEAD moves to the commit, detached.
+    fn ask_detach(&mut self) -> Effect {
+        self.notice = None;
+        let Some(commit) = self.snapshot.commits.get(self.commits) else {
+            return Effect::Nothing;
+        };
+        let short: String = commit.id.chars().take(7).collect();
+        self.confirm = Some(Confirm::Detach { id: commit.id.clone(), short });
         Effect::Nothing
     }
 
@@ -933,6 +1008,79 @@ mod tests {
         assert_eq!(workspace.notice(), Some("main is already checked out"));
         workspace.key(Key::Up);
         assert_eq!(sent(workspace.key(Key::Space)), Job::Switch("feature".to_owned()));
+    }
+
+    #[test]
+    fn d_in_files_asks_before_discarding_and_only_y_discards() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.key(Key::Char('d'));
+        assert_eq!(
+            workspace.confirm(),
+            Some(&Confirm::DiscardFile { path: NativePath::new("a.txt"), untracked: false })
+        );
+        workspace.key(Key::Char('n'));
+        assert_eq!(workspace.confirm(), None, "n keeps the changes");
+        workspace.key(Key::Char('d'));
+        assert_eq!(
+            sent(workspace.key(Key::Char('y'))),
+            Job::Discard { path: NativePath::new("a.txt"), untracked: false }
+        );
+    }
+
+    #[test]
+    fn d_on_a_file_with_only_staged_changes_says_there_is_nothing_to_discard() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.key(Key::Down);
+        assert_eq!(workspace.key(Key::Char('d')), Effect::Nothing);
+        assert_eq!(workspace.confirm(), None);
+        assert_eq!(workspace.notice(), Some("b.txt has no unstaged changes to discard"));
+    }
+
+    #[test]
+    fn d_in_the_main_panel_asks_about_the_hunk_under_the_cursor() {
+        let mut workspace = Workspace::new(snapshot(None));
+        let Job::Main { generation, .. } = sent(workspace.open()) else { panic!() };
+        workspace.reply(Reply::Main {
+            generation,
+            view: MainView {
+                lines: lines_of(12),
+                hunks: vec![0],
+                file: Some(FileTarget { path: NativePath::new("a.txt"), staged_view: false }),
+            },
+        });
+        workspace.key(Key::Enter);
+        workspace.key(Key::Char('d'));
+        assert_eq!(workspace.confirm(), Some(&Confirm::DiscardHunk { path: NativePath::new("a.txt"), index: 0 }));
+        assert_eq!(
+            sent(workspace.key(Key::Char('y'))),
+            Job::DiscardHunk { path: NativePath::new("a.txt"), index: 0 }
+        );
+    }
+
+    #[test]
+    fn s_stashes_tracked_changes_and_refuses_a_list_of_only_untracked_files() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        assert_eq!(sent(workspace.key(Key::Char('s'))), Job::Stash);
+        assert_eq!(sent(workspace.key(Key::Char('S'))), Job::ApplyStash);
+        let mut only_untracked = snapshot(None);
+        only_untracked.files = vec![FileRow { untracked: true, ..file("u.txt", false, true) }];
+        workspace.reply(Reply::Full(only_untracked));
+        assert_eq!(workspace.key(Key::Char('s')), Effect::Nothing);
+        assert_eq!(workspace.notice(), Some("no tracked changes to stash"));
+    }
+
+    #[test]
+    fn space_in_commits_asks_before_checking_out_the_commit_detached() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.key(Key::Char('4'));
+        workspace.key(Key::Char('j'));
+        workspace.key(Key::Space);
+        assert_eq!(workspace.confirm(), Some(&Confirm::Detach { id: "2".to_owned(), short: "2".to_owned() }));
+        assert_eq!(sent(workspace.key(Key::Char('y'))), Job::Detach("2".to_owned()));
     }
 
     #[test]

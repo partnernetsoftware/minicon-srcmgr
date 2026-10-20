@@ -18,8 +18,9 @@ pub enum GitError {
     Timeout,
     /// A captured stream exceeded its byte bound and was terminated.
     OutputLimit,
-    /// Git exited unsuccessfully.
-    Exit { code: i32 },
+    /// Git exited unsuccessfully. `detail` is the first error line Git printed,
+    /// empty when it printed none.
+    Exit { code: i32, detail: String },
     /// Git ended by a signal or without a reportable status.
     Terminated,
     /// The installed Git is older than the product floor (PRD 02).
@@ -36,6 +37,8 @@ pub enum GitError {
     UnrepresentableName,
     /// The name is not a valid branch name under Git's rules.
     InvalidName,
+    /// The revision is not a hexadecimal object id.
+    InvalidRevision,
     /// The diff has no text hunks (for example a binary change or no change).
     NoHunks,
     /// The requested hunk index is outside the diff's hunks.
@@ -54,7 +57,8 @@ impl fmt::Display for GitError {
             Self::Supervision => formatter.write_str("the Git process did not expose captured output"),
             Self::Timeout => formatter.write_str("Git did not finish before the deadline; it was terminated"),
             Self::OutputLimit => formatter.write_str("Git produced more output than allowed; it was terminated"),
-            Self::Exit { code } => write!(formatter, "Git exited with status {code}"),
+            Self::Exit { code, detail } if detail.is_empty() => write!(formatter, "Git exited with status {code}"),
+            Self::Exit { code, detail } => write!(formatter, "{detail} (Git exited with status {code})"),
             Self::Terminated => formatter.write_str("Git ended without a success status"),
             Self::UnsupportedVersion { found, minimum } => write!(
                 formatter,
@@ -66,6 +70,7 @@ impl fmt::Display for GitError {
                 write!(formatter, "Git status output record {record} did not match the expected format")
             }
             Self::InvalidName => formatter.write_str("the branch name is not valid"),
+            Self::InvalidRevision => formatter.write_str("the commit id is not valid"),
             Self::NoHunks => formatter.write_str("this change has no text hunks to stage"),
             Self::HunkOutOfRange => formatter.write_str("no hunk has that number"),
             Self::NoChangedLines => formatter.write_str("select at least one changed line"),

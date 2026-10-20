@@ -142,3 +142,26 @@ Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Rele
 - Key-to-redraw latency and resource use are not measured against the budgets in [14](PRD_14_verification_roadmap.md#performance-and-resource-budgets).
 - No IME composition beyond committed text, no screen-reader bridge, no checkout of a commit, no commit files, no search or filter, no discard, stash or rebase.
 - Linux and macOS cells are not run.
+
+## Release 0.0.4 status
+
+Source-level release, tagged `v0.0.4` and published to `origin` as a GitHub Release with source only. No binary is built or attached: the signing and six-cell evidence in the release gates above are not available. The limits of 0.0.1 to 0.0.3 still apply.
+
+### What changed since 0.0.3
+
+- Discard: `d` in Files discards a file's unstaged changes, and `d` in the main panel discards the hunk under the cursor. Both ask first.
+- Stash: `s` in Files saves tracked changes, and `S` applies the newest stash and keeps it.
+- Detached checkout: `Space` in Commits checks a commit out detached, after a question.
+- A refused Git command shows Git's first error line, for example why a checkout would overwrite local edits.
+
+### Verified on the Windows host
+
+- `cargo test --workspace` with MinGit 2.56.0 through `SRCMGR_TEST_GIT`: 164 tests pass.
+- `cargo clippy --workspace --all-targets`: zero warnings. `python scripts/check_docs.py`: PASS.
+- A live window run in the foreground: a hunk discard reverted only the first of two hunks; `s` stashed the change and `S` restored it; `d` then `n` kept the change and `d` then `y` restored the file; a commit checkout asked, and `y` left HEAD detached. A dirty-tree checkout was refused with Git's reason in the notice.
+
+### Known limits
+
+- Line discard, the stash list with pop, drop and messages, commit files, search and filter, reset and revert are not in 0.0.4. The plan and the benchmark against lazygit, SourceTree and Git SCM are in [10](PRD_10_desktop_ux.md#release-004-shell-target-discard-stash-and-detached-checkout).
+- Key-to-redraw latency and resource use are not measured against the budgets in [14](PRD_14_verification_roadmap.md#performance-and-resource-budgets).
+- No IME composition beyond committed text, no screen-reader bridge. Linux and macOS cells are not run.

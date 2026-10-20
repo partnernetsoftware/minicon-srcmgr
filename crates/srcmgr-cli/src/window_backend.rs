@@ -102,6 +102,34 @@ impl WindowBackend {
                     .map_err(|e| e.to_string())?;
                 Reply::Full(self.snapshot()?)
             }
+            Job::Discard { path, untracked } => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                srcmgr_git::discard_file(&session.installation, &session.identity, path.as_os_str(), untracked)
+                    .map_err(|e| e.to_string())?;
+                Reply::Full(self.snapshot()?)
+            }
+            Job::DiscardHunk { path, index } => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                srcmgr_git::discard_hunk(&session.installation, &session.identity, path.as_os_str(), index)
+                    .map_err(|e| e.to_string())?;
+                Reply::Full(self.snapshot()?)
+            }
+            Job::Stash => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                srcmgr_git::stash_push(&session.installation, &session.identity).map_err(|e| e.to_string())?;
+                Reply::Full(self.snapshot()?)
+            }
+            Job::ApplyStash => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                srcmgr_git::stash_apply(&session.installation, &session.identity).map_err(|e| e.to_string())?;
+                Reply::Full(self.snapshot()?)
+            }
+            Job::Detach(id) => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                srcmgr_git::checkout_detached(&session.installation, &session.identity, &id)
+                    .map_err(|e| e.to_string())?;
+                Reply::Full(self.snapshot()?)
+            }
             Job::Switch(name) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
                 srcmgr_git::switch_branch(&session.installation, &session.identity, name.as_ref())
@@ -491,6 +519,78 @@ mod tests {
             .output()
             .expect("git");
         assert!(String::from_utf8_lossy(&branches.stdout).trim().is_empty());
+    }
+
+    #[test]
+    fn discard_restores_a_tracked_file_and_removes_an_untracked_one_only_when_asked() {
+        let scratch = Scratch::new("discard");
+        let repo = repository(&scratch.0, "repo");
+        let mut backend = backend(&scratch.0, &repo, true);
+        full(backend.run(Job::Discard {
+            path: NativePath::new("a.txt"),
+            untracked: false,
+        }));
+        assert_eq!(fs::read_to_string(repo.join("a.txt")).expect("read"), "one\n");
+        assert!(repo.join("u.txt").exists(), "a tracked discard leaves untracked files alone");
+        full(backend.run(Job::Discard {
+            path: NativePath::new("u.txt"),
+            untracked: true,
+        }));
+        assert!(!repo.join("u.txt").exists(), "an untracked discard removes the file");
+    }
+
+    #[test]
+    fn discard_hunk_reverts_only_that_hunk_in_the_working_tree() {
+        let scratch = Scratch::new("discard-hunk");
+        let repo = repository(&scratch.0, "repo");
+        let middle = "l\n".repeat(10);
+        fs::write(repo.join("a.txt"), format!("top\n{middle}bottom\n")).expect("base");
+        fixture_git(&repo, &["add", "a.txt"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "lines"]);
+        fs::write(repo.join("a.txt"), format!("TOP\n{middle}BOTTOM\n")).expect("two hunks");
+        let mut backend = backend(&scratch.0, &repo, true);
+        full(backend.run(Job::DiscardHunk {
+            path: NativePath::new("a.txt"),
+            index: 0,
+        }));
+        let worktree = fs::read_to_string(repo.join("a.txt")).expect("read");
+        assert_eq!(worktree, format!("top\n{middle}BOTTOM\n"), "only the first hunk is reverted");
+    }
+
+    #[test]
+    fn stash_saves_tracked_changes_and_apply_brings_them_back_and_keeps_the_stash() {
+        let scratch = Scratch::new("stash");
+        let repo = repository(&scratch.0, "repo");
+        let mut backend = backend(&scratch.0, &repo, true);
+        full(backend.run(Job::Stash));
+        assert_eq!(fs::read_to_string(repo.join("a.txt")).expect("read"), "one\n");
+        assert!(repo.join("u.txt").exists(), "untracked files stay where they are");
+        full(backend.run(Job::ApplyStash));
+        assert_eq!(fs::read_to_string(repo.join("a.txt")).expect("read"), "two\n");
+        let list = Command::new(git_executable()).current_dir(&repo).args(["stash", "list"]).output().expect("git");
+        assert!(!list.stdout.is_empty(), "apply keeps the stash");
+    }
+
+    #[test]
+    fn detach_checks_out_a_commit_and_refuses_a_value_that_is_not_an_id() {
+        let scratch = Scratch::new("detach");
+        let repo = repository(&scratch.0, "repo");
+        fixture_git(&repo, &["commit", "-q", "-am", "second"]);
+        let first = Command::new(git_executable())
+            .current_dir(&repo)
+            .args(["rev-parse", "HEAD~1"])
+            .output()
+            .expect("git");
+        let first = String::from_utf8_lossy(&first.stdout).trim().to_owned();
+        let mut backend = backend(&scratch.0, &repo, true);
+        assert!(!notice(backend.run(Job::Detach("--orphan".to_owned()))).is_empty());
+        full(backend.run(Job::Detach(first)));
+        let branch = Command::new(git_executable())
+            .current_dir(&repo)
+            .args(["branch", "--show-current"])
+            .output()
+            .expect("git");
+        assert!(branch.stdout.is_empty(), "HEAD is detached");
     }
 
     #[test]

@@ -20,9 +20,9 @@ use srcmgr_domain::{BackendKind, Capability, CapabilityState, VcsBackend};
 pub use error::GitError;
 pub use installation::{GitInstallation, MINIMUM_GIT, parse_version};
 pub use repository::{
-    BranchSummary, CommitSummary, RepositoryIdentity, apply_hunk, apply_lines, commit, commit_detail, create_branch,
-    delete_branch, diff, hunks,
-    ignore_match, local_branches, locate, log, read_status, stage, stage_all, switch_branch, unstage, unstage_all,
+    BranchSummary, CommitSummary, RepositoryIdentity, apply_hunk, apply_lines, checkout_detached, commit,
+    commit_detail, create_branch, delete_branch, diff, discard_file, discard_hunk, hunks, ignore_match, local_branches,
+    locate, log, read_status, stage, stage_all, stash_apply, stash_push, switch_branch, unstage, unstage_all,
 };
 pub use status::parse_status;
 

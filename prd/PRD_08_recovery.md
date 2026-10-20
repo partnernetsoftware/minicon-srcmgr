@@ -80,3 +80,7 @@ Reserve `refs/srcmgr/recovery/<opaque-operation-id>` for application recovery re
 | REC-04 · recover | Recovery promises match stored content/refs | QA-J04 destructive preview, full disk and undo-after-new-edit | Block unsafe overwrite; expose limits | 11, 13 | Full backup of every file |
 
 References: Git defines [index stages](https://git-scm.com/docs/git-update-index); the product's risk, recovery and UX requirements above are design decisions, not claims that Git implements a transactional GUI undo layer.
+
+## Release 0.0.4 status
+
+The window now discards the unstaged changes of one file or one hunk, each behind a question that names the file or hunk and keeps the state on `n` or Escape. A discard of a tracked file restores it from the index and removes only its unstaged part; an untracked file is removed only when the question is answered `y`. Line discard is not in 0.0.4. The exact scope and limits are in [10](PRD_10_desktop_ux.md#release-004-shell-target-discard-stash-and-detached-checkout) and the verification record in [14](PRD_14_verification_roadmap.md#release-004-plan-discard-stash-detached-checkout).

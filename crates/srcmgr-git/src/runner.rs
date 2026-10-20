@@ -156,7 +156,7 @@ pub(crate) fn run<S: AsRef<OsStr>>(
     // the pipes, so the readers below always reach end of stream.
     let cleanup = child.terminate_and_wait(KILL_GRACE);
     let (stdout, stdout_overrun) = join_reader(stdout_reader)?;
-    let (_stderr, stderr_overrun) = join_reader(stderr_reader)?;
+    let (stderr, stderr_overrun) = join_reader(stderr_reader)?;
     cleanup.map_err(GitError::Io)?;
 
     if expired && exit.is_none() {
@@ -167,8 +167,29 @@ pub(crate) fn run<S: AsRef<OsStr>>(
     }
     match exit {
         Some(ProcessExit::Code(0)) => Ok(Output { stdout }),
-        Some(ProcessExit::Code(code)) => Err(GitError::Exit { code }),
+        Some(ProcessExit::Code(code)) => Err(GitError::Exit { code, detail: first_error_line(&stderr) }),
         _ => Err(GitError::Terminated),
+    }
+}
+
+/// The first line Git printed as an error, without its `error:` or `fatal:`
+/// prefix and without control characters. Empty when there is none. Git's own
+/// wording is shown to the user, so the text is cut to a readable length.
+fn first_error_line(stderr: &[u8]) -> String {
+    const LIMIT: usize = 160;
+    let text = String::from_utf8_lossy(stderr);
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    let line = lines
+        .iter()
+        .find(|line| line.starts_with("error:") || line.starts_with("fatal:"))
+        .or_else(|| lines.first())
+        .map_or("", |line| line.trim_start_matches("error:").trim_start_matches("fatal:").trim());
+    let clean: String = line.chars().map(|character| if character.is_control() { ' ' } else { character }).collect();
+    if clean.chars().count() <= LIMIT {
+        clean
+    } else {
+        let cut: String = clean.chars().take(LIMIT - 2).collect();
+        format!("{cut}..")
     }
 }
 
@@ -208,6 +229,16 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    #[test]
+    fn the_first_git_error_line_is_kept_without_its_prefix_and_cut_to_a_readable_length() {
+        let text = b"hint: try something\nerror: Your local changes would be overwritten\n\ta.txt\n";
+        assert_eq!(first_error_line(text), "Your local changes would be overwritten");
+        assert_eq!(first_error_line(b""), "");
+        assert_eq!(first_error_line(b"fatal: bad\x07object\n"), "bad object");
+        let long = "x".repeat(300);
+        assert_eq!(first_error_line(long.as_bytes()).chars().count(), 160);
+    }
 
     fn git_executable() -> PathBuf {
         env::var_os("SRCMGR_TEST_GIT").map_or_else(|| PathBuf::from("git"), PathBuf::from)
