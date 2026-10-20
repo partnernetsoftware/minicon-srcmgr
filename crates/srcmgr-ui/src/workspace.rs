@@ -293,6 +293,55 @@ impl Workspace {
         }
     }
 
+    /// Whether a prompt or the help panel is open. Pointer input waits until it closes.
+    #[must_use]
+    pub const fn modal(&self) -> bool {
+        self.help || self.prompt.is_some()
+    }
+
+    /// A left click on a list. Focuses the list and selects the row; a row past
+    /// the end of the list only focuses it.
+    pub fn click_row(&mut self, pane: Pane, index: usize) -> Effect {
+        if index >= self.list_length(pane) {
+            return self.focus_list(pane);
+        }
+        let changed = self.selected(pane) != index || self.source != pane;
+        self.notice = None;
+        self.focus = pane;
+        self.set_selected(pane, index);
+        if !changed {
+            return Effect::Nothing;
+        }
+        self.source = pane;
+        self.show_source()
+    }
+
+    /// A left click in the main panel. Focuses it and, when `line` (an index into
+    /// the whole diff) is known, selects the hunk that holds it.
+    pub fn click_main(&mut self, line: Option<usize>) -> Effect {
+        self.notice = None;
+        self.focus = Pane::Main;
+        if let Some(index) = line.and_then(|line| self.main.hunks.iter().rposition(|start| *start <= line)) {
+            self.hunk = index;
+        }
+        Effect::Nothing
+    }
+
+    /// The wheel over a list moves its selection and focuses it; over the main
+    /// panel it scrolls the content.
+    pub fn wheel(&mut self, pane: Pane, lines: isize) -> Effect {
+        if pane == Pane::Main {
+            self.focus = Pane::Main;
+            return self.scroll_by(lines);
+        }
+        let length = self.list_length(pane);
+        if length == 0 {
+            return self.focus_list(pane);
+        }
+        let index = (self.selected(pane) as isize + lines).clamp(0, length as isize - 1) as usize;
+        self.click_row(pane, index)
+    }
+
     /// Applies a backend answer. Lists are replaced and the main panel is
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
@@ -711,6 +760,58 @@ mod tests {
         assert!(!workspace.help());
         assert_eq!(workspace.key(Key::Char('q')), Effect::Quit);
         assert_eq!(Workspace::new(snapshot(None)).key(Key::CtrlC), Effect::Quit);
+    }
+
+    #[test]
+    fn a_click_on_a_row_focuses_the_list_and_selects_the_row() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        let Job::Main { request: MainRequest::File { path, .. }, .. } = sent(workspace.click_row(Pane::Files, 2))
+        else {
+            panic!("a file diff is requested")
+        };
+        assert_eq!(path, NativePath::new("c.txt"));
+        assert_eq!((workspace.focus(), workspace.selected(Pane::Files)), (Pane::Files, 2));
+        assert_eq!(workspace.click_row(Pane::Files, 2), Effect::Nothing, "the same row asks for nothing");
+    }
+
+    #[test]
+    fn a_click_past_the_last_row_only_focuses_the_list() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.key(Key::Char('2'));
+        sent(workspace.click_row(Pane::Files, 40));
+        assert_eq!((workspace.focus(), workspace.selected(Pane::Files)), (Pane::Files, 0));
+    }
+
+    #[test]
+    fn a_click_in_the_main_panel_selects_the_hunk_under_it() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        let lines = (0..12).map(|index| Line { tone: Tone::Text, text: index.to_string() }).collect();
+        workspace.reply(Reply::Main {
+            generation: workspace.generation,
+            view: MainView { lines, hunks: vec![0, 5, 9], file: None },
+        });
+        workspace.click_main(Some(6));
+        assert_eq!((workspace.focus(), workspace.hunk()), (Pane::Main, 1));
+        workspace.click_main(None);
+        assert_eq!(workspace.hunk(), 1, "a click on the frame keeps the hunk");
+    }
+
+    #[test]
+    fn the_wheel_moves_the_list_selection_and_scrolls_the_main_panel() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.wheel(Pane::Files, 9);
+        assert_eq!(workspace.selected(Pane::Files), 2, "the wheel stops at the last row");
+        let lines = (0..12).map(|index| Line { tone: Tone::Text, text: index.to_string() }).collect();
+        workspace.reply(Reply::Main {
+            generation: workspace.generation,
+            view: MainView { lines, hunks: Vec::new(), file: None },
+        });
+        workspace.wheel(Pane::Main, 3);
+        assert_eq!((workspace.focus(), workspace.scroll()), (Pane::Main, 3));
     }
 
     #[test]

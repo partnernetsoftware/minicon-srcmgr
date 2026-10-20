@@ -14,7 +14,7 @@ use minicon_platform::contract::input::{KeyPressState, LogicalKey, NamedKey, Nor
 use minicon_platform::font;
 use minicon_platform::window_host::{
     LogicalSize, PixelWindow, PixelWindowApplication, PixelWindowDirective, PixelWindowError, PixelWindowEvent,
-    PixelWindowOptions, XrgbPixelFrame, run_pixel_window,
+    PixelWindowOptions, PointerButton, PointerButtonState, WheelDelta, XrgbPixelFrame, run_pixel_window,
 };
 use minicon_ui_core::GlyphCache;
 use minicon_ui_core::pixel::{blend_mask_xrgb, fill_xrgb_rect};
@@ -25,6 +25,8 @@ use crate::workspace::{Effect, Key, Pane, PromptKind, Workspace};
 const BASE_SIZE_PX: f64 = 16.0;
 const MARGIN_PX: f64 = 12.0;
 const GLYPH_CACHE_ENTRIES: usize = 512;
+/// Rows scrolled per wheel notch.
+const WHEEL_LINES: f64 = 3.0;
 const BACKGROUND: u32 = 0x001E_1E1E;
 const BORDER: u32 = 0x003C_3C3C;
 const FOCUS_BORDER: u32 = 0x0056_9CD6;
@@ -75,6 +77,10 @@ struct StatusWindow {
     /// Jobs sent whose replies have not arrived; shown as "working".
     pending: usize,
     glyphs: GlyphCache<(char, u16), Arc<Option<RasterGlyph>>>,
+    /// The last pointer position in logical pixels, for events that omit one.
+    pointer: Option<(f64, f64)>,
+    /// The size and grid of the last frame, so pointer positions can be mapped to panels.
+    surface: Option<Surface>,
 }
 
 impl StatusWindow {
@@ -86,7 +92,44 @@ impl StatusWindow {
             replies: None,
             pending: 0,
             glyphs: GlyphCache::with_capacity(GLYPH_CACHE_ENTRIES),
+            pointer: None,
+            surface: None,
         }
+    }
+
+    /// Applies a pointer gesture at `point` (logical pixels). Ignored while a
+    /// prompt or help is open, so a click cannot change the panel under the
+    /// user's text.
+    fn pointer_gesture(
+        &mut self,
+        window: &PixelWindow,
+        point: Option<(f64, f64)>,
+        gesture: Gesture,
+    ) -> Result<PixelWindowDirective, PixelWindowError> {
+        let Some((x, y)) = point.or(self.pointer) else {
+            return Ok(PixelWindowDirective::Continue);
+        };
+        let Some(surface) = self.surface else {
+            return Ok(PixelWindowDirective::Continue);
+        };
+        if self.workspace.modal() {
+            return Ok(PixelWindowDirective::Continue);
+        }
+        let scale = window.scale_factor()?;
+        let hit = hit_test(&self.workspace, surface, (x * scale).round() as i64, (y * scale).round() as i64);
+        let effect = match (gesture, hit) {
+            (Gesture::Click, Hit::Panel(pane)) => self.workspace.click_row(pane, usize::MAX),
+            (Gesture::Click, Hit::Row(pane, index)) => self.workspace.click_row(pane, index),
+            (Gesture::Click, Hit::Main(line)) => self.workspace.click_main(line),
+            (Gesture::Click, Hit::Nothing) => Effect::Nothing,
+            (Gesture::Wheel(delta), hit) => match pane_of(hit) {
+                Some(pane) => self.workspace.wheel(pane, wheel_lines(delta, surface.grid.row, scale)),
+                None => Effect::Nothing,
+            },
+        };
+        let directive = self.dispatch(effect);
+        window.request_redraw();
+        Ok(directive)
     }
 
     fn start_worker(&mut self, window: &PixelWindow) -> Result<(), PixelWindowError> {
@@ -266,6 +309,23 @@ impl PixelWindowApplication for StatusWindow {
                 window.request_redraw();
                 Ok(directive)
             }
+            PixelWindowEvent::PointerMoved { position, .. } => {
+                self.pointer = Some((position.x, position.y));
+                Ok(PixelWindowDirective::Continue)
+            }
+            PixelWindowEvent::PointerLeft => {
+                self.pointer = None;
+                Ok(PixelWindowDirective::Continue)
+            }
+            PixelWindowEvent::PointerButton {
+                button: PointerButton::Left,
+                state: PointerButtonState::Pressed,
+                position,
+                ..
+            } => self.pointer_gesture(window, position.map(|point| (point.x, point.y)), Gesture::Click),
+            PixelWindowEvent::MouseWheel { delta, position, .. } => {
+                self.pointer_gesture(window, position.map(|point| (point.x, point.y)), Gesture::Wheel(delta))
+            }
             _ => Ok(PixelWindowDirective::Continue),
         }
     }
@@ -289,6 +349,7 @@ impl PixelWindowApplication for StatusWindow {
         };
         let width = frame.width();
         let height = frame.height();
+        self.surface = Some(Surface { width: i64::from(width), height: i64::from(height), grid });
         let draws = scene(&self.workspace, i64::from(width), i64::from(height), grid, self.pending);
         let mut canvas = Canvas { pixels: frame.pixels_mut(), stride: width, height };
         fill_xrgb_rect(canvas.pixels, width, 0, 0, width, height, BACKGROUND);
@@ -358,7 +419,7 @@ struct Inner {
 /// panel on the right and a two-line footer.
 fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: usize) -> Vec<Draw> {
     let mut draws = Vec::new();
-    let Grid { row, ascent, margin, gap, .. } = grid;
+    let Grid { row, ascent, margin, .. } = grid;
     let snapshot = workspace.snapshot();
 
     let header = format!("{}  |  {}", snapshot.title, snapshot.head);
@@ -369,23 +430,8 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         colour: colour(Tone::Heading),
     });
 
-    let footer_top = height - margin - 2 * row;
-    let body_top = margin + row + gap;
-    let body_height = (footer_top - gap - body_top).max(0);
-    let left_width = (width * 38 / 100 - margin - gap / 2).max(0);
-    let right_x = margin + left_width + gap;
-    let right_width = (width - margin - right_x).max(0);
-
-    let avail = (body_height - 2 * gap).max(0);
-    let files_height = avail * 50 / 100;
-    let branches_height = avail * 25 / 100;
-    let commits_height = avail - files_height - branches_height;
-    let files_rect = Rect { x: margin, y: body_top, width: left_width, height: files_height };
-    let branches_rect =
-        Rect { x: margin, y: files_rect.y + files_height + gap, width: left_width, height: branches_height };
-    let commits_rect =
-        Rect { x: margin, y: branches_rect.y + branches_height + gap, width: left_width, height: commits_height };
-    let main_rect = Rect { x: right_x, y: body_top, width: right_width, height: body_height };
+    let Layout { footer_top, files: files_rect, branches: branches_rect, commits: commits_rect, main: main_rect } =
+        layout(width, height, grid);
 
     let focus = workspace.focus();
     let selected = |pane| workspace.selected(pane);
@@ -461,6 +507,116 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         colour: MUTED_TEXT,
     });
     draws
+}
+
+/// The panels' rectangles for one frame, in physical pixels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Layout {
+    footer_top: i64,
+    files: Rect,
+    branches: Rect,
+    commits: Rect,
+    main: Rect,
+}
+
+fn layout(width: i64, height: i64, grid: Grid) -> Layout {
+    let Grid { row, margin, gap, .. } = grid;
+    let footer_top = height - margin - 2 * row;
+    let body_top = margin + row + gap;
+    let body_height = (footer_top - gap - body_top).max(0);
+    let left_width = (width * 38 / 100 - margin - gap / 2).max(0);
+    let right_x = margin + left_width + gap;
+    let right_width = (width - margin - right_x).max(0);
+
+    let avail = (body_height - 2 * gap).max(0);
+    let files_height = avail * 50 / 100;
+    let branches_height = avail * 25 / 100;
+    let commits_height = avail - files_height - branches_height;
+    let files = Rect { x: margin, y: body_top, width: left_width, height: files_height };
+    let branches = Rect { x: margin, y: files.y + files_height + gap, width: left_width, height: branches_height };
+    let commits = Rect { x: margin, y: branches.y + branches_height + gap, width: left_width, height: commits_height };
+    let main = Rect { x: right_x, y: body_top, width: right_width, height: body_height };
+    Layout { footer_top, files, branches, commits, main }
+}
+
+/// The size and grid of the last frame drawn.
+#[derive(Clone, Copy)]
+struct Surface {
+    width: i64,
+    height: i64,
+    grid: Grid,
+}
+
+/// What a pointer position is over.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Hit {
+    /// A list's frame, title or the blank part of a list.
+    Panel(Pane),
+    /// A list row. The index may be past the last item.
+    Row(Pane, usize),
+    /// The main panel: `None` on its frame or title, otherwise the line of the
+    /// whole diff under the pointer.
+    Main(Option<usize>),
+    Nothing,
+}
+
+#[derive(Clone, Copy)]
+enum Gesture {
+    Click,
+    Wheel(WheelDelta),
+}
+
+fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
+    let grid = surface.grid;
+    let panels = layout(surface.width, surface.height, grid);
+    let snapshot = workspace.snapshot();
+    let lists = [
+        (Pane::Files, panels.files, snapshot.files.len()),
+        (Pane::Branches, panels.branches, snapshot.branches.len()),
+        (Pane::Commits, panels.commits, snapshot.commits.len()),
+    ];
+    for (pane, rect, length) in lists {
+        if !contains(rect, x, y) {
+            continue;
+        }
+        let inner = inner_of(rect, grid);
+        if y < inner.top || y >= inner.top + inner.rows * grid.row {
+            return Hit::Panel(pane);
+        }
+        let offset = window_start(workspace.selected(pane), length, inner.rows);
+        return Hit::Row(pane, offset + ((y - inner.top) / grid.row) as usize);
+    }
+    if contains(panels.main, x, y) {
+        let inner = inner_of(panels.main, grid);
+        if y < inner.top || y >= inner.top + inner.rows * grid.row {
+            return Hit::Main(None);
+        }
+        return Hit::Main(Some(workspace.scroll() + ((y - inner.top) / grid.row) as usize));
+    }
+    Hit::Nothing
+}
+
+fn contains(rect: Rect, x: i64, y: i64) -> bool {
+    x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+}
+
+const fn pane_of(hit: Hit) -> Option<Pane> {
+    match hit {
+        Hit::Panel(pane) | Hit::Row(pane, _) => Some(pane),
+        Hit::Main(_) => Some(Pane::Main),
+        Hit::Nothing => None,
+    }
+}
+
+/// Rows a wheel delta moves. Scrolling up moves towards the top, so the result
+/// is negative for a positive wheel delta.
+fn wheel_lines(delta: WheelDelta, row: i64, scale: f64) -> isize {
+    let rows = match delta {
+        WheelDelta::Lines { y, .. } => f64::from(y) * WHEEL_LINES,
+        WheelDelta::LogicalPixels { y, .. } => y * scale / row.max(1) as f64,
+        _ => 0.0,
+    };
+    (-rows).round() as isize
 }
 
 struct Panel<'a> {
@@ -565,9 +721,8 @@ fn text_panel(
 
 /// Draws a bordered panel with its title and returns where its rows go.
 fn frame(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, focused: bool, title: &str) -> Inner {
-    let edge = (grid.row / 12).max(1);
+    let edge = edge(grid);
     let border = if focused { FOCUS_BORDER } else { BORDER };
-    let pad = grid.gap;
     let bottom = rect.y + rect.height - edge;
     draws.push(Draw::Rect { rect: Rect { x: rect.x, y: rect.y, width: rect.width, height: edge }, colour: border });
     draws.push(Draw::Rect { rect: Rect { x: rect.x, y: bottom, width: rect.width, height: edge }, colour: border });
@@ -577,19 +732,35 @@ fn frame(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, focused: bool, title: &s
         colour: border,
     });
 
-    let x = rect.x + edge + pad;
-    let inner_width = (rect.width - 2 * (edge + pad)).max(0);
+    let inner = inner_of(rect, grid);
     let title_top = rect.y + edge + grid.gap / 2;
-    let cols = grid.columns(inner_width);
     draws.push(Draw::Text {
-        x,
+        x: inner.x,
         baseline: title_top + grid.ascent,
-        text: fit(title, cols),
+        text: fit(title, inner.cols),
         colour: if focused { FOCUS_BORDER } else { MUTED_TEXT },
     });
-    let top = title_top + grid.row;
-    let rows = ((bottom - top) / grid.row).max(0);
-    Inner { x, top, width: inner_width, rows, cols }
+    inner
+}
+
+/// The border's thickness in pixels.
+fn edge(grid: Grid) -> i64 {
+    (grid.row / 12).max(1)
+}
+
+/// Where a bordered panel's rows go. Pure, so hit tests use the same geometry as drawing.
+fn inner_of(rect: Rect, grid: Grid) -> Inner {
+    let edge = edge(grid);
+    let bottom = rect.y + rect.height - edge;
+    let inner_width = (rect.width - 2 * (edge + grid.gap)).max(0);
+    let top = rect.y + edge + grid.gap / 2 + grid.row;
+    Inner {
+        x: rect.x + edge + grid.gap,
+        top,
+        width: inner_width,
+        rows: ((bottom - top) / grid.row).max(0),
+        cols: grid.columns(inner_width),
+    }
 }
 
 /// The first visible index, keeping `selected` inside a window of `rows` rows.
@@ -794,6 +965,24 @@ mod tests {
         let draws = scene(&workspace, 1040, 680, GRID, 0);
         let drawn = texts(&draws).iter().filter(|text| text.starts_with("+line ")).count();
         assert!(drawn > 0 && drawn < 100, "drew {drawn} diff rows");
+    }
+
+    #[test]
+    fn a_pointer_over_a_list_row_or_the_main_panel_hits_that_part() {
+        let workspace = Workspace::new(snapshot(3));
+        let surface = Surface { width: 1040, height: 680, grid: GRID };
+        let panels = layout(1040, 680, GRID);
+        let row_y = inner_of(panels.files, GRID).top + GRID.row * 2 + 1;
+        assert_eq!(hit_test(&workspace, surface, panels.files.x + 5, row_y), Hit::Row(Pane::Files, 2));
+        assert_eq!(hit_test(&workspace, surface, panels.main.x + 5, panels.main.y + 1), Hit::Main(None));
+        assert_eq!(hit_test(&workspace, surface, 1, 1), Hit::Nothing, "the header is not a target");
+    }
+
+    #[test]
+    fn a_wheel_notch_moves_three_rows_up_for_a_positive_delta() {
+        assert_eq!(wheel_lines(WheelDelta::Lines { x: 0.0, y: 1.0 }, 20, 1.0), -3);
+        assert_eq!(wheel_lines(WheelDelta::Lines { x: 0.0, y: -1.0 }, 20, 1.0), 3);
+        assert_eq!(wheel_lines(WheelDelta::LogicalPixels { x: 0.0, y: -40.0 }, 20, 2.0), 4);
     }
 
     #[test]
