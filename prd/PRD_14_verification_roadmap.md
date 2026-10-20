@@ -203,8 +203,8 @@ The initial MiniCon revision is owned by 02, regardless of newer upstream/siblin
 - QA-J10 hooks and filters subset (`crates/srcmgr-cli/tests/hostile_hooks_filters.rs`, 5 tests): an untrusted commit does not run a pre-commit hook; under a grant the hook runs (positive control); a hook edited after the grant is refused and does not run; an untrusted stage does not run a `filter.<name>.clean` command; under a grant the clean filter runs (positive control).
 - Persisted app setting (`setting get|set history.limit`, `crates/srcmgr-cli/tests/settings_m1.rs`, 5 tests): the first real consumer of the profile store's settings table. The value is validated (1 to 200) and only known keys are accepted. A saved limit applies to `history` in a later process when no `--limit` is given; an explicit `--limit` overrides it; an invalid or unknown setting is refused and the stored value is kept. The store is opened only when `--limit` is absent, so an explicit limit never waits on the profile lock. Not covered: crash injection, and the window does not expose the setting.
 - Branch listing (`branch <worktree> list`, `local_branches` in `srcmgr-git`, `crates/srcmgr-cli/tests/branches_m1.rs`, 4 tests): lists local branches in Git's order, marks only the checked-out one, passes each listed name back to `switch` unchanged, reports an unborn branch as empty, and escapes bidirectional controls in the label. Finding during this slice: `for-each-ref` does not expand `%xHH` escapes, so the listing uses one line per branch instead of a control-character separator. Not covered: the window does not yet show or switch branches; that needs a session inside the window and a screenshot.
-- Window branch switch (first slice): in `gui`, the `B` key switches to the next local branch in name order, wrapping and starting at the first branch when HEAD is detached. Each press passes the trust gate again, and the status view is rebuilt from a fresh read. A refused switch (for example one that would overwrite a local edit) leaves the branch and the file unchanged and shows Git's reason as a notice line under the heading. Evidence: a desktop capture after `B` shows `On branch feature-review` and the diff of the selected file; the next-branch rule has 3 unit tests; the notice line has a view unit test. Not covered: a screenshot of the refused path (the window did not take focus during that run, so the key went to another application and the capture is not evidence of the notice), creating a branch from the window, a branch picker, and a window-level test of the key. The window's switch runs on the UI thread and has not been measured. This is an outstanding responsiveness risk under the suite-quality gate: move Git execution off the UI thread and qualify real input feedback before treating the window workflow as complete.
-- Still open for M1: a scrolling diff view, graph view, branch create and picker in the window, and settings beyond `history.limit`.
+- Window branch switch (first slice): in `gui`, the `B` key switched to the next local branch in name order (0.0.2 removed `B`; the Branches panel checks out with `Space`), wrapping and starting at the first branch when HEAD is detached. Each press passes the trust gate again, and the status view is rebuilt from a fresh read. A refused switch (for example one that would overwrite a local edit) leaves the branch and the file unchanged and shows Git's reason as a notice line under the heading. Evidence: a desktop capture after `B` shows `On branch feature-review` and the diff of the selected file; the next-branch rule has 3 unit tests; the notice line has a view unit test. Not covered: a screenshot of the refused path (the window did not take focus during that run, so the key went to another application and the capture is not evidence of the notice), creating a branch from the window, a branch picker, and a window-level test of the key. The switch first ran on the UI thread. Release 0.0.2 moved all window Git work to a worker thread; input feedback still has to be measured (see the 0.0.2 plan).
+- Still open for M1: the graph view and settings beyond `history.limit`. The scrolling diff, branch create and branch picker arrived in 0.0.2.
 
 ### Release 0.0.1 (source-level, local)
 
@@ -212,6 +212,67 @@ The initial MiniCon revision is owned by 02, regardless of newer upstream/siblin
 - Created a local annotated tag `v0.0.1` on the commit that records the release status in PRD 12. It is not pushed.
 - Not done, and why: no binary is built or distributed (work order: "No binary publication is part of this assignment"); no signing or notarization (PRD 12 requires signing authority and six-cell evidence, neither available here); no push to `origin` or GitHub Release, because that is public and cannot be undone. Publishing needs explicit owner authority.
 - Gate for this release: the full test suite, clippy and the docs check pass at the tagged commit (recorded in the commit's session notes).
+
+### Release 0.0.2 plan (lazygit-level minimum)
+
+Goal: a native window that completes the daily local loop (inspect, stage, commit, browse history, switch branch) with the panel layout and key flow in [10](PRD_10_desktop_ux.md#release-002-shell-target-lazygit-level-minimum). Scope and non-goals are owned by 10 and 01; this section sequences the work and names the evidence.
+
+Work packages, in order:
+
+| Package | Deliverable | Exit evidence |
+|---|---|---|
+| P0 · key audit | Map each planned key to the pinned lazygit snapshot checklist; record matches and deliberate differences here | Table in this section lists each key as matched or differing, with the reason; QA-J09 reference checklist updated |
+| P1 · Git off the UI thread | Worker thread with request/response messages for every Git-backed action; the window shows a working state per panel | Unit test that a slow action does not block key handling; measured key-to-redraw latency on a 10k-file fixture recorded in the evidence log |
+| P2 · panel shell | Three-panel layout, focus cycle, selection clamping, options bar and `?` help | View-model unit tests for focus, clamping and Escape order; desktop capture of the full window |
+| P3 · files panel | Space stage/unstage for files; hunk stage/unstage from the diff panel, reusing `hunk` semantics | Tests that the window action leaves the same index as the CLI for the same input; worktree bytes unchanged |
+| P4 · branches panel | Enter switch with refusal notice; `n` create with the `branch create` name rules | Tests for refused switch and invalid name; capture of a refused switch taken only with the window focused |
+| P5 · commits panel | Paged history list and selected-commit detail (subject, body, author, changed files) | Tests against `git log` and `git show --stat` output for the same commit |
+| P6 · commit composer | `c` composer, saved-draft prefill, Ctrl+Enter commit through the CLI path; draft kept on refusal | Test that a refused commit keeps the draft; test that a successful commit clears it and matches `git log` |
+| P7 · diff scrolling | PgUp/PgDn/Home/End and visible-row rendering for long diffs | Test that only visible rows are laid out for a 5,000-line diff; no horizontal scroll regressions |
+| P8 · release gate | Full checks, resource receipt, captures per panel, tag `v0.0.2` locally | `cargo test --workspace`, `cargo clippy --workspace --all-targets`, `python scripts/check_docs.py` all pass at the tagged commit; no push or binary without owner authority |
+
+Ordering: P0 and P1 come first because P1 changes the threading model that P3 to P6 depend on. P2 may proceed in parallel with P1 once P0's table exists. P7 can land last without blocking the others.
+
+Risks and handling: the window host's input and focus behavior has been unreliable under synthetic keystrokes, so the verification captures are taken only with the window in the foreground, and a keystroke that lands elsewhere is reported rather than repeated. Text entry for the composer and branch name uses committed characters only; IME and screen-reader support stay open and are recorded as BLOCKED, not PASS. Linux and macOS cells remain BLOCKED for lack of hosts.
+
+#### P0 key audit result
+
+Checked on 2026-10-20 against the pinned lazygit reference page (`docs/keybindings/Keybindings_en.md` at `4e1eebe`). The page lists panel actions but not panel-jump keys, so `1`–`3` are a SrcMgr choice and are marked as such.
+
+| Action | lazygit reference | SrcMgr 0.0.2 | Result |
+|---|---|---|---|
+| Stage or unstage a file | `<space>` in Files | `Space` in Files | matched |
+| Commit | `c` in Files | `c` from any panel | matched; broader |
+| Commit in the git editor | `C` | not implemented | deliberate omission |
+| Stage hunk | `<space>` in the main panel | `Space` in the main panel | partial: hunk mode only |
+| Line mode toggle | `a` | not implemented | deliberate omission |
+| Previous or next hunk | `←`/`h`, `→`/`l` | `h`/`l`, Left/Right | matched |
+| Checkout branch | `<space>` in Branches | `Space` in Branches | matched |
+| New branch | `n` in Branches | `n` in Branches | matched |
+| Commits: view | `<enter>` views files | `Enter` shows detail and changed files | differs: detail in main panel |
+| Checkout commit (detached) | `<space>` in Commits | notice: not available yet | deferred |
+| Focus main panel | `<enter>` or `<tab>` | `Enter` or `Tab` | matched |
+| Leave main panel | `<esc>` | `Esc` back to the list | matched |
+| Scroll main panel | `PgUp`/`PgDn`, `K`/`J`, `Ctrl+U`/`Ctrl+D` | `PgUp`/`PgDn`, `K`/`J`, `Home`/`End` | partial: no `Ctrl+U`/`Ctrl+D` |
+| Help | `?` | `?` | matched |
+| Quit | `q`, `Ctrl+C` | `q`, `Ctrl+C` | matched |
+| Screen mode | `+` / `_` | not implemented | deferred |
+| Focus a panel by number | not on the reference page | `1`, `2`, `3` | SrcMgr choice |
+| Reload | not on the reference page | `r` | SrcMgr choice |
+
+#### Package status and evidence
+
+- P0: done; the table above.
+- P1: done for correctness, not measured. All window Git work runs on one worker thread (`srcmgr-git` thread in `srcmgr-ui`), which replies over a channel and wakes the window through MiniCon's `WindowWaker`; the Windows adapter posts a window message for each wake. Covered by the backend job tests in `srcmgr-cli` (12 unit tests). OPEN: key-to-redraw latency on a 10,000-file fixture is not measured, and the resource budget is not recorded for 0.0.2.
+- P2: done. The panel layout is a pure scene builder with tests for truncation, selection windows, highlights, footer hints and help; the focus and selection state machine has 24 unit tests in `srcmgr-ui`. Desktop capture of the window taken with `PrintWindow` (1040 × 680): three list panels, the diff, and the footer.
+- P3: done for file and whole-hunk actions. Backend tests check the index with `git diff --cached` after a file and a hunk action, and check that the working tree bytes do not change. Line-level staging is not part of 0.0.2.
+- P4: done. Checkout refuses the current branch with a notice; a switch that would overwrite a local edit is refused by Git and the branch stays. `n` creates with the `branch create` name rules. Not captured on screen.
+- P5: done. Commit detail comes from `git show --stat`; the backend test checks the subject. Not compared line by line with `git show` output.
+- P6: done. The composer is prefilled from the draft; a refused commit keeps the text and the draft; a successful commit clears the draft (backend tests). Esc saves the draft.
+- P7: done. Scrolling by page, by line and to the ends. The scene draws only the visible rows; a test with 5,000 lines draws fewer than 100 diff rows.
+- P8: see the release record below.
+
+Known limits for 0.0.2: no IME composition beyond committed text, no screen-reader bridge, no line staging, no checkout of a commit, and the list panels rebuild their row text on each redraw (fine at this size; a virtualised list model is the next step if measurement asks for it). Windows is the only host with a window; Linux and macOS cells stay BLOCKED.
 
 ### Evidence and blocker handling
 
@@ -224,3 +285,10 @@ The initial MiniCon revision is owned by 02, regardless of newer upstream/siblin
 ### Suggested assignment text
 
 > Implement MiniCon SrcMgr starting at AGENTS.md, PRD.md and this section. Complete the M0 foundation work packages and then the smallest safe host-native M1 local Git slice. Reuse pinned MiniCon crates, preserve the future VCS capability boundary, and keep low resource use measurable from the first native shell. Use disposable fixtures and actual Git-state oracles. Keep later features behind their milestone boundaries, record blocked native/platform gates honestly, and do not modify the sibling MiniCon checkout or publish binaries. Follow the handoff's completion/evidence rules and update owning PRDs as implementation progresses.
+
+### Release 0.0.2 (source-level, local)
+
+- `Cargo.toml` declares `0.0.2` for the workspace. Status, limits and the unpublished state are recorded in [12](PRD_12_platform_delivery.md#release-002-status).
+- Gate at the release commit: `cargo test --workspace` 139 passing with MinGit 2.56.0 through `SRCMGR_TEST_GIT`; `cargo clippy --workspace --all-targets` zero warnings; `python scripts/check_docs.py` PASS.
+- Created a local annotated tag `v0.0.2` on the release commit. It is not pushed, no GitHub Release is created, and no binary is built, because the owner asked for a local release that is not public.
+- Still open at this release: the OPEN items under each package in the 0.0.2 plan, measured responsiveness and resource budgets, and live key-driven verification of the window.

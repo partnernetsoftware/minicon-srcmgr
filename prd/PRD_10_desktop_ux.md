@@ -73,6 +73,23 @@ English and Simplified Chinese are required by M2; Traditional Chinese by M3. Lo
 
 Pixel rendering must expose native accessibility via UI Automation, macOS accessibility and Linux AT-SPI, directly or through a proven bridge. Required semantics: names/roles/states, focus/action routing, selected graph row, list virtual item navigation, editable text/caret/ranges, diff line descriptions and live progress announcements without flooding. Screen readers must complete the daily journey and conflict continuation. [02](PRD_02_architecture_reuse.md) gates feasibility; screenshots alone are insufficient evidence.
 
+## Release 0.0.2 shell target (lazygit-level minimum)
+
+Scope: the first native window that can carry the daily local loop without the CLI. The benchmark is lazygit's core panel workflow, not its full command set (see [01](PRD_01_product.md#functional-benchmark-and-simplicity)). Each binding was checked against the pinned lazygit reference page (`docs/keybindings`, snapshot `4e1eebe`); the matches and deliberate differences are recorded in [14](PRD_14_verification_roadmap.md#release-002-plan-lazygit-level-minimum).
+
+- **Layout.** A left column holds three panels stacked as Files (status), Branches and Commits. The main panel on the right shows the diff of the selected file, the selected commit's detail, or the commit composer. The header shows the repository and HEAD; a two-line footer shows a notice (such as a refused switch) and the keys of the focused panel. Each list panel shows its name and count, and keeps the selection in view.
+- **Focus and navigation.** `1`, `2`, `3` focus Files, Branches and Commits. Tab and Shift+Tab cycle through the three lists and the main panel. Up/Down or `k`/`j` move the selection in a list and scroll the main panel when it has focus. Enter moves into the main panel; Escape returns to the list that feeds it, with its selection intact. `?` shows the key list; Escape closes it. `q` or Ctrl+C quits.
+- **Files.** Space stages a file that has unstaged changes, and unstages a fully staged one. In the main panel, Space stages a hunk of the unstaged diff or unstages a hunk of the staged diff. `h` and `l` (or Left and Right) move between hunks. Every action passes the trust gate and the same index checks as the CLI, then refreshes from a fresh status read.
+- **Branches.** Space checks out the selected branch; the current branch is refused with a notice. A refused switch (for example one that would overwrite a local edit) shows Git's reason in the footer. `n` opens a one-line name field; the name is checked by Git's rules before any change, the same as `branch create`.
+- **Commits.** The list shows the history from `history`. Enter shows the commit's author, date, message and changed files in the main panel. Checking out a commit is not available yet and says so.
+- **Commit composer.** `c` opens a multiline field pre-filled from the saved draft. Ctrl+Enter commits the staged content through the same path as the CLI and clears the draft only after Git accepts the commit; a refused commit keeps the text in the field. Escape saves the text as the draft and closes the field. Typing never runs a command by itself.
+- **Scrolling.** PgUp and PgDn (or `K` and `J`) scroll the main panel a page at a time; Home and End jump to the ends. Only visible rows are drawn.
+- **Responsiveness.** Every Git call runs on one worker thread, which wakes the window when it has an answer. The footer shows "working..." while jobs are pending, and the window keeps handling keys and resizing. A late answer for an earlier selection is dropped. This closes the risk recorded in 14 for the M1 branch switch, which ran on the UI thread.
+- **Deliberate differences from lazygit.** `1`–`3` focus panels by number (the reference page does not list panel keys); `q` quits; `B` (the 0.0.1 next-branch key) is removed in favour of the Branches panel; `r` reloads. Commit from the editor (`C`), line-level staging, and screen modes are not part of 0.0.2.
+- **Non-goals for 0.0.2.** Graph lanes, interactive rebase, cherry-pick, stash, worktrees, search and filter, remote operations, IME composition beyond committed text, screen-reader bridges, Linux and macOS shells, and any destructive one-key action.
+
+Acceptance is recorded in the work order in [14](PRD_14_verification_roadmap.md#release-002-plan-lazygit-level-minimum). Input feedback and idle resource use are measured against the budgets in 14, not inferred from the layout.
+
 ## Delivery contracts
 
 | ID / leaf | Invariant | Observable evidence | Safe failure | Dependencies | Non-goal |

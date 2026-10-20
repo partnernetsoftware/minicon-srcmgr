@@ -91,3 +91,30 @@ Verified with MinGit 2.56.0 through `SRCMGR_TEST_GIT`:
 - Remote helpers, the full deny/grant matrix, and clean-machine or MSRV verification are open.
 
 See [the implementation work order and evidence](PRD_14_verification_roadmap.md#implementation-work-order-and-evidence) for the evidence behind each item.
+
+## Release 0.0.2 status
+
+Source-level release, tagged locally as `v0.0.2` and not published: nothing is pushed, no GitHub Release is created, and no binary is built for distribution. The same limits as 0.0.1 apply: no signing or notarization, and no six-cell platform evidence.
+
+### What changed since 0.0.1
+
+- The status window is now a workspace with three list panels (Files, Branches, Commits) and a main panel for the diff, the commit detail or the commit composer. The key map follows lazygit's core flow, with the differences listed in [10](PRD_10_desktop_ux.md#release-002-shell-target-lazygit-level-minimum).
+- From the window: stage and unstage files and hunks, check out and create branches, commit from a composer that keeps the saved draft, browse history and commit details, and scroll long diffs.
+- Every Git call runs on a worker thread, so the window keeps handling keys while Git works.
+- The `B` key from 0.0.1 is removed; the Branches panel does the switch.
+
+### Verified on the Windows host
+
+- `cargo test --workspace` with MinGit 2.56.0 through `SRCMGR_TEST_GIT`: 139 tests pass, including the backend job tests that drive the same trust gate, Git calls and profile store the window uses.
+- `cargo clippy --workspace --all-targets`: zero warnings.
+- `python scripts/check_docs.py`: PASS.
+- A desktop capture of the window contents shows the three list panels, the diff and the footer hints.
+
+### Known limits
+
+- Key-to-redraw latency and resource use are not measured against the budgets in [14](PRD_14_verification_roadmap.md#performance-and-resource-budgets). The worker thread removes Git from the UI thread, but that is not yet evidence of responsiveness.
+- The window's key handling is covered by unit tests of the state machine, not by sending keys to the live window: during verification, focus stayed with another application, so synthetic keys were not delivered.
+- No IME composition beyond committed text, no screen-reader bridge, no line-level staging, no checkout of a commit, no graph lanes.
+- Linux and macOS cells are not run.
+
+See [the implementation work order and evidence](PRD_14_verification_roadmap.md#release-002-plan-lazygit-level-minimum) for the package-by-package record.

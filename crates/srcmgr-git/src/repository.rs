@@ -370,6 +370,32 @@ pub fn local_branches(installation: &GitInstallation, identity: &RepositoryIdent
         .collect()
 }
 
+/// The message and changed-file summary of one commit, as text for display.
+/// The id must come from [`log`]; it is passed as a single argument and the
+/// `--` ends the revision list, so it cannot be read as an option or a path.
+pub fn commit_detail(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    id: &str,
+) -> Result<String, GitError> {
+    let output = run_mutation(
+        installation,
+        identity,
+        &[
+            OsString::from("show"),
+            "--no-color".into(),
+            "--no-ext-diff".into(),
+            "--no-textconv".into(),
+            "--stat".into(),
+            "--format=commit %H%nAuthor: %an%nDate:   %ad%n%n%B".into(),
+            id.into(),
+            "--".into(),
+        ],
+        None,
+    )?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 /// One commit in the history list.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommitSummary {

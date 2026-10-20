@@ -6,7 +6,7 @@
 //! passes the trust gate, which checks only filesystem metadata before Git runs.
 
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -17,10 +17,11 @@ use srcmgr_domain::{
     VcsBackend,
 };
 use srcmgr_git::{
-    BranchSummary, GitBackend, GitInstallation, RepositoryIdentity, commit, locate, read_status, stage, unstage,
+    GitBackend, GitInstallation, RepositoryIdentity, commit, locate, read_status, stage, unstage,
 };
 use srcmgr_state::{TrustStore, default_root, fingerprint};
-use srcmgr_ui::{BranchCycler, StatusView};
+
+mod window_backend;
 
 const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] status <worktree> [--json]
@@ -80,89 +81,18 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
     }
 }
 
-/// Shows the status in a native window. It goes through the same trust gate
-/// as `status`, so the window never reads a repository without a grant.
+/// Opens the workspace window. The first snapshot goes through the trust gate,
+/// so the window never shows a repository that is not granted; every later
+/// action passes the gate again on the worker.
 fn gui(options: &Options) -> Result<(), String> {
     let worktree = worktree_argument(options, 1)?;
-    let key = repository_key(worktree)?;
-    // The profile lock is released before the window opens, so other
-    // invocations are not blocked while the window stays open.
-    let draft = {
-        let store = open_profile_store(options)?;
-        store.get_draft(BACKEND_GIT, &key).map_err(|error| error.to_string())?
-    };
-    let view = status_view(options, worktree, draft.as_deref())?;
-    let cycler = BranchCycle {
+    let backend = window_backend::WindowBackend {
         options: options.clone(),
         worktree: worktree.to_path_buf(),
-        draft,
     };
-    srcmgr_ui::show(view, Box::new(cycler)).map_err(|error| format!("the status window could not be shown: {error}"))
-}
-
-/// Reads the status through the trust gate and builds the window view.
-fn status_view(options: &Options, worktree: &Path, draft: Option<&str>) -> Result<StatusView, String> {
-    let session = open_trusted(options, worktree)?;
-    let snapshot = read_status(&session.installation, &session.identity, Generation(1))
-        .map_err(|error| error.to_string())?;
-    let name = worktree
-        .file_name()
-        .map_or_else(|| "repository".to_owned(), |name| name.to_string_lossy().into_owned());
-    let mut view = StatusView::from_snapshot(&snapshot, format!("MiniCon SrcMgr - {name}")).with_draft(draft);
-    view.attach_diffs(entry_diffs(&session, &snapshot));
-    Ok(view)
-}
-
-/// The window's `B` key. Every press passes the trust gate again, so a grant
-/// revoked or a config changed while the window is open stops the switch.
-struct BranchCycle {
-    options: Options,
-    worktree: PathBuf,
-    draft: Option<String>,
-}
-
-impl BranchCycler for BranchCycle {
-    fn next_branch(&mut self) -> Result<StatusView, String> {
-        let session = open_trusted(&self.options, &self.worktree)?;
-        let branches =
-            srcmgr_git::local_branches(&session.installation, &session.identity).map_err(|error| error.to_string())?;
-        let target = next_branch(&branches).ok_or("no other local branch to switch to")?;
-        srcmgr_git::switch_branch(&session.installation, &session.identity, OsStr::new(&target.name))
-            .map_err(|error| error.to_string())?;
-        status_view(&self.options, &self.worktree, self.draft.as_deref())
-    }
-}
-
-/// The branch after the checked-out one, wrapping around. A detached HEAD
-/// starts at the first branch. `None` when there is no other branch.
-fn next_branch(branches: &[BranchSummary]) -> Option<&BranchSummary> {
-    let next = match branches.iter().position(|branch| branch.current) {
-        Some(current) => (current + 1) % branches.len(),
-        None => 0,
-    };
-    branches.get(next).filter(|branch| !branch.current)
-}
-
-/// Upper bound on diffs computed for the status window, so a very large change
-/// set cannot stall the first paint.
-const MAX_WINDOW_DIFFS: usize = 200;
-
-/// One diff text per entry, in snapshot order. Untracked files have no index
-/// diff; a failed read is shown in place rather than hidden.
-fn entry_diffs(session: &Session, snapshot: &StatusSnapshot) -> Vec<String> {
-    snapshot
-        .entries
-        .iter()
-        .take(MAX_WINDOW_DIFFS)
-        .map(|entry| {
-            if entry.unstaged == ChangeKind::Untracked {
-                return "(untracked file: no diff against the index)".to_owned();
-            }
-            let staged = entry.unstaged == ChangeKind::Unmodified;
-            srcmgr_git::diff(&session.installation, &session.identity, entry.path.as_os_str(), staged)
-                .unwrap_or_else(|error| format!("(diff unavailable: {error})"))
-        })
-        .collect()
+    let snapshot = backend.snapshot()?;
+    srcmgr_ui::show(snapshot, Box::new(backend))
+        .map_err(|error| format!("the status window could not be shown: {error}"))
 }
 
 /// `branch <worktree> create <name>` or `branch <worktree> switch <name>`.
@@ -745,37 +675,4 @@ fn code(kind: ChangeKind) -> char {
 fn display_path(path: &Path) -> String {
     let text = path.display().to_string();
     text.strip_prefix(r"\?\").map_or(text.clone(), str::to_owned)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{BranchSummary, next_branch};
-
-    fn branch(name: &str, current: bool) -> BranchSummary {
-        BranchSummary {
-            name: name.to_owned(),
-            label: name.to_owned(),
-            current,
-        }
-    }
-
-    #[test]
-    fn the_next_branch_follows_the_checked_out_one_and_wraps() {
-        let branches = [branch("a", false), branch("b", true), branch("c", false)];
-        assert_eq!(next_branch(&branches).map(|b| b.name.as_str()), Some("c"));
-        let last = [branch("a", false), branch("b", false), branch("c", true)];
-        assert_eq!(next_branch(&last).map(|b| b.name.as_str()), Some("a"));
-    }
-
-    #[test]
-    fn a_detached_head_starts_at_the_first_branch() {
-        let branches = [branch("a", false), branch("b", false)];
-        assert_eq!(next_branch(&branches).map(|b| b.name.as_str()), Some("a"));
-    }
-
-    #[test]
-    fn a_single_branch_has_no_next() {
-        assert!(next_branch(&[branch("main", true)]).is_none());
-        assert!(next_branch(&[]).is_none());
-    }
 }

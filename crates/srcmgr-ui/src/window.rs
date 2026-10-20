@@ -1,34 +1,56 @@
-//! Native pixel window for the status view. The event loop, surface and
-//! presentation belong to MiniCon's platform layer; this module supplies only
-//! the application: glyph masks from the platform font, composited with
-//! MiniCon's pixel kernels into the XRGB frame it provides.
+//! Native pixel window for the status workspace. The event loop, surface and
+//! presentation belong to MiniCon's platform layer; this module supplies the
+//! application: a panel layout built from plain drawing commands, glyph masks
+//! from the platform font composited with MiniCon's pixel kernels, and a worker
+//! thread that runs Git so the window never waits on it.
 
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
 use std::time::Instant;
 
 use minicon_platform::contract::font::RasterGlyph;
 use minicon_platform::contract::input::{KeyPressState, LogicalKey, NamedKey, NormalizedKeyEvent};
 use minicon_platform::font;
 use minicon_platform::window_host::{
-    LogicalSize, PixelWindow, PixelWindowApplication, PixelWindowDirective, PixelWindowError,
-    PixelWindowEvent, PixelWindowOptions, XrgbPixelFrame, run_pixel_window,
+    LogicalSize, PixelWindow, PixelWindowApplication, PixelWindowDirective, PixelWindowError, PixelWindowEvent,
+    PixelWindowOptions, XrgbPixelFrame, run_pixel_window,
 };
 use minicon_ui_core::GlyphCache;
 use minicon_ui_core::pixel::{blend_mask_xrgb, fill_xrgb_rect};
 
-use crate::view::{StatusView, Tone};
+use crate::model::{Backend, Job, Line, Reply, Snapshot, Tone, short};
+use crate::workspace::{Effect, Key, Pane, PromptKind, Workspace};
 
 const BASE_SIZE_PX: f64 = 16.0;
-const MARGIN_PX: f64 = 16.0;
+const MARGIN_PX: f64 = 12.0;
 const GLYPH_CACHE_ENTRIES: usize = 512;
 const BACKGROUND: u32 = 0x001E_1E1E;
+const BORDER: u32 = 0x003C_3C3C;
+const FOCUS_BORDER: u32 = 0x0056_9CD6;
 const SELECTION: u32 = 0x0026_4F78;
+const SELECTION_DIM: u32 = 0x0033_3740;
+const MUTED_TEXT: u32 = 0x0080_8080;
+
+const HELP_LINES: [&str; 11] = [
+    "1 2 3        focus Files, Branches or Commits",
+    "Tab          next pane (Shift+Tab previous)",
+    "Up/Down j/k  move in the list, or scroll the main panel",
+    "Enter        move into the main panel; Esc goes back",
+    "Space        stage or unstage a file; checkout a branch",
+    "             in the main panel: stage or unstage the hunk",
+    "h / l        previous or next hunk in the main panel",
+    "PgUp/PgDn    scroll the main panel (K / J too); Home, End",
+    "c            commit: Ctrl+Enter commits, Esc keeps the draft",
+    "n            new branch (Branches panel); r reloads",
+    "?            this help; q or Ctrl+C quits",
+];
 
 fn colour(tone: Tone) -> u32 {
     match tone {
         Tone::Heading => 0x0056_9CD6,
         Tone::Text => 0x00D4_D4D4,
-        Tone::Muted => 0x0080_8080,
+        Tone::Muted => MUTED_TEXT,
         Tone::Staged => 0x00B5_CEA8,
         Tone::Changed => 0x00DC_DCAA,
         Tone::Untracked => 0x0073_C991,
@@ -38,38 +60,72 @@ fn colour(tone: Tone) -> u32 {
     }
 }
 
-/// Switches to the next local branch on behalf of the window and returns the
-/// status view that results. The caller owns trust checks and the Git work;
-/// an error is shown to the user as a notice and leaves the view unchanged.
-pub trait BranchCycler {
-    fn next_branch(&mut self) -> Result<StatusView, String>;
-}
-
-/// Opens the status window and blocks until the user closes it. `B` asks the
-/// cycler for the next branch.
-pub fn show(view: StatusView, cycler: Box<dyn BranchCycler>) -> Result<(), PixelWindowError> {
-    let options = PixelWindowOptions::new(
-        view.title.clone(),
-        LogicalSize {
-            width: 960.0,
-            height: 640.0,
-        },
-    );
-    run_pixel_window(options, Box::new(StatusWindow::new(view, cycler)))
+/// Opens the workspace window and blocks until the user quits. Git work runs on
+/// a worker thread that owns `backend`; the window wakes when a reply arrives.
+pub fn show(snapshot: Snapshot, backend: Box<dyn Backend>) -> Result<(), PixelWindowError> {
+    let options = PixelWindowOptions::new(snapshot.title.clone(), LogicalSize { width: 1040.0, height: 680.0 });
+    run_pixel_window(options, Box::new(StatusWindow::new(snapshot, backend)))
 }
 
 struct StatusWindow {
-    view: StatusView,
-    cycler: Box<dyn BranchCycler>,
+    workspace: Workspace,
+    backend: Option<Box<dyn Backend>>,
+    jobs: Option<Sender<Job>>,
+    replies: Option<Receiver<Reply>>,
+    /// Jobs sent whose replies have not arrived; shown as "working".
+    pending: usize,
     glyphs: GlyphCache<(char, u16), Arc<Option<RasterGlyph>>>,
 }
 
 impl StatusWindow {
-    fn new(view: StatusView, cycler: Box<dyn BranchCycler>) -> Self {
+    fn new(snapshot: Snapshot, backend: Box<dyn Backend>) -> Self {
         Self {
-            view,
-            cycler,
+            workspace: Workspace::new(snapshot),
+            backend: Some(backend),
+            jobs: None,
+            replies: None,
+            pending: 0,
             glyphs: GlyphCache::with_capacity(GLYPH_CACHE_ENTRIES),
+        }
+    }
+
+    fn start_worker(&mut self, window: &PixelWindow) -> Result<(), PixelWindowError> {
+        let Some(mut backend) = self.backend.take() else {
+            return Ok(());
+        };
+        let (job_sender, job_receiver) = mpsc::channel::<Job>();
+        let (reply_sender, reply_receiver) = mpsc::channel::<Reply>();
+        let waker = window.waker();
+        thread::Builder::new()
+            .name("srcmgr-git".to_owned())
+            .spawn(move || {
+                for job in job_receiver {
+                    let reply = backend.run(job);
+                    if reply_sender.send(reply).is_err() || waker.wake().is_err() {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| PixelWindowError::failed("status_worker_spawn", error))?;
+        self.jobs = Some(job_sender);
+        self.replies = Some(reply_receiver);
+        Ok(())
+    }
+
+    /// Runs an effect. Jobs go to the worker; quitting ends the event loop.
+    fn dispatch(&mut self, effect: Effect) -> PixelWindowDirective {
+        match effect {
+            Effect::Nothing => PixelWindowDirective::Continue,
+            Effect::Quit => PixelWindowDirective::Exit,
+            Effect::Send(job) => {
+                let sent = self.jobs.as_ref().is_some_and(|jobs| jobs.send(job).is_ok());
+                if sent {
+                    self.pending += 1;
+                } else {
+                    let _ = self.workspace.reply(Reply::Notice("the Git worker has stopped".to_owned()));
+                }
+                PixelWindowDirective::Continue
+            }
         }
     }
 
@@ -86,7 +142,13 @@ impl StatusWindow {
 
     /// Draws `text` with its pen starting at `at` on its baseline. Pixels
     /// outside the canvas are clipped rather than wrapped.
-    fn draw_text(&mut self, canvas: &mut Canvas<'_>, at: Pen, text: &str, style: Style) -> Result<(), PixelWindowError> {
+    fn draw_text(
+        &mut self,
+        canvas: &mut Canvas<'_>,
+        at: Pen,
+        text: &str,
+        style: Style,
+    ) -> Result<(), PixelWindowError> {
         let mut pen = at.x;
         for character in text.chars() {
             let glyph = self.glyph(character, style.size)?;
@@ -123,6 +185,25 @@ struct Style {
     ascent: i64,
 }
 
+fn fill(canvas: &mut Canvas<'_>, rect: Rect, colour: u32) {
+    let left = rect.x.max(0);
+    let top = rect.y.max(0);
+    let right = (rect.x + rect.width).min(i64::from(canvas.stride));
+    let bottom = (rect.y + rect.height).min(i64::from(canvas.height));
+    if right <= left || bottom <= top {
+        return;
+    }
+    fill_xrgb_rect(
+        canvas.pixels,
+        canvas.stride,
+        left as u32,
+        top as u32,
+        (right - left) as u32,
+        (bottom - top) as u32,
+        colour,
+    );
+}
+
 fn blit_mask(canvas: &mut Canvas<'_>, glyph: &RasterGlyph, left: i64, top: i64, foreground: u32) {
     let glyph_width = glyph.width as usize;
     for row in 0..glyph.height as i64 {
@@ -148,8 +229,11 @@ fn blit_mask(canvas: &mut Canvas<'_>, glyph: &RasterGlyph, left: i64, top: i64, 
 
 impl PixelWindowApplication for StatusWindow {
     fn opened(&mut self, window: &PixelWindow) -> Result<PixelWindowDirective, PixelWindowError> {
+        self.start_worker(window)?;
+        let effect = self.workspace.open();
+        let directive = self.dispatch(effect);
         window.request_redraw();
-        Ok(PixelWindowDirective::Continue)
+        Ok(directive)
     }
 
     fn event(
@@ -159,21 +243,28 @@ impl PixelWindowApplication for StatusWindow {
     ) -> Result<PixelWindowDirective, PixelWindowError> {
         match event {
             PixelWindowEvent::CloseRequested => Ok(PixelWindowDirective::Exit),
-            PixelWindowEvent::Keyboard(key) => {
-                if let Some(forward) = arrow_direction(&key) {
-                    let before = self.view.selected();
-                    self.view.move_selection(forward);
-                    if self.view.selected() != before {
-                        window.request_redraw();
+            PixelWindowEvent::Wake => {
+                let replies: Vec<Reply> =
+                    self.replies.as_ref().map_or_else(Vec::new, |receiver| receiver.try_iter().collect());
+                let mut directive = PixelWindowDirective::Continue;
+                for reply in replies {
+                    self.pending = self.pending.saturating_sub(1);
+                    let effect = self.workspace.reply(reply);
+                    if matches!(self.dispatch(effect), PixelWindowDirective::Exit) {
+                        directive = PixelWindowDirective::Exit;
                     }
-                } else if is_branch_key(&key) {
-                    match self.cycler.next_branch() {
-                        Ok(next) => self.view = next,
-                        Err(message) => self.view.set_notice(&message),
-                    }
-                    window.request_redraw();
                 }
-                Ok(PixelWindowDirective::Continue)
+                window.request_redraw();
+                Ok(directive)
+            }
+            PixelWindowEvent::Keyboard(event) => {
+                let Some(key) = key_of(&event) else {
+                    return Ok(PixelWindowDirective::Continue);
+                };
+                let effect = self.workspace.key(key);
+                let directive = self.dispatch(effect);
+                window.request_redraw();
+                Ok(directive)
             }
             _ => Ok(PixelWindowDirective::Continue),
         }
@@ -188,55 +279,27 @@ impl PixelWindowApplication for StatusWindow {
         let size = (BASE_SIZE_PX * scale).round().max(8.0) as u16;
         let metrics = font::primary_metrics(size)
             .map_err(|error| PixelWindowError::failed("status_font_metrics", format!("{error:?}")))?;
-        let line_height = metrics.cell_height.ceil().max(1.0) as i64;
-        let ascent = metrics.ascent.round() as i64;
-        let advance = metrics.cell_width;
-        let margin = (MARGIN_PX * scale).round() as i64;
-
+        let row = metrics.cell_height.ceil().max(1.0) as i64;
+        let grid = Grid {
+            row,
+            ascent: metrics.ascent.round() as i64,
+            advance: metrics.cell_width,
+            margin: (MARGIN_PX * scale).round() as i64,
+            gap: (row / 3).max(2),
+        };
         let width = frame.width();
         let height = frame.height();
-        let lines = self.view.lines.clone();
-        let title = self.view.title.clone();
-        let selected_row =
-            (self.view.entry_count() > 0).then(|| self.view.first_row_index() + self.view.selected());
-        let diff = self.view.selected_diff().to_vec();
-        let mut canvas = Canvas {
-            pixels: frame.pixels_mut(),
-            stride: width,
-            height,
-        };
+        let draws = scene(&self.workspace, i64::from(width), i64::from(height), grid, self.pending);
+        let mut canvas = Canvas { pixels: frame.pixels_mut(), stride: width, height };
         fill_xrgb_rect(canvas.pixels, width, 0, 0, width, height, BACKGROUND);
-
-        let style = |colour: u32| Style {
-            size,
-            colour,
-            advance,
-            ascent,
-        };
-        let title_at = Pen {
-            x: margin,
-            baseline: margin + ascent,
-        };
-        self.draw_text(&mut canvas, title_at, &title, style(colour(Tone::Muted)))?;
-
-        let mut baseline = margin + line_height + ascent;
-        for (index, line) in lines.iter().enumerate() {
-            if Some(index) == selected_row {
-                let top = baseline - ascent;
-                fill_xrgb_rect(canvas.pixels, width, 0, top.max(0) as u32, width, line_height as u32, SELECTION);
+        for draw in draws {
+            match draw {
+                Draw::Rect { rect, colour } => fill(&mut canvas, rect, colour),
+                Draw::Text { x, baseline, text, colour } => {
+                    let style = Style { size, colour, advance: metrics.cell_width, ascent: grid.ascent };
+                    self.draw_text(&mut canvas, Pen { x, baseline }, &text, style)?;
+                }
             }
-            self.draw_text(&mut canvas, Pen { x: margin, baseline }, &line.text, style(colour(line.tone)))?;
-            baseline += line_height;
-        }
-
-        // The diff of the selected entry sits below the list, separated by a gap.
-        baseline += line_height;
-        for line in &diff {
-            if baseline > i64::from(height) {
-                break;
-            }
-            self.draw_text(&mut canvas, Pen { x: margin, baseline }, &line.text, style(colour(line.tone)))?;
-            baseline += line_height;
         }
         Ok(PixelWindowDirective::Wait)
     }
@@ -250,23 +313,507 @@ impl PixelWindowApplication for StatusWindow {
     }
 }
 
-/// True for a press of the `B` key, with or without Shift.
-fn is_branch_key(key: &NormalizedKeyEvent) -> bool {
-    if key.state != KeyPressState::Pressed {
-        return false;
-    }
-    matches!(&key.logical, LogicalKey::Character(text) if text == "b" || text == "B")
+/// Plain drawing commands. The scene is built from the workspace without any
+/// platform type, so the layout is testable on any host.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Draw {
+    Rect { rect: Rect, colour: u32 },
+    Text { x: i64, baseline: i64, text: String, colour: u32 },
 }
 
-/// `Some(true)` for Down, `Some(false)` for Up, and `None` for any other key
-/// or for a release, so only presses move the selection.
-fn arrow_direction(key: &NormalizedKeyEvent) -> Option<bool> {
-    if key.state != KeyPressState::Pressed {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Rect {
+    x: i64,
+    y: i64,
+    width: i64,
+    height: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Grid {
+    /// Line height in pixels.
+    row: i64,
+    ascent: i64,
+    advance: f32,
+    margin: i64,
+    gap: i64,
+}
+
+impl Grid {
+    fn columns(self, width: i64) -> usize {
+        ((width as f32 / self.advance).floor() as usize).max(1)
+    }
+}
+
+/// Where a panel's text starts and how much of it fits.
+struct Inner {
+    x: i64,
+    top: i64,
+    width: i64,
+    rows: i64,
+    cols: usize,
+}
+
+/// Builds the whole window: header, three list panels on the left, the main
+/// panel on the right and a two-line footer.
+fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: usize) -> Vec<Draw> {
+    let mut draws = Vec::new();
+    let Grid { row, ascent, margin, gap, .. } = grid;
+    let snapshot = workspace.snapshot();
+
+    let header = format!("{}  |  {}", snapshot.title, snapshot.head);
+    draws.push(Draw::Text {
+        x: margin,
+        baseline: margin + ascent,
+        text: fit(&header, grid.columns(width - 2 * margin)),
+        colour: colour(Tone::Heading),
+    });
+
+    let footer_top = height - margin - 2 * row;
+    let body_top = margin + row + gap;
+    let body_height = (footer_top - gap - body_top).max(0);
+    let left_width = (width * 38 / 100 - margin - gap / 2).max(0);
+    let right_x = margin + left_width + gap;
+    let right_width = (width - margin - right_x).max(0);
+
+    let avail = (body_height - 2 * gap).max(0);
+    let files_height = avail * 50 / 100;
+    let branches_height = avail * 25 / 100;
+    let commits_height = avail - files_height - branches_height;
+    let files_rect = Rect { x: margin, y: body_top, width: left_width, height: files_height };
+    let branches_rect =
+        Rect { x: margin, y: files_rect.y + files_height + gap, width: left_width, height: branches_height };
+    let commits_rect =
+        Rect { x: margin, y: branches_rect.y + branches_height + gap, width: left_width, height: commits_height };
+    let main_rect = Rect { x: right_x, y: body_top, width: right_width, height: body_height };
+
+    let focus = workspace.focus();
+    let selected = |pane| workspace.selected(pane);
+    let file_rows: Vec<Line> =
+        snapshot.files.iter().map(|file| Line { tone: file.tone, text: file.label.clone() }).collect();
+    list_panel(
+        &mut draws,
+        files_rect,
+        grid,
+        Panel {
+            focused: focus == Pane::Files,
+            title: &format!("[1] Files ({})", snapshot.files.len()),
+            empty: "Working tree clean",
+        },
+        &file_rows,
+        selected(Pane::Files),
+    );
+    let branch_rows: Vec<Line> = snapshot
+        .branches
+        .iter()
+        .map(|branch| Line {
+            tone: if branch.current { Tone::Heading } else { Tone::Text },
+            text: format!("{} {}", if branch.current { '*' } else { ' ' }, branch.label),
+        })
+        .collect();
+    list_panel(
+        &mut draws,
+        branches_rect,
+        grid,
+        Panel {
+            focused: focus == Pane::Branches,
+            title: &format!("[2] Branches ({})", snapshot.branches.len()),
+            empty: "No local branches",
+        },
+        &branch_rows,
+        selected(Pane::Branches),
+    );
+    let commit_rows: Vec<Line> = snapshot
+        .commits
+        .iter()
+        .map(|commit| Line {
+            tone: Tone::Text,
+            text: format!("{}{} {}", if commit.merge { 'M' } else { ' ' }, short(&commit.id), commit.subject),
+        })
+        .collect();
+    list_panel(
+        &mut draws,
+        commits_rect,
+        grid,
+        Panel {
+            focused: focus == Pane::Commits,
+            title: &format!("[3] Commits ({})", snapshot.commits.len()),
+            empty: "No commits yet",
+        },
+        &commit_rows,
+        selected(Pane::Commits),
+    );
+
+    main_panel(&mut draws, main_rect, grid, workspace);
+
+    let notice = workspace.notice().unwrap_or("");
+    draws.push(Draw::Text {
+        x: margin,
+        baseline: footer_top + ascent,
+        text: fit(notice, grid.columns(width - 2 * margin)),
+        colour: colour(Tone::Removed),
+    });
+    let working = if pending > 0 { "   working..." } else { "" };
+    draws.push(Draw::Text {
+        x: margin,
+        baseline: footer_top + row + ascent,
+        text: fit(&format!("{}{working}", hints(workspace)), grid.columns(width - 2 * margin)),
+        colour: MUTED_TEXT,
+    });
+    draws
+}
+
+struct Panel<'a> {
+    focused: bool,
+    title: &'a str,
+    empty: &'a str,
+}
+
+fn list_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, panel: Panel<'_>, rows: &[Line], selected: usize) {
+    let inner = frame(draws, rect, grid, panel.focused, panel.title);
+    if rows.is_empty() {
+        draws.push(Draw::Text {
+            x: inner.x,
+            baseline: inner.top + grid.ascent,
+            text: fit(panel.empty, inner.cols),
+            colour: MUTED_TEXT,
+        });
+        return;
+    }
+    let offset = window_start(selected, rows.len(), inner.rows);
+    for (index, line) in rows.iter().enumerate().skip(offset).take(inner.rows as usize) {
+        let top = inner.top + (index - offset) as i64 * grid.row;
+        if index == selected {
+            let highlight = if panel.focused { SELECTION } else { SELECTION_DIM };
+            draws.push(Draw::Rect {
+                rect: Rect { x: inner.x, y: top, width: inner.width, height: grid.row },
+                colour: highlight,
+            });
+        }
+        draws.push(Draw::Text {
+            x: inner.x,
+            baseline: top + grid.ascent,
+            text: fit(&line.text, inner.cols),
+            colour: colour(line.tone),
+        });
+    }
+}
+
+/// The main panel shows the editor while a prompt is open, the key help while
+/// help is open, and otherwise the diff or detail of the source list.
+fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
+    let focused = workspace.focus() == Pane::Main || workspace.prompt().is_some();
+    if workspace.help() {
+        let lines: Vec<Line> =
+            HELP_LINES.iter().map(|text| Line { tone: Tone::Text, text: (*text).to_owned() }).collect();
+        text_panel(draws, rect, grid, true, "Keys", &lines, 0, None);
+        return;
+    }
+    if let Some(prompt) = workspace.prompt() {
+        let title = match prompt.kind() {
+            PromptKind::Commit => "Commit message",
+            PromptKind::NewBranch => "New branch name",
+        };
+        let mut lines: Vec<Line> = format!("{}_", prompt.text())
+            .split('\n')
+            .map(|text| Line { tone: Tone::Text, text: text.to_owned() })
+            .collect();
+        if lines.is_empty() {
+            lines.push(Line { tone: Tone::Text, text: "_".to_owned() });
+        }
+        text_panel(draws, rect, grid, true, title, &lines, 0, None);
+        return;
+    }
+    let main = workspace.main();
+    let title = match workspace.source() {
+        Pane::Commits => "Commit",
+        Pane::Branches => "Branch",
+        Pane::Files | Pane::Main => "Diff",
+    };
+    let highlight = if focused { main.hunks.get(workspace.hunk()).copied() } else { None };
+    text_panel(draws, rect, grid, focused, title, &main.lines, workspace.scroll(), highlight);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn text_panel(
+    draws: &mut Vec<Draw>,
+    rect: Rect,
+    grid: Grid,
+    focused: bool,
+    title: &str,
+    lines: &[Line],
+    scroll: usize,
+    highlight: Option<usize>,
+) {
+    let inner = frame(draws, rect, grid, focused, title);
+    for (index, line) in lines.iter().enumerate().skip(scroll).take(inner.rows as usize) {
+        let top = inner.top + (index - scroll) as i64 * grid.row;
+        if highlight == Some(index) {
+            draws.push(Draw::Rect {
+                rect: Rect { x: inner.x, y: top, width: inner.width, height: grid.row },
+                colour: SELECTION,
+            });
+        }
+        draws.push(Draw::Text {
+            x: inner.x,
+            baseline: top + grid.ascent,
+            text: fit(&line.text, inner.cols),
+            colour: colour(line.tone),
+        });
+    }
+}
+
+/// Draws a bordered panel with its title and returns where its rows go.
+fn frame(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, focused: bool, title: &str) -> Inner {
+    let edge = (grid.row / 12).max(1);
+    let border = if focused { FOCUS_BORDER } else { BORDER };
+    let pad = grid.gap;
+    let bottom = rect.y + rect.height - edge;
+    draws.push(Draw::Rect { rect: Rect { x: rect.x, y: rect.y, width: rect.width, height: edge }, colour: border });
+    draws.push(Draw::Rect { rect: Rect { x: rect.x, y: bottom, width: rect.width, height: edge }, colour: border });
+    draws.push(Draw::Rect { rect: Rect { x: rect.x, y: rect.y, width: edge, height: rect.height }, colour: border });
+    draws.push(Draw::Rect {
+        rect: Rect { x: rect.x + rect.width - edge, y: rect.y, width: edge, height: rect.height },
+        colour: border,
+    });
+
+    let x = rect.x + edge + pad;
+    let inner_width = (rect.width - 2 * (edge + pad)).max(0);
+    let title_top = rect.y + edge + grid.gap / 2;
+    let cols = grid.columns(inner_width);
+    draws.push(Draw::Text {
+        x,
+        baseline: title_top + grid.ascent,
+        text: fit(title, cols),
+        colour: if focused { FOCUS_BORDER } else { MUTED_TEXT },
+    });
+    let top = title_top + grid.row;
+    let rows = ((bottom - top) / grid.row).max(0);
+    Inner { x, top, width: inner_width, rows, cols }
+}
+
+/// The first visible index, keeping `selected` inside a window of `rows` rows.
+fn window_start(selected: usize, length: usize, rows: i64) -> usize {
+    let rows = rows.max(1) as usize;
+    if length <= rows || selected < rows { 0 } else { (selected + 1 - rows).min(length - rows) }
+}
+
+/// Keys the window shows for the current state, most useful first.
+fn hints(workspace: &Workspace) -> String {
+    if workspace.help() {
+        return "Esc close help".to_owned();
+    }
+    if let Some(prompt) = workspace.prompt() {
+        return match prompt.kind() {
+            PromptKind::Commit => "Ctrl+Enter commit   Enter new line   Esc save draft".to_owned(),
+            PromptKind::NewBranch => "Enter create   Esc cancel".to_owned(),
+        };
+    }
+    let focus = match workspace.focus() {
+        Pane::Files => "Space stage/unstage   c commit   Enter diff",
+        Pane::Branches => "Space checkout   n new branch   Enter details",
+        Pane::Commits => "Enter details",
+        Pane::Main => "Space stage hunk   h/l hunk   PgUp/PgDn scroll   Esc back",
+    };
+    format!("{focus}   Tab panels   ? help   q quit")
+}
+
+/// Shortens `text` to `columns` characters, marking the cut with "..". Control
+/// characters become spaces so they cannot disturb the layout.
+fn fit(text: &str, columns: usize) -> String {
+    let clean: Vec<char> = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    if clean.len() <= columns {
+        return clean.into_iter().collect();
+    }
+    if columns <= 2 {
+        return clean.into_iter().take(columns).collect();
+    }
+    let mut out: String = clean.into_iter().take(columns - 2).collect();
+    out.push_str("..");
+    out
+}
+
+/// Maps a platform key press to the window's key vocabulary. Releases and
+/// keys the workspace does not use map to `None`.
+fn key_of(event: &NormalizedKeyEvent) -> Option<Key> {
+    if event.state != KeyPressState::Pressed {
         return None;
     }
-    match &key.logical {
-        LogicalKey::Named(NamedKey::ArrowDown) => Some(true),
-        LogicalKey::Named(NamedKey::ArrowUp) => Some(false),
+    let control = event.modifiers.control_or_meta();
+    let shift = event.modifiers.shift;
+    match &event.logical {
+        LogicalKey::Named(named) => Some(match named {
+            NamedKey::ArrowUp => Key::Up,
+            NamedKey::ArrowDown => Key::Down,
+            NamedKey::ArrowLeft => Key::Left,
+            NamedKey::ArrowRight => Key::Right,
+            NamedKey::PageUp => Key::PageUp,
+            NamedKey::PageDown => Key::PageDown,
+            NamedKey::Home => Key::Home,
+            NamedKey::End => Key::End,
+            NamedKey::Enter if control => Key::CtrlEnter,
+            NamedKey::Enter => Key::Enter,
+            NamedKey::Escape => Key::Escape,
+            NamedKey::Tab if shift => Key::BackTab,
+            NamedKey::Tab => Key::Tab,
+            NamedKey::Space => Key::Space,
+            NamedKey::Backspace => Key::Backspace,
+            _ => return None,
+        }),
+        LogicalKey::Character(text) => {
+            if control {
+                return (text == "c" || text == "C").then_some(Key::CtrlC);
+            }
+            let mut characters = text.chars();
+            match (characters.next(), characters.next()) {
+                (Some(' '), None) => Some(Key::Space),
+                (Some(character), None) => Some(Key::Char(character)),
+                (Some(_), Some(_)) => Some(Key::Text(text.clone())),
+                _ => None,
+            }
+        }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use srcmgr_domain::NativePath;
+
+    use super::*;
+    use crate::model::{BranchRow, CommitRow, FileRow, MainView};
+
+    const GRID: Grid = Grid { row: 20, ascent: 15, advance: 8.0, margin: 10, gap: 6 };
+
+    fn snapshot(files: usize) -> Snapshot {
+        Snapshot {
+            title: "MiniCon SrcMgr - demo".to_owned(),
+            head: "On branch main (0123456789ab)".to_owned(),
+            files: (0..files)
+                .map(|index| FileRow {
+                    path: NativePath::new(format!("f{index}.txt")),
+                    label: format!(".M f{index}.txt"),
+                    tone: Tone::Changed,
+                    has_staged: false,
+                    has_unstaged: true,
+                    untracked: false,
+                })
+                .collect(),
+            branches: vec![BranchRow { name: "main".to_owned(), label: "main".to_owned(), current: true }],
+            commits: vec![CommitRow { id: "0123456789abcdef".to_owned(), subject: "first".to_owned(), merge: false }],
+            draft: None,
+        }
+    }
+
+    fn texts(draws: &[Draw]) -> Vec<&str> {
+        draws
+            .iter()
+            .filter_map(|draw| match draw {
+                Draw::Text { text, .. } => Some(text.as_str()),
+                Draw::Rect { .. } => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fit_truncates_with_a_marker_and_keeps_short_text() {
+        assert_eq!(fit("short", 10), "short");
+        assert_eq!(fit("a long label", 6), "a lo..");
+        assert_eq!(fit("tab\there", 20), "tab here");
+        assert_eq!(fit("abc", 2), "ab");
+    }
+
+    #[test]
+    fn the_window_of_rows_follows_the_selection() {
+        assert_eq!(window_start(0, 3, 5), 0);
+        assert_eq!(window_start(4, 10, 5), 0);
+        assert_eq!(window_start(7, 10, 5), 3);
+        assert_eq!(window_start(9, 10, 5), 5);
+        assert_eq!(window_start(2, 10, 0), 2);
+    }
+
+    #[test]
+    fn the_scene_shows_the_header_panels_and_the_key_hints() {
+        let workspace = Workspace::new(snapshot(2));
+        let draws = scene(&workspace, 1040, 680, GRID, 0);
+        let all = texts(&draws);
+        assert!(all.iter().any(|text| text.contains("MiniCon SrcMgr - demo")));
+        assert!(all.iter().any(|text| text.starts_with("[1] Files (2)")));
+        assert!(all.iter().any(|text| text.starts_with("[2] Branches (1)")));
+        assert!(all.iter().any(|text| text.starts_with("[3] Commits (1)")));
+        assert!(all.iter().any(|text| text.contains("Space stage/unstage")));
+    }
+
+    #[test]
+    fn an_empty_file_list_says_the_tree_is_clean() {
+        let workspace = Workspace::new(snapshot(0));
+        let draws = scene(&workspace, 1040, 680, GRID, 0);
+        assert!(texts(&draws).contains(&"Working tree clean"));
+    }
+
+    #[test]
+    fn the_selected_row_is_highlighted_only_in_its_own_list() {
+        let workspace = Workspace::new(snapshot(2));
+        let draws = scene(&workspace, 1040, 680, GRID, 0);
+        let highlights =
+            draws.iter().filter(|draw| matches!(draw, Draw::Rect { colour, .. } if *colour == SELECTION)).count();
+        assert_eq!(highlights, 1, "one focused selection in the files list");
+    }
+
+    #[test]
+    fn pending_work_is_shown_in_the_footer() {
+        let workspace = Workspace::new(snapshot(1));
+        let draws = scene(&workspace, 1040, 680, GRID, 2);
+        assert!(texts(&draws).iter().any(|text| text.ends_with("working...")));
+    }
+
+    #[test]
+    fn a_wide_list_row_is_cut_inside_its_panel() {
+        let mut snapshot = snapshot(1);
+        snapshot.files[0].label = "x".repeat(400);
+        let workspace = Workspace::new(snapshot);
+        let draws = scene(&workspace, 1040, 680, GRID, 0);
+        let row = texts(&draws).into_iter().find(|text| text.starts_with("xxxx")).expect("row");
+        assert!(row.len() < 400 && row.ends_with(".."));
+    }
+
+    #[test]
+    fn a_long_diff_draws_only_the_rows_that_fit_in_the_main_panel() {
+        let mut workspace = Workspace::new(snapshot(1));
+        let Job::Main { generation, .. } = (match workspace.open() {
+            Effect::Send(job) => job,
+            other => panic!("expected a job, got {other:?}"),
+        }) else {
+            panic!("main job expected")
+        };
+        let text: String = (0..5_000).map(|index| format!("+line {index}\n")).collect();
+        workspace.reply(Reply::Main {
+            generation,
+            view: MainView::text(&text),
+        });
+        let draws = scene(&workspace, 1040, 680, GRID, 0);
+        let drawn = texts(&draws).iter().filter(|text| text.starts_with("+line ")).count();
+        assert!(drawn > 0 && drawn < 100, "drew {drawn} diff rows");
+    }
+
+    #[test]
+    fn the_main_panel_shows_the_help_when_asked() {
+        let mut workspace = Workspace::new(snapshot(1));
+        workspace.key(Key::Char('?'));
+        let draws = scene(&workspace, 1040, 680, GRID, 0);
+        assert!(texts(&draws).contains(&"Keys"));
+        assert!(texts(&draws).iter().any(|text| text.starts_with("Tab          next pane")));
+    }
+
+    #[test]
+    fn main_view_text_is_drawn_from_the_scroll_offset() {
+        let mut workspace = Workspace::new(snapshot(1));
+        workspace.reply(Reply::Main { generation: 0, view: MainView::text("alpha\nbeta\ngamma") });
+        workspace.key(Key::Enter);
+        workspace.key(Key::Down);
+        let draws = scene(&workspace, 1040, 680, GRID, 0);
+        let all = texts(&draws);
+        assert!(!all.contains(&"alpha"), "the first line scrolled away");
+        assert!(all.contains(&"beta"));
     }
 }

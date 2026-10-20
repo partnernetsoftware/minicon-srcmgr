@@ -1,10 +1,14 @@
-//! MiniCon SrcMgr desktop surface (PRD 10, M0-D first slice).
-//!
-//! The view model is host-neutral and tested directly. The window module runs
-//! MiniCon's native pixel host; it is the only part that needs a desktop.
+//! Native workspace window for MiniCon SrcMgr. The window is a thin shell over
+//! plain data (`model`) and a pure state machine (`workspace`); Git runs behind
+//! the [`Backend`] trait on a worker thread.
 
-mod view;
+mod model;
 mod window;
+mod workspace;
 
-pub use view::{Line, StatusView, Tone};
-pub use window::{BranchCycler, show};
+pub use model::{
+    Backend, BranchRow, CommitRow, FileRow, FileTarget, Job, Line, MainRequest, MainView, Reply, Snapshot, Tone,
+    diff_lines,
+};
+pub use window::show;
+pub use workspace::{Effect, Key, Pane, Prompt, PromptKind, Workspace};
