@@ -1,10 +1,14 @@
-# 0.1.5 implementation plan
+# 0.0.5 implementation plan
 
-Status: `[-]` qualification in progress; P0 and the declared P1–P4 functional slices have named evidence for the current host candidate. P5 has completed its first sustained journey; remaining measurement and reference-environment gates are open. Original source baseline: 0.0.4. Target version: **0.1.5**, as directed by the owner. The version jump is intentional, not evidence that intermediate versions shipped. The recorded owner authorization covers implementation through public release of this source-only version; it does not waive acceptance gates.
+Status: `[-]` qualification in progress; P0 and the declared P1–P4 functional slices have named evidence for the current host candidate. P5 has completed its first sustained journey; remaining measurement and reference-environment gates are open. Original source baseline: 0.0.4. Target version: **0.0.5**, corrected by the owner to follow the public 0.0.4 release. The previous assignment of this delivery to 0.1.5 was incorrect; 0.1.5 is not the current delivery target. The recorded owner authorization covers implementation through public release of this source-only version; it does not waive acceptance gates.
 
 This file owns version scope, sequencing, task status and execution evidence. [PRD.md](../PRD.md) and its modules own product behavior and acceptance criteria. Link to those owners; update them first if an implementation decision changes accepted behavior. Completing this plan qualifies only its declared slice, not all of M1/M2 or the full six-cell product baseline.
 
-Canonical path: `plan/plan-0.1.5.md`. This is an implementation plan, not release notes. Keep one version plan; do not create a parallel `release-0.1.5.md` or copy its task ledger into the PRDs. Release notes describe the accepted result after qualification.
+Canonical path: `plan/plan-0.0.5.md`. This is an implementation plan, not release notes. Keep one version plan; do not create a parallel `release-0.0.5.md` or copy its task ledger into the PRDs. Release notes describe the accepted result after qualification.
+
+## Version correction
+
+The current delivery is **0.0.5**, not 0.1.5. Package metadata, active documentation and this plan use the corrected version. Existing implementation is retained; this correction does not declare any additional feature or acceptance row complete. Historical rounds below retain their original 0.1.5 labels where they describe earlier decisions or measured candidates. Those artifacts, hashes and receipts are historical evidence, not rebuilt or relabeled 0.0.5 binaries. A subsequent candidate needs its own source/artifact identity; reuse unaffected evidence only within its recorded scope. No 0.1.5 release is claimed or authorized by those historical labels. Future 0.1.5 scope is not assigned by this plan.
 
 ## Current handoff
 
@@ -22,7 +26,7 @@ Stop adding features while these conditions remain open. Historical rounds below
 Deliver a more understandable local Git workflow while obtaining the first trustworthy evidence for SrcMgr's core promise: **small footprint, fast UI/UX response and stable operation**.
 
 ```text
-0.1.5 local workflow and quality slice
+0.0.5 local workflow and quality slice
 ├── P0 Baseline the existing host build and identify quality blockers
 ├── P1 Show the observed index effect after stage/unstage
 ├── P2 Make destructive prompts truthful about actual recovery
@@ -182,7 +186,7 @@ The package sequence remains appropriate. Publication authority is now supplied 
 
 The opt-in `scripts/probe_workspace.py` used verified-foreground native SendInput and client-DC focus-border sampling, with 1 ms polling/GDI overhead included. After 5 warmups, 30 samples per panel gave p95 6.658 ms (Files), 5.571 ms (Commits), 6.975 ms (main panel). These measure client-surface focus feedback only; they do not establish desktop presentation, backend completion latency, standard-repository budgets or a long-session claim. An initial probe could not activate the window and sent no input; activation was corrected in the probe and the successful run is the scoped receipt.
 
-P2 discovered that 0.0.4 permanently removed untracked files without a qualified trash capability. Under the already specified P2 refusal route, this path now refuses with an explanation; tracked file/hunk discard retains an exact, flushed and read-back-verified local worktree copy, and branch deletion first retains its OID. There is no automatic undo promise or new general backup framework. Direct risky worker jobs require a prepared, expiring, target-bound confirmation; cancelled preparations release their retained data. Recovery copies are bounded at 16 MiB per file and by the existing profile recovery budget; unsupported links/storage errors refuse the action. These limits must be explicit in the 0.1.5 release notes.
+P2 discovered that 0.0.4 permanently removed untracked files without a qualified trash capability. Under the already specified P2 refusal route, this path now refuses with an explanation; tracked file/hunk discard retains an exact, flushed and read-back-verified local worktree copy, and branch deletion first retains its OID. There is no automatic undo promise or new general backup framework. Direct risky worker jobs require a prepared, expiring, target-bound confirmation; cancelled preparations release their retained data. Recovery copies are bounded at 16 MiB per file and by the existing profile recovery budget; unsupported links/storage errors refuse the action. These limits must be explicit in the 0.0.5 release notes.
 
 Targeted evidence so far: UI state/render suite (40 cases, before the latest stale-error refinement), the new confirmation guard case, branch deletion case, file/hunk discard cases, and the index-summary parser passed. No full workspace gate or integrated runtime qualification is claimed yet. Preserved the owner's requirement to keep the desktop benchmark unnamed in public PRD text.
 
@@ -316,6 +320,6 @@ This round's selected checks are documentation ownership/links, Python syntax an
 
 ## Handback and publication boundary
 
-Hand back: implemented package status, reproducible host commands, a short real local-workflow demonstration, measured footprint/CPU/latency, relevant integrity results, known limits and exact blockers. If any core gate remains open, call this an implementation checkpoint rather than a qualified 0.1.5 release.
+Hand back: implemented package status, reproducible host commands, a short real local-workflow demonstration, measured footprint/CPU/latency, relevant integrity results, known limits and exact blockers. If any core gate remains open, call this an implementation checkpoint rather than a qualified 0.0.5 release.
 
-Channel remains source-only; local optimized builds support validation. The owner's active goal explicitly authorizes a public **0.1.5** source release after the scoped package/quality gates pass, including pushing reviewed commits, the named tag and a GitHub Release. Binary distribution remains excluded. Align workspace version and release notes at release preparation, inspect what the push would publish, and verify the public tag/source identity and release status under [12](../prd/PRD_12_platform_delivery.md).
+Channel remains source-only; local optimized builds support validation. The owner's active goal explicitly authorizes a public **0.0.5** source release after the scoped package/quality gates pass, including pushing reviewed commits, the named tag and a GitHub Release. Binary distribution remains excluded. Align workspace version and release notes at release preparation, inspect what the push would publish, and verify the public tag/source identity and release status under [12](../prd/PRD_12_platform_delivery.md).

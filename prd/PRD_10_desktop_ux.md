@@ -129,11 +129,11 @@ Rules for these actions:
 
 Not part of 0.0.4, and the next candidates in order: the stash list with pop, drop and a message; discard of single lines; commit files under the commit list (lazygit's Enter on a commit); search and filter in lists (`/`); reset and revert with their preview; and the remote actions of M2 (fetch, pull, push), which need PRD 07's trust work first. Status shows the branch and HEAD; a count of stashes and of ahead and behind commits is planned with the stash list.
 
-## 0.1.5 local-workflow interaction slice
+## 0.0.5 local-workflow interaction slice
 
 `5` opens Stashes in the Files panel's area; `2` returns to Files. `S` from Files also opens Stashes. In that list, Space/`S` applies and retains the selected source, `p` requests Pop and `d` requests Drop through [08](PRD_08_recovery.md)'s prepared confirmation. Display selectors are navigation labels; authorization uses [09](PRD_09_advanced_git.md)'s full identity. Cancelling preserves selection.
 
-Enter in Commits opens changed files; Enter on a file opens its committed diff. Escape returns one level with list selection and scroll preserved. Show commit and resolved base at both levels, and show file status/modes with old/new rename paths. Historical detail is read-only and offers navigation hints rather than stage/discard hints. Stage/unstage shows [04](PRD_04_changes_commits.md)'s observed result. A header busy indicator remains readable when footer hints truncate. Qualification and version status belong to [the plan](../plan/plan-0.1.5.md).
+Enter in Commits opens changed files; Enter on a file opens its committed diff. Escape returns one level with list selection and scroll preserved. Show commit and resolved base at both levels, and show file status/modes with old/new rename paths. Historical detail is read-only and offers navigation hints rather than stage/discard hints. Stage/unstage shows [04](PRD_04_changes_commits.md)'s observed result. A header busy indicator remains readable when footer hints truncate. Qualification and version status belong to [the plan](../plan/plan-0.0.5.md).
 
 ## Delivery contracts
 

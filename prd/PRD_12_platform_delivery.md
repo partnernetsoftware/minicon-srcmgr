@@ -143,9 +143,9 @@ Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Rele
 - No IME composition beyond committed text, no screen-reader bridge, no checkout of a commit, no commit files, no search or filter, no discard, stash or rebase.
 - Linux and macOS cells are not run.
 
-## Development 0.1.5 status
+## Development 0.0.5 status
 
-Workspace target: **0.1.5**, a source-only candidate under qualification; no `v0.1.5` public tag or GitHub Release has been published. Local optimized binaries exist solely for validation and are not distribution artifacts. The latest public release remains 0.0.4 below. Current scope, scoped host evidence and remaining gates live in [the version plan](../plan/plan-0.1.5.md). Reference-environment response/resource certification remains open; implementation and a passing diagnostic do not waive that gate.
+Workspace target: **0.0.5**, a source-only candidate under qualification; no `v0.0.5` public tag or GitHub Release has been published. Local optimized binaries exist solely for validation and are not distribution artifacts. The latest public release remains 0.0.4 below. Current scope, scoped host evidence and remaining gates live in [the version plan](../plan/plan-0.0.5.md). Reference-environment response/resource certification remains open; implementation and a passing diagnostic do not waive that gate.
 
 ## Release 0.0.4 status
 

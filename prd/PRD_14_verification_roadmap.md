@@ -360,6 +360,6 @@ Gate at the release commit: `cargo test --workspace` 164 passing with MinGit 2.5
 
 Still open: key-to-redraw latency and resource budgets (not measured); line discard; the stash list with pop, drop and a message; commit files; search and filter; reset and revert; remote actions (M2).
 
-### 0.1.5 implementation plan
+### 0.0.5 implementation plan
 
-The 0.1.5 scope, work sequence, package status and execution evidence live in [plan/plan-0.1.5.md](../plan/plan-0.1.5.md). This module owns verification methodology and quality gates; the plan references them and does not redefine them.
+The 0.0.5 scope, work sequence, package status and execution evidence live in [plan/plan-0.0.5.md](../plan/plan-0.0.5.md). This module owns verification methodology and quality gates; the plan references them and does not redefine them.
