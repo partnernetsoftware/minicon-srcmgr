@@ -363,3 +363,7 @@ Still open: key-to-redraw latency and resource budgets (not measured); line disc
 ### 0.0.5 implementation plan
 
 The 0.0.5 scope, work sequence, package status and execution evidence live in [plan/plan-0.0.5.md](../plan/plan-0.0.5.md). This module owns verification methodology and quality gates; the plan references them and does not redefine them.
+
+### 0.0.6 proposed next-version design
+
+The [0.0.6 plan](../plan/plan-0.0.6.md) selects quick filtering of existing file, branch and loaded-commit lists, with explicit action scope and changed-path evidence. It is a product design, not an implemented or qualified version. Current development remains 0.0.5. Existing reference-host blockers and quality budgets are unchanged; no package version, release status or milestone completion follows from this plan.

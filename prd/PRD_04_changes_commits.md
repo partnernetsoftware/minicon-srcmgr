@@ -42,6 +42,12 @@ Hooks/signers may run only under trust and may modify files/index even when they
 
 Successful commit reports the actual OID, refreshes history/status and clears only the draft that produced that commit. Amend previews the old OID, changed message/tree and history rewrite risk; warn when the commit is reachable from known remote-tracking refs, without claiming the absence of such reachability means it was never published. Amend remains off by default and does not persist as a hidden sticky mode. Signing enablement and verification are distinct states.
 
+## Filtered change lists
+
+For the proposed quick-filter slice, a visible result authorizes no action by itself: selected file/hunk/line actions still bind the actual raw path, content, repository and fresh index state under the existing guards. Filtering neither stages files nor narrows a pre-existing whole-index operation. Zero results or a hidden/removed selection provides no action target; stale details cannot remain actionable.
+
+While Files has a nonempty query, all-files stage/unstage, stash creation and commit submission are disabled across the window, even when another pane has focus or a previously opened prompt exists. Explain `Clear Files filter to review the full operation scope` and provide a clear route; perform no write job. Clearing the query restores the existing operations and their full-scope previews, not a special filtered-batch mode. This conservative initial rule avoids silently applying “all” to hidden files or presenting a filtered list as the complete staged commit. Existing prepared confirmations still require their own freshness checks after clear; query changes never bypass them. Interaction ownership is [10](PRD_10_desktop_ux.md#quick-filter-interaction); sequencing is [the 0.0.6 plan](../plan/plan-0.0.6.md).
+
 ## Delivery contracts
 
 | ID / leaf | Invariant | Observable evidence | Safe failure | Dependencies | Non-goal |

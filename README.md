@@ -6,6 +6,8 @@ A lightweight, native source-control GUI for Windows, macOS and Linux on x86_64 
 
 Development target: **0.0.5**, with local workflow improvements and resource, response and stability qualification in progress. Scope, current evidence and open release gates are tracked in [the implementation plan](plan/plan-0.0.5.md).
 
+Next-version design: [0.0.6 quick-filter plan](plan/plan-0.0.6.md), proposed and not implemented.
+
 Start with [PRD.md](PRD.md) for product scope, capability ownership and delivery gates. The [PRD series](prd/) defines behavior and acceptance criteria. [AGENTS.md](AGENTS.md) defines repository working rules.
 
 License: [MIT](LICENSE). MiniCon dependencies retain their original licenses and notices; see [reuse ownership](prd/PRD_02_architecture_reuse.md).
