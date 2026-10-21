@@ -141,29 +141,99 @@ def wait_quiet(hwnd, user, gdi, timeout=30):
         user.ReleaseDC(hwnd, dc)
 
 
-def desktop_focus(hwnd, user, key, points, receipt):
+def desktop_focus(hwnd, user, gdi, key, points, receipt, busy_tree=None, selection_regions=None):
     """Pair an acquired desktop pixel with its OS update QPC, not readback time."""
     from windows_desktop_probe import DesktopSampler
     origin = w.POINT()
     if not user.ClientToScreen(hwnd, c.byref(origin)):
         raise c.WinError(c.get_last_error())
     sampler = DesktopSampler(origin.x, origin.y)
+    client = user.GetDC(hwnd)
+    rect = w.RECT()
+    user.GetClientRect(hwnd, c.byref(rect))
+    scale = user.GetDpiForWindow(hwnd) / 96
     result = receipt["latency_ms"]
     progress = receipt["desktop_progress"] = {"phase": "initialized", "completed_trials": 0}
+    left_right = None
     try:
         for name, (x, y, vk) in points.items():
-            samples, completion, accumulated = [], [], []
+            expected = 0xD69C56
+            reset_key = 0x31
+            if selection_regions:
+                # Measure an actual selected row/cursor, not only pane focus.
+                if name == "Main":
+                    key(hwnd, 0x32)
+                    time.sleep(0.08)
+                    wait_quiet(hwnd, user, gdi)
+                    key(hwnd, 0x0D)
+                else:
+                    key(hwnd, vk)
+                key(hwnd, 0x24)
+                time.sleep(0.08)
+                wait_quiet(hwnd, user, gdi)
+                if left_right is None:
+                    margin = round(12 * scale)
+                    candidates = [column for column in range(margin + 2, rect.right - margin) if gdi.GetPixel(client, column, y) == 0xD69C56]
+                    if not candidates:
+                        raise RuntimeError("cannot locate the focused list's right border")
+                    left_right = candidates[0]
+                x = (rect.right - round(12 * scale) - 1 if name == "Main" else left_right) - round(8 * scale)
+                top, bottom = selection_regions[name]
+                selected = [row for row in range(top + 1, bottom - 1) if gdi.GetPixel(client, x, row) == 0x784F26]
+                if not selected:
+                    raise RuntimeError(f"no first-row selection visible in {name}")
+                first = selected[0]
+                height = 1
+                while first + height in selected:
+                    height += 1
+                y = first + height + height // 2
+                if y >= bottom - 1:
+                    raise RuntimeError(f"no second visible row in {name}")
+                expected, reset_key, vk = 0x784F26, 0x24, 0x28
+            samples, completion, accumulated, epochs, active_git = [], [], [], [], []
             for trial in range(35):
                 progress.update(panel=name, trial=trial, phase="reset activation")
-                key(hwnd, 0x31)
+                key(hwnd, reset_key)
+                if selection_regions:
+                    time.sleep(0.08)
+                    wait_quiet(hwnd, user, gdi)
                 reset = time.monotonic() + 3
                 while True:
                     frame = sampler.read(origin.x + x, origin.y + y)
-                    if frame and not frame["protected"] and frame["pixel"] != 0xD69C56:
+                    if frame and not frame["protected"] and frame["pixel"] != expected:
                         break
                     if time.monotonic() >= reset:
                         raise RuntimeError("desktop frame did not establish the focus reset")
+                git_pids = []
+                if busy_tree:
+                    # Start a fresh read after verified quiescence. Sampling a
+                    # previous read's last helper can race its view replacement
+                    # and invalidate the selected diff row before presentation.
+                    deadline = time.monotonic() + 15
+                    quiet_since = None
+                    while True:
+                        live = [pid for pid in busy_tree.pids(active_only=True) if busy_tree.images.get(pid, "").lower() == "git.exe"]
+                        working = gdi.GetPixel(client, rect.right - round(12 * scale) - 1, round(12 * scale) + 1) == 0xD69C56
+                        if not live and not working:
+                            if quiet_since is None:
+                                quiet_since = time.monotonic()
+                            if time.monotonic() - quiet_since >= 0.1:
+                                break
+                        else:
+                            quiet_since = None
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError("previous Git read did not settle before the busy-input trial")
+                        time.sleep(0.01)
+                    key(hwnd, 0x52)  # Actual read refresh; no hook/sleep simulation.
+                    deadline = time.monotonic() + 5
+                    while not git_pids:
+                        git_pids = [pid for pid in busy_tree.pids(active_only=True) if busy_tree.images.get(pid, "").lower() == "git.exe"]
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError("no owned live Git process for the busy-input trial")
+                        if not git_pids:
+                            time.sleep(0.002)
                 before = time.perf_counter()
+                input_epoch = time.time_ns() // 1000
                 progress["phase"] = "target activation"
                 key(hwnd, vk)
                 deadline = time.monotonic() + 3
@@ -171,7 +241,7 @@ def desktop_focus(hwnd, user, key, points, receipt):
                     frame = sampler.read(origin.x + x, origin.y + y)
                     if frame and frame["protected"]:
                         raise RuntimeError("desktop capture masks protected content")
-                    if frame and frame["pixel"] == 0xD69C56 and frame["present_seconds"] >= before:
+                    if frame and frame["pixel"] == expected and frame["present_seconds"] >= before:
                         after = time.perf_counter()
                         if frame["present_seconds"] > after + 0.001:
                             raise RuntimeError("desktop frame/probe clocks do not agree")
@@ -179,6 +249,8 @@ def desktop_focus(hwnd, user, key, points, receipt):
                             samples.append(round((frame["present_seconds"] - before) * 1000, 3))
                             completion.append(round((after - before) * 1000, 3))
                             accumulated.append(frame["accumulated"])
+                            epochs.append(input_epoch)
+                            active_git.append(git_pids)
                         progress["completed_trials"] += 1
                         break
                     if time.monotonic() >= deadline:
@@ -187,9 +259,12 @@ def desktop_focus(hwnd, user, key, points, receipt):
             result[name] = {"samples": samples, "p95": sorted(samples)[math.ceil(len(samples) * .95) - 1],
                             "capture_completion_ms": completion, "accumulated_frames": accumulated,
                             "qpc_frequency": sampler.frequency.value,
-                            "method": "Actual acquired DXGI desktop focus pixel and OS LastPresentTime QPC after verified reset; five warmups, 30 trials. Coalesced last-update time is an upper bound on first matching desktop update. Readback completion is separate; no subtraction. No physical scanout/photodiode claim."}
+                            "input_epoch_us": epochs, "active_git_pids": active_git,
+                            "feedback": "selected row / diff cursor" if selection_regions else "pane focus border",
+                            "method": "Actual acquired DXGI desktop feedback pixel and OS LastPresentTime QPC after verified reset; five warmups, 30 trials. Coalesced last-update time is an upper bound on first matching desktop update. Readback completion is separate; no subtraction. No physical scanout/photodiode claim."}
         return result
     finally:
+        user.ReleaseDC(hwnd, client)
         sampler.close()
 
 
@@ -521,6 +596,8 @@ def main():
     p.add_argument("--tree", action="store_true", help="account for product and helpers in an owned Windows job")
     p.add_argument("--measure-ui", action="store_true", help="opt into bounded local application timing receipts inside the isolated profile")
     p.add_argument("--desktop-frames", action="store_true", help="observe DXGI desktop pixels paired with OS update timestamps; fail if unavailable")
+    p.add_argument("--busy-latency", action="store_true", help="require owned live Git at each desktop-input trial and verify kernel lifetime overlap")
+    p.add_argument("--selection-latency", action="store_true", help="measure selected rows and the diff cursor instead of only focus borders")
     p.add_argument("--skip-latency", action="store_true", help="resource/workflow-only probe; records latency as NOT-RUN")
     p.add_argument("--postcommit-profile-fault", action="store_true", help="one-cycle owned post-commit storage failure and completion-guidance capture")
     p.add_argument("--cycles", type=int, default=0)
@@ -538,6 +615,10 @@ def main():
         p.error("workflow smoke requires 1..200 commits and at least one file")
     if args.skip_latency and args.desktop_frames:
         p.error("skip-latency and desktop-frames cannot be combined")
+    if args.busy_latency and not (args.tree and args.desktop_frames):
+        p.error("busy-latency requires tree accounting and desktop-frames")
+    if args.selection_latency and (not args.desktop_frames or min(args.files, args.commits) < 2):
+        p.error("selection-latency requires desktop-frames and at least two files/commits")
     if args.postcommit_profile_fault and (args.cycles != 1 or args.soak_seconds or args.exercise_faults or args.workflow):
         p.error("postcommit-profile-fault requires one cycle without other workflow/fault/soak modes")
     root = Path(args.out).resolve()
@@ -679,7 +760,8 @@ def main():
             user.ReleaseDC(hwnd, dc)
             user.ReleaseDC(None, screen_dc)
         if args.desktop_frames:
-            receipt["latency_ms"] = desktop_focus(hwnd, user, key, points, receipt)
+            regions = {"Files": segments[1], "Commits": segments[3], "Main": (round(12 * scale), rect.bottom)} if args.selection_latency else None
+            receipt["latency_ms"] = desktop_focus(hwnd, user, gdi, key, points, receipt, tree if args.busy_latency else None, regions)
         if args.workflow:
             receipt["workflow"] = workflow(args.git, repo, root, hwnd, user, key)
         wait_quiet(hwnd, user, gdi)
@@ -738,7 +820,7 @@ def main():
             minimized_last = tree.accounting()
             receipt["minimized_idle"] = {"epoch_us": minimized_epoch_us, "end_epoch_us": time.time_ns() // 1000, "seconds": minimized_seconds, "tree_one_core_cpu_percent": (minimized_last["cpu_s"] - minimized_first["cpu_s"]) / minimized_seconds * 100}
             user.ShowWindow(hwnd, 9)
-        receipt["scope"] = "Native SendInput to desktop focus border; the per-panel method identifies timestamped DXGI frames or GDI readback completion. Focus timing is not action-completion latency. Resource tree claims require complete OS job/handle coverage and the declared fixture/environment."
+        receipt["scope"] = "Native SendInput to desktop feedback; per-panel metadata identifies selected row/diff cursor or focus border and timestamped DXGI frames or GDI readback completion. Feedback timing is not Git action-completion latency. Resource tree claims require complete OS job/handle coverage and the declared fixture/environment."
     except Exception as error:
         receipt["error"] = f"{type(error).__name__}: {error}"
         if hwnd and user.GetForegroundWindow() == hwnd:
@@ -776,6 +858,17 @@ def main():
         if tree:
             try:
                 receipt["process_tree"] = tree.receipt(sample)
+                if args.busy_latency:
+                    rows = {row["pid"]: row for row in receipt["process_tree"]["processes"]}
+                    coverage = {}
+                    for name, data in receipt.get("latency_ms", {}).items():
+                        overlaps = []
+                        for epoch, pids in zip(data["input_epoch_us"], data["active_git_pids"], strict=True):
+                            tick = epoch * 10 + 116444736000000000
+                            overlaps.append(any(pid in rows and rows[pid]["created_100ns"] <= tick < rows[pid]["exited_100ns"] for pid in pids))
+                        coverage[name] = {"samples": len(overlaps), "verified_overlap": sum(overlaps), "all_overlaps": overlaps}
+                    complete = receipt["process_tree"]["coverage"] == "COMPLETE" and len(coverage) == 3 and all(data["samples"] == 30 and data["verified_overlap"] == 30 for data in coverage.values())
+                    receipt["busy_latency"] = {"coverage": "COMPLETE" if complete else "BLOCKED", "panels": coverage, "method": "Every retained input must overlap a recorded owned Git kernel lifetime; all trials retained, no slow-trial exclusion or automatic retry"}
             finally:
                 tree.close()
         if args.measure_ui:

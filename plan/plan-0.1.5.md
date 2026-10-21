@@ -10,7 +10,7 @@ Canonical path: `plan/plan-0.1.5.md`. This is an implementation plan, not releas
 
 P1–P4 have implementation and matching functional evidence for the Round 4 frozen artifact on the declared Windows slice. P5's first sustained journey is complete, with the scoped results in Round 6; complete release qualification remains open. Resume the remaining gates rather than recreate features or replay unaffected checks.
 
-1. Preserve the Round 8 completed-write acknowledgement repair and its new candidate identity. Finish the source/documentation checkpoint commit using explicit reviewed paths; preserve other contributors' work. Keep recovery, prompt acknowledgement, selection identity and historical read-only limits explicit in release wording.
+1. Preserve implementation checkpoint `fd0e7b8a58fb106f2ab273af1349f1f286ae7e1f`, including the Round 8 completed-write acknowledgement repair and its candidate identity. Its local commit binding matches all 51 product-source/manifest hashes. Keep recovery, prompt acknowledgement, selection identity and historical read-only limits explicit in release wording.
 2. Reuse the completed 100-cycle/30-minute journey and changed-path checks for unchanged relevant inputs. Preserve earlier stopped attempts; do not relabel them or guess their root causes. A required repair invalidates only justified scopes, not every previously completed check.
 3. Reuse the completed actual-command CPU comparison in Round 7. Desktop-frame diagnostics ran but did not pass; the active remote display is 32 Hz, not the required 60 Hz reference. Obtain the matching environment before reference response qualification rather than repeat timings on this session. Retain source/dirty-input, artifact and harness identity with each receipt.
 4. Close each acceptance row with PASS/FAIL/BLOCKED and a scoped receipt. Resolve the reference-environment prerequisites before claiming their budgets passed. Publish only after the declared gates pass and source/release identity is verified.
@@ -285,6 +285,34 @@ Selected checks passed: both real Git post-commit/post-checkout profile-lock ora
 New optimized artifact SHA-256: `3542d046c75cafb5260be399cfb5f6c1126490d3dc5affca913c55f61af2da94`; dirty product input digest `11a13e24e7c7893b944355f9ef5f94d9ddc7f08e2366a0c3a0a60b8f57145ec5` is recorded with its 51 source/manifest hashes. `target/qualification/p5-postcommit-profile-smoke/receipt.json` covers this exact artifact: actual GUI commit, preserved injected lock and saved draft, readable completed-write/stale-list/no-resubmission guidance (capture reviewed), recovery after removing only the owned obstruction, branch round trip, clean `git fsck` and acknowledged draft across controlled restart. It exited normally with complete accounting for 307 processes and no active descendants. This short targeted run is not a new sustained or reference-environment qualification. The receipt's inherited no-custom-hooks scope sentence predates a probe wording correction; this case intentionally used only the documented owned post-commit lock hook, as its fault record states.
 
 Reuse decision: the recovery/index/stash/committed-object contracts, normal worker scheduling and rendering remain unchanged. The normal-success backend issues the same Git sequence; the repair adds a completed-OID value and handles post-write failure, without a new timer, worker or retained cache. Reuse the earlier scoped long-session/CPU evidence for those unchanged contracts, keeping their original artifact identity. Do not relabel those measurements as execution of this new binary. The targeted failure, UI routing and exact-candidate native checks close the changed scope; another 30-minute run is not justified. Reference-environment response/resource certification is still blocked by the 32 Hz remote display and unconfirmed SSD backing. No release was published.
+
+### Round 9 assessment · busy-input coverage and environment handoff
+
+Product inputs remain unchanged from checkpoint `fd0e7b8`; this round changes only the measurement driver and this plan. `p5-busy-observer-calibration-v2` completed 90 retained focus-feedback inputs, each verified against an owned Git process's kernel lifetime. Files/Commits/Main desktop p95 was 61.554/61.287/62.731 ms on the same 32 Hz remote host. This establishes busy-work overlap for that diagnostic, not a response-budget PASS or selected-row feedback coverage.
+
+The optional `--selection-latency` path targets selected list rows and the diff cursor. Its first calibration completed the Files and Commits panels but stopped in Main when the expected cursor pixel did not appear. A pending refresh replacing the displayed detail is a possible precondition race, not an established product defect. The revised driver waits for the prior read to settle before requesting a fresh real refresh. Its next attempt (`p5-busy-selection-calibration-v2`) refused foreground activation before completing any trial; the receipt preserves the refusal and complete descendant accounting. The revised selection method therefore remains **BLOCKED / not validated end to end**. Do not turn either stopped attempt into a PASS, suppress its guard, or repeat this remote experiment without a changed prerequisite.
+
+The reference-environment blocker has persisted across qualification rounds: current actual mode is 1680×1050, reported 32 Hz, remote session; local SSD backing is unconfirmed. Further unchanged-host timing runs cannot resolve that prerequisite. Source publication remains gated. Resume on a local Windows host with at least four cores/8 GiB, confirmed local SSD, 1920×1080 at 100% scale and 60 Hz; record the actual window monitor mode, remote-session flag and operator-confirmed storage information alongside the private receipt.
+
+Reference-host execution handoff (PowerShell, repository root; keep outputs under ignored `target/qualification`):
+
+```powershell
+$qualifiedGit = (Get-Command git.exe).Source
+& $qualifiedGit --version
+# Require Git >= 2.43. Record source revision, build inputs and resulting artifact hash.
+cargo build --release --locked -p srcmgr-cli
+Get-FileHash target/release/minicon-srcmgr.exe -Algorithm SHA256
+```
+
+Before timing, resolve the existing foreground refusal on the owned window and complete one small-fixture calibration of the selected-row method, preserving any failed attempts. Run one GUI/input probe at a time. After the method completes with all retained inputs overlapping owned Git lifetimes, use one fresh standard-fixture output directory:
+
+```powershell
+python scripts/probe_workspace.py --exe target/release/minicon-srcmgr.exe --git $qualifiedGit --out target/qualification/reference-standard --desktop-frames --busy-latency --selection-latency --tree --measure-ui --cycles 1 --settle-seconds 30 --idle-seconds 65
+```
+
+Default fixture sizes are 100k commits, 20k files, 200 refs and 200 changes. This command measures selected feedback and the declared resource/workflow slice; it does not itself establish every P5 row. In particular, application callback histograms exclude OS queue/dispatch time, so the 16 ms dispatch-inclusive requirement needs separately scoped evidence. Keep desktop update timestamps distinct from physical scanout. Preserve the earlier 100-cycle/30-minute evidence under its original artifact identity for unchanged contracts; neither this tooling change nor the host handoff automatically requires another long journey. Reassess a paired CPU run only for changed relevant inputs or reference-host certification, using the existing driver rather than adding tracing. Stop after the selected checks pass or a concrete prerequisite blocks further progress.
+
+This round's selected checks are documentation ownership/links, Python syntax and diff review. They add no product/runtime PASS. No product rebuild, Rust suite replay or new sustained run is justified by these tooling/documentation edits.
 
 ## Handback and publication boundary
 
