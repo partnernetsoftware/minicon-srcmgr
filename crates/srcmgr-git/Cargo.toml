@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 srcmgr-domain.workspace = true
 minicon-core.workspace = true
-minicon-platform.workspace = true
+minicon-platform = { workspace = true, features = ["filesystem"] }
 
 [lints]
 workspace = true

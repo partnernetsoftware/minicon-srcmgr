@@ -108,9 +108,9 @@ Acceptance is recorded in the work order in [14](PRD_14_verification_roadmap.md#
 
 ## Release 0.0.4 shell target (discard, stash and detached checkout)
 
-0.0.4 adds the three actions that the reference clients offer next to staging, and makes Git's refusals readable. The benchmark below compares the window with lazygit (the target for keys and panels), SourceTree and Git SCM (the target for the action set in a GUI). Where a row says "not yet", the action is planned in a later release, not dropped.
+0.0.4 adds the three actions that the reference clients offer next to staging, and makes Git's refusals readable. The benchmark below compares the window with lazygit (the target for keys and panels), reference GUI and Git SCM (the target for the action set in a GUI). Where a row says "not yet", the action is planned in a later release, not dropped.
 
-| Action | lazygit | SourceTree | Git SCM (VS Code) | 0.0.4 window |
+| Action | lazygit | reference GUI | Git SCM (VS Code) | 0.0.4 window |
 |---|---|---|---|---|
 | Discard a file's unstaged changes | `d` in Files | Discard | Discard Changes | `d` in Files; asks `y` / `n`; an untracked file is removed only on `y` |
 | Discard one hunk | `d` in the diff | Discard hunk | Revert Block | `d` in the main panel on the hunk under the cursor; asks first |
@@ -128,6 +128,12 @@ Rules for these actions:
 - **Refusals.** Git's refusals (for example a checkout that would overwrite local edits) show Git's own first error line, so the user sees the reason. The notice does not change the repository.
 
 Not part of 0.0.4, and the next candidates in order: the stash list with pop, drop and a message; discard of single lines; commit files under the commit list (lazygit's Enter on a commit); search and filter in lists (`/`); reset and revert with their preview; and the remote actions of M2 (fetch, pull, push), which need PRD 07's trust work first. Status shows the branch and HEAD; a count of stashes and of ahead and behind commits is planned with the stash list.
+
+## 0.1.5 local-workflow interaction slice
+
+`5` opens Stashes in the Files panel's area; `2` returns to Files. `S` from Files also opens Stashes. In that list, Space/`S` applies and retains the selected source, `p` requests Pop and `d` requests Drop through [08](PRD_08_recovery.md)'s prepared confirmation. Display selectors are navigation labels; authorization uses [09](PRD_09_advanced_git.md)'s full identity. Cancelling preserves selection.
+
+Enter in Commits opens changed files; Enter on a file opens its committed diff. Escape returns one level with list selection and scroll preserved. Show commit and resolved base at both levels, and show file status/modes with old/new rename paths. Historical detail is read-only and offers navigation hints rather than stage/discard hints. Stage/unstage shows [04](PRD_04_changes_commits.md)'s observed result. A header busy indicator remains readable when footer hints truncate. Qualification and version status belong to [the plan](../plan/plan-0.1.5.md).
 
 ## Delivery contracts
 

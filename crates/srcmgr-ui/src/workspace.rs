@@ -8,7 +8,7 @@
 //! full list and the deliberate differences.
 
 use srcmgr_domain::NativePath;
-use crate::model::{Job, Line, MainRequest, MainView, Reply, Snapshot, Tone};
+use crate::model::{Job, Line, MainRequest, MainView, PromptAction, Reply, Snapshot, Tone};
 
 /// Lines moved by PgUp and PgDn.
 pub const PAGE_LINES: usize = 12;
@@ -21,6 +21,7 @@ pub enum Pane {
     Files,
     Branches,
     Commits,
+    Stashes,
     Main,
 }
 
@@ -71,7 +72,7 @@ pub enum PromptKind {
 pub struct Prompt {
     kind: PromptKind,
     text: String,
-    submitted: bool,
+    submitted: Option<PromptAction>,
 }
 
 impl Prompt {
@@ -87,14 +88,17 @@ impl Prompt {
 
     /// Returns the effect and whether the prompt stays open.
     fn handle(&mut self, key: Key) -> (Effect, bool) {
-        if self.submitted {
+        if self.submitted.is_some() {
             return (Effect::Nothing, true);
         }
         match (self.kind, key) {
-            (PromptKind::Commit, Key::Escape | Key::CtrlC) => (Effect::Send(Job::SaveDraft(self.text.clone())), false),
+            (PromptKind::Commit, Key::Escape | Key::CtrlC) => {
+                self.submitted = Some(PromptAction::SaveDraft);
+                (Effect::Send(Job::SaveDraft(self.text.clone())), true)
+            }
             (PromptKind::NewBranch, Key::Escape | Key::CtrlC) => (Effect::Nothing, false),
             (PromptKind::Commit, Key::CtrlEnter) => {
-                self.submitted = true;
+                self.submitted = Some(PromptAction::Commit);
                 (Effect::Send(Job::Commit(self.text.clone())), true)
             }
             (PromptKind::Commit, Key::Enter) => {
@@ -106,7 +110,7 @@ impl Prompt {
                 if name.is_empty() {
                     return (Effect::Nothing, true);
                 }
-                self.submitted = true;
+                self.submitted = Some(PromptAction::CreateBranch);
                 (Effect::Send(Job::CreateBranch(name)), true)
             }
             (_, Key::Backspace) => {
@@ -138,6 +142,7 @@ pub enum Confirm {
     DiscardFile { path: NativePath, untracked: bool },
     DiscardHunk { path: NativePath, index: usize },
     Detach { id: String, short: String },
+    Stash { id: String, operation: String },
 }
 
 pub struct Workspace {
@@ -149,6 +154,8 @@ pub struct Workspace {
     files: usize,
     branches: usize,
     commits: usize,
+    stashes: usize,
+    stash_mode: bool,
     main: MainView,
     /// The main panel's cursor: an index into `main.lines`.
     cursor: usize,
@@ -163,7 +170,10 @@ pub struct Workspace {
     notice: Option<String>,
     prompt: Option<Prompt>,
     confirm: Option<Confirm>,
+    prepared_ticket: Option<String>,
+    confirmation_lines: Vec<String>,
     help: bool,
+    detail_back: Option<(MainView, usize, usize)>,
 }
 
 impl Workspace {
@@ -176,6 +186,8 @@ impl Workspace {
             files: 0,
             branches: 0,
             commits: 0,
+            stashes: 0,
+            stash_mode: false,
             main: MainView::default(),
             cursor: 0,
             anchor: None,
@@ -185,7 +197,10 @@ impl Workspace {
             notice: None,
             prompt: None,
             confirm: None,
+            prepared_ticket: None,
+            confirmation_lines: Vec::new(),
             help: false,
+            detail_back: None,
         }
     }
 
@@ -215,6 +230,7 @@ impl Workspace {
             Pane::Files => self.files,
             Pane::Branches => self.branches,
             Pane::Commits => self.commits,
+            Pane::Stashes => self.stashes,
             Pane::Status | Pane::Main => 0,
         }
     }
@@ -269,6 +285,19 @@ impl Workspace {
         self.confirm.as_ref()
     }
 
+    pub fn confirmation_lines(&self) -> &[String] {
+        &self.confirmation_lines
+    }
+
+    pub const fn stash_list_visible(&self) -> bool { self.stash_mode }
+
+    fn prepare_confirmation(&mut self, action: Job) -> Effect {
+        self.generation += 1;
+        self.prepared_ticket = None;
+        self.confirmation_lines = vec!["Checking target and recovery capability... y is unavailable until ready.".to_owned()];
+        Effect::Send(Job::Prepare { generation: self.generation, action: Box::new(action) })
+    }
+
     #[must_use]
     pub const fn help(&self) -> bool {
         self.help
@@ -319,11 +348,20 @@ impl Workspace {
             Key::Char('2') => self.focus_list(Pane::Files),
             Key::Char('3') => self.focus_list(Pane::Branches),
             Key::Char('4') => self.focus_list(Pane::Commits),
+            Key::Char('5') => self.focus_list(Pane::Stashes),
             Key::Tab => self.cycle(true),
             Key::BackTab => self.cycle(false),
             Key::Escape => {
                 self.notice = None;
-                if self.anchor.is_some() {
+                if let Some((view, cursor, scroll)) = self.detail_back.take() {
+                    self.generation += 1;
+                    self.main = view;
+                    self.cursor = cursor;
+                    self.scroll = scroll;
+                } else if self.main.committed.is_some() {
+                    self.focus = Pane::Commits;
+                    return self.show_source();
+                } else if self.anchor.is_some() {
                     self.anchor = None;
                 } else if self.focus == Pane::Main {
                     self.focus = self.source;
@@ -331,6 +369,29 @@ impl Workspace {
                 Effect::Nothing
             }
             Key::Enter => {
+                if self.focus == Pane::Commits {
+                    let Some(commit) = self.snapshot.commits.get(self.commits) else { return Effect::Nothing; };
+                    let request = MainRequest::CommitFiles { id: commit.id.clone() };
+                    self.detail_back = None;
+                    self.focus = Pane::Main;
+                    self.generation += 1;
+                    self.main = MainView::note("Loading committed files...");
+                    self.cursor = 0;
+                    self.scroll = 0;
+                    self.anchor = None;
+                    return Effect::Send(Job::Main { generation: self.generation, request });
+                }
+                if self.focus == Pane::Main && let Some(list) = &self.main.committed {
+                        let Some(file) = self.cursor.checked_sub(2).and_then(|i| list.files.get(i)) else { return Effect::Nothing; };
+                        let request = MainRequest::CommitFile { id: list.id.clone(), file: file.clone() };
+                        self.detail_back = Some((self.main.clone(), self.cursor, self.scroll));
+                        self.generation += 1;
+                        self.main = MainView::note("Loading committed file diff...");
+                        self.cursor = 0;
+                        self.scroll = 0;
+                        self.anchor = None;
+                        return Effect::Send(Job::Main { generation: self.generation, request });
+                }
                 self.focus = Pane::Main;
                 Effect::Nothing
             }
@@ -355,22 +416,24 @@ impl Workspace {
                 self.prompt = Some(Prompt {
                     kind: PromptKind::Commit,
                     text: self.snapshot.draft.clone().unwrap_or_default(),
-                    submitted: false,
+                    submitted: None,
                 });
                 Effect::Nothing
             }
             Key::Char('n') if self.focus == Pane::Branches => {
-                self.prompt = Some(Prompt { kind: PromptKind::NewBranch, text: String::new(), submitted: false });
+                self.prompt = Some(Prompt { kind: PromptKind::NewBranch, text: String::new(), submitted: None });
                 Effect::Nothing
             }
             Key::Char('d') if self.focus == Pane::Branches => self.ask_delete(),
+            Key::Char('d') if self.focus == Pane::Stashes => self.ask_stash_action("drop"),
+            Key::Char('p') if self.focus == Pane::Stashes => self.ask_stash_action("pop"),
             Key::Char('d') if self.focus == Pane::Files => self.ask_discard_file(),
             Key::Char('d') if self.focus == Pane::Main => self.ask_discard_hunk(),
             Key::Char('s') if self.focus == Pane::Files => self.stash(),
             Key::Char('S') if self.focus == Pane::Files => {
-                self.notice = None;
-                Effect::Send(Job::ApplyStash)
+                self.focus_list(Pane::Stashes)
             }
+            Key::Char('S') if self.focus == Pane::Stashes => self.ask_stash_action("apply"),
             Key::Char('r') => Effect::Send(Job::Reload),
             _ => Effect::Nothing,
         }
@@ -380,16 +443,69 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
-            Reply::Full(snapshot) => {
-                self.snapshot = snapshot;
-                self.files = clamp_index(self.files, self.snapshot.files.len());
-                self.branches = clamp_index(self.branches, self.snapshot.branches.len());
-                self.commits = clamp_index(self.commits, self.snapshot.commits.len());
-                if self.prompt.as_ref().is_some_and(|prompt| prompt.submitted) {
-                    self.prompt = None;
+            Reply::NoChange => Effect::Nothing,
+            Reply::MainFailed { generation, text } => {
+                if generation == self.generation {
+                    self.main = MainView::text(&text);
+                    self.cursor = 0;
+                    self.scroll = 0;
+                    self.anchor = None;
+                    self.notice = Some(text);
                 }
+                Effect::Nothing
+            }
+            Reply::ConfirmationFailed { generation, text } => {
+                if generation == self.generation && self.confirm.is_some() {
+                    self.confirm = None;
+                    self.prepared_ticket = None;
+                    self.confirmation_lines.clear();
+                    self.notice = Some(text);
+                }
+                Effect::Nothing
+            }
+            Reply::Prepared { generation, ticket, lines } => {
+                if generation == self.generation && self.confirm.is_some() {
+                    self.prepared_ticket = Some(ticket);
+                    self.confirmation_lines = lines;
+                }
+                Effect::Nothing
+            }
+            Reply::Full(snapshot) => {
+                let interrupted_confirmation = self.confirm.take().is_some();
+                if interrupted_confirmation {
+                    self.prepared_ticket = None;
+                    self.confirmation_lines.clear();
+                }
+                let selected_file = self.snapshot.files.get(self.files).map(|file| file.path.clone());
+                let selected_branch = self.snapshot.branches.get(self.branches).map(|branch| branch.name.clone());
+                let selected_commit = self.snapshot.commits.get(self.commits).map(|commit| commit.id.clone());
+                let selected_stash = self.snapshot.stashes.get(self.stashes).map(|s| s.id.clone());
+                self.snapshot = snapshot;
+                self.files = selected_file.and_then(|path| self.snapshot.files.iter().position(|file| file.path == path))
+                    .unwrap_or_else(|| clamp_index(self.files, self.snapshot.files.len()));
+                self.branches = selected_branch.and_then(|name| self.snapshot.branches.iter().position(|branch| branch.name == name))
+                    .unwrap_or_else(|| clamp_index(self.branches, self.snapshot.branches.len()));
+                self.commits = selected_commit.and_then(|id| self.snapshot.commits.iter().position(|commit| commit.id == id))
+                    .unwrap_or_else(|| clamp_index(self.commits, self.snapshot.commits.len()));
+                self.stashes = clamp_index(self.stashes, self.snapshot.stashes.len());
+                let removed_stash = selected_stash.filter(|id| {
+                    if let Some(index) = self.snapshot.stashes.iter().position(|s| &s.id == id) {
+                        self.stashes = index;
+                        false
+                    } else { true }
+                });
                 self.notice = None;
-                self.show_source()
+                if self.source == Pane::Stashes && self.snapshot.stage_result.is_none() {
+                    self.notice = removed_stash.map(|id| format!("Selected stash {id} was removed; list refreshed"));
+                }
+                let effect = self.show_source();
+                if interrupted_confirmation {
+                    self.notice = Some("Repository state refreshed; confirmation cancelled. Preview the action again.".to_owned());
+                    self.main = MainView::note("State refreshed. Press the pane number to reload details.");
+                    Effect::Send(Job::CancelPrepared)
+                } else {
+                    effect
+                }
             }
             Reply::Main { generation, view } => {
                 if generation == self.generation {
@@ -398,18 +514,53 @@ impl Workspace {
                     self.anchor = None;
                     // The cursor starts on the first changed line, or the top.
                     let last = self.main.lines.len().saturating_sub(1);
-                    self.cursor = self.main.hunks.first().map_or(0, |start| (start + 1).min(last));
+                    self.cursor = if self.main.committed.as_ref().is_some_and(|list| !list.files.is_empty()) { 2 } else { self.main.hunks.first().map_or(0, |start| (start + 1).min(last)) };
                     self.follow();
                 }
                 Effect::Nothing
             }
             Reply::Notice(text) => {
                 self.notice = Some(text);
-                if let Some(prompt) = self.prompt.as_mut() {
-                    prompt.submitted = false;
+                Effect::Nothing
+            }
+            Reply::PromptFailed { action, text } => {
+                self.notice = Some(text);
+                if let Some(prompt) = self.prompt.as_mut() && prompt.submitted == Some(action) {
+                    prompt.submitted = None;
                 }
                 Effect::Nothing
             }
+            Reply::PromptCompleted { action, text } => {
+                self.close_prompt(action);
+                self.generation += 1;
+                self.main = MainView::text(&text);
+                self.cursor = 0;
+                self.scroll = 0;
+                self.anchor = None;
+                self.detail_back = None;
+                self.notice = Some(text.lines().next().unwrap_or(&text).to_owned());
+                Effect::Nothing
+            }
+            Reply::Committed(snapshot) => {
+                self.close_prompt(PromptAction::Commit);
+                self.reply(Reply::Full(snapshot))
+            }
+            Reply::BranchCreated(snapshot) => {
+                self.close_prompt(PromptAction::CreateBranch);
+                self.reply(Reply::Full(snapshot))
+            }
+            Reply::DraftSaved(draft) => {
+                self.close_prompt(PromptAction::SaveDraft);
+                self.snapshot.draft = draft;
+                self.notice = Some("Draft saved".to_owned());
+                Effect::Nothing
+            }
+        }
+    }
+
+    fn close_prompt(&mut self, action: PromptAction) {
+        if self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(action)) {
+            self.prompt = None;
         }
     }
 
@@ -466,22 +617,26 @@ impl Workspace {
     }
 
     fn answer(&mut self, confirm: Confirm, key: Key) -> Effect {
-        match (confirm, key) {
-            (Confirm::DeleteBranch(name), Key::Char('y')) => Effect::Send(Job::DeleteBranch(name)),
-            (Confirm::DiscardFile { path, untracked }, Key::Char('y')) => {
-                Effect::Send(Job::Discard { path, untracked })
-            }
-            (Confirm::DiscardHunk { path, index }, Key::Char('y')) => Effect::Send(Job::DiscardHunk { path, index }),
-            (Confirm::Detach { id, .. }, Key::Char('y')) => Effect::Send(Job::Detach(id)),
-            (_, Key::Char('n') | Key::Escape) => Effect::Nothing,
-            (confirm, _) => {
-                self.confirm = Some(confirm);
-                Effect::Nothing
-            }
+        if matches!(key, Key::Char('n') | Key::Escape) {
+            self.prepared_ticket = None;
+            self.confirmation_lines.clear();
+            return Effect::Send(Job::CancelPrepared);
         }
+        if key == Key::Char('y') {
+            if let Some(ticket) = self.prepared_ticket.take() {
+                self.confirmation_lines.clear();
+                return Effect::Send(Job::ExecutePrepared(ticket));
+            }
+            self.confirm = Some(confirm);
+            return Effect::Nothing;
+        }
+        self.confirm = Some(confirm);
+        Effect::Nothing
     }
 
     fn focus_list(&mut self, pane: Pane) -> Effect {
+        if pane == Pane::Stashes { self.stash_mode = true; }
+        if pane == Pane::Files { self.stash_mode = false; }
         self.notice = None;
         self.focus = pane;
         if pane == Pane::Status || self.source == pane {
@@ -492,7 +647,7 @@ impl Workspace {
     }
 
     fn cycle(&mut self, forward: bool) -> Effect {
-        const ORDER: [Pane; 5] = [Pane::Status, Pane::Files, Pane::Branches, Pane::Commits, Pane::Main];
+        const ORDER: [Pane; 6] = [Pane::Status, Pane::Files, Pane::Stashes, Pane::Branches, Pane::Commits, Pane::Main];
         let index = ORDER.iter().position(|pane| *pane == self.focus).unwrap_or(0);
         let next =
             if forward { ORDER[(index + 1) % ORDER.len()] } else { ORDER[(index + ORDER.len() - 1) % ORDER.len()] };
@@ -598,6 +753,7 @@ impl Workspace {
                 None => Effect::Nothing,
             },
             Pane::Commits => self.ask_detach(),
+            Pane::Stashes => self.ask_stash_action("apply"),
             Pane::Main => self.stage_lines(),
         }
     }
@@ -617,7 +773,7 @@ impl Workspace {
                 }
             }
             Pane::Main => self.stage_hunk(),
-            Pane::Status | Pane::Branches | Pane::Commits => Effect::Nothing,
+            Pane::Status | Pane::Branches | Pane::Commits | Pane::Stashes => Effect::Nothing,
         }
     }
 
@@ -676,7 +832,7 @@ impl Workspace {
             return Effect::Nothing;
         }
         self.confirm = Some(Confirm::DeleteBranch(branch.name.clone()));
-        Effect::Nothing
+        self.prepare_confirmation(Job::DeleteBranch(branch.name.clone()))
     }
 
     /// `d` in Files: asks before the working-tree changes of the file are lost.
@@ -691,7 +847,7 @@ impl Workspace {
             return Effect::Nothing;
         }
         self.confirm = Some(Confirm::DiscardFile { path: row.path.clone(), untracked: row.untracked });
-        Effect::Nothing
+        self.prepare_confirmation(Job::Discard { path: row.path.clone(), untracked: row.untracked })
     }
 
     /// `d` in the main panel: asks before the unstaged hunk under the cursor is
@@ -715,8 +871,8 @@ impl Workspace {
             return Effect::Nothing;
         }
         let index = self.hunk();
-        self.confirm = Some(Confirm::DiscardHunk { path: target.path, index });
-        Effect::Nothing
+        self.confirm = Some(Confirm::DiscardHunk { path: target.path.clone(), index });
+        self.prepare_confirmation(Job::DiscardHunk { path: target.path.clone(), index })
     }
 
     /// `s` in Files: saves the tracked changes as a stash. Untracked files are
@@ -738,17 +894,30 @@ impl Workspace {
         };
         let short: String = commit.id.chars().take(7).collect();
         self.confirm = Some(Confirm::Detach { id: commit.id.clone(), short });
-        Effect::Nothing
+        self.prepare_confirmation(Job::Detach(commit.id.clone()))
+    }
+
+    fn ask_stash_action(&mut self, operation: &str) -> Effect {
+        let Some(stash) = self.snapshot.stashes.get(self.stashes) else { return Effect::Nothing; };
+        let id = stash.id.clone();
+        let expected = self.snapshot.stashes.iter().map(|s| s.id.clone()).collect();
+        self.confirm = Some(Confirm::Stash { id: id.clone(), operation: operation.to_owned() });
+        self.prepare_confirmation(Job::StashAction { id, expected, operation: operation.to_owned() })
     }
 
     /// Asks for the main-panel content of the source list. The main panel
     /// shows a loading note until the reply arrives.
     fn show_source(&mut self) -> Effect {
+        self.detail_back = None;
         self.generation += 1;
         self.scroll = 0;
         self.cursor = 0;
         self.anchor = None;
         let request = match self.source {
+            Pane::Stashes => match self.snapshot.stashes.get(self.stashes) {
+                Some(stash) => MainRequest::Stash { id: stash.id.clone() },
+                None => { self.main = MainView::note("No stashes (list bound: 200)"); return Effect::Nothing; }
+            },
             Pane::Files => match self.snapshot.files.get(self.files) {
                 Some(row) => MainRequest::File {
                     path: row.path.clone(),
@@ -777,6 +946,7 @@ impl Workspace {
             lines: vec![Line { tone: Tone::Muted, text: "Loading...".to_owned() }],
             hunks: Vec::new(),
             file: None,
+            committed: None,
         };
         Effect::Send(Job::Main { generation: self.generation, request })
     }
@@ -788,6 +958,7 @@ impl Workspace {
             Pane::Files => self.snapshot.files.len(),
             Pane::Branches => self.snapshot.branches.len(),
             Pane::Commits => self.snapshot.commits.len(),
+            Pane::Stashes => self.snapshot.stashes.len(),
             Pane::Main => 0,
         }
     }
@@ -797,6 +968,7 @@ impl Workspace {
             Pane::Files => self.files = value,
             Pane::Branches => self.branches = value,
             Pane::Commits => self.commits = value,
+            Pane::Stashes => self.stashes = value,
             Pane::Status | Pane::Main => {}
         }
     }
@@ -844,6 +1016,8 @@ mod tests {
             branches: vec![branch("feature", false), branch("main", true)],
             commits: vec![commit("1"), commit("2")],
             draft: draft.map(str::to_owned),
+            stage_result: None,
+            stashes: Vec::new(),
         }
     }
 
@@ -852,6 +1026,11 @@ mod tests {
             Effect::Send(job) => job,
             other => panic!("expected a job, got {other:?}"),
         }
+    }
+
+    fn approve(workspace: &mut Workspace) -> Job {
+        workspace.reply(Reply::Prepared { generation: workspace.generation, ticket: "fixture".to_owned(), lines: vec!["Recovery with tested limits".to_owned()] });
+        sent(workspace.key(Key::Char('y')))
     }
 
     fn text(value: &str) -> Key {
@@ -1023,9 +1202,28 @@ mod tests {
         assert_eq!(workspace.confirm(), None, "n keeps the changes");
         workspace.key(Key::Char('d'));
         assert_eq!(
-            sent(workspace.key(Key::Char('y'))),
-            Job::Discard { path: NativePath::new("a.txt"), untracked: false }
+            approve(&mut workspace),
+            Job::ExecutePrepared("fixture".to_owned())
         );
+    }
+
+    #[test]
+    fn recovery_preparation_cannot_confirm_early_or_after_cancel() {
+        let mut workspace = Workspace::new(snapshot(None));
+        let job = sent(workspace.key(Key::Char('d')));
+        let Job::Prepare { generation, action } = job else { panic!("preparation required") };
+        assert_eq!(*action, Job::Discard { path: NativePath::new("a.txt"), untracked: false });
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Nothing);
+        assert!(workspace.confirm().is_some());
+        workspace.key(Key::Escape);
+        workspace.reply(Reply::Prepared { generation, ticket: "late".to_owned(), lines: vec!["stale record".to_owned()] });
+        assert!(workspace.confirm().is_none());
+        assert!(workspace.prepared_ticket.is_none());
+        workspace.key(Key::Char('d'));
+        workspace.reply(Reply::ConfirmationFailed { generation, text: "old failure".to_owned() });
+        workspace.reply(Reply::MainFailed { generation, text: "old read failure".to_owned() });
+        assert!(workspace.confirm().is_some(), "a late failure cannot close a newer preview");
+        assert_ne!(workspace.notice(), Some("old failure"));
     }
 
     #[test]
@@ -1048,14 +1246,15 @@ mod tests {
                 lines: lines_of(12),
                 hunks: vec![0],
                 file: Some(FileTarget { path: NativePath::new("a.txt"), staged_view: false }),
+                committed: None,
             },
         });
         workspace.key(Key::Enter);
         workspace.key(Key::Char('d'));
         assert_eq!(workspace.confirm(), Some(&Confirm::DiscardHunk { path: NativePath::new("a.txt"), index: 0 }));
         assert_eq!(
-            sent(workspace.key(Key::Char('y'))),
-            Job::DiscardHunk { path: NativePath::new("a.txt"), index: 0 }
+            approve(&mut workspace),
+            Job::ExecutePrepared("fixture".to_owned())
         );
     }
 
@@ -1064,12 +1263,123 @@ mod tests {
         let mut workspace = Workspace::new(snapshot(None));
         workspace.open();
         assert_eq!(sent(workspace.key(Key::Char('s'))), Job::Stash);
-        assert_eq!(sent(workspace.key(Key::Char('S'))), Job::ApplyStash);
+        workspace.key(Key::Char('S'));
+        assert_eq!(workspace.focus(), Pane::Stashes);
+        workspace.key(Key::Char('2'));
         let mut only_untracked = snapshot(None);
         only_untracked.files = vec![FileRow { untracked: true, ..file("u.txt", false, true) }];
         workspace.reply(Reply::Full(only_untracked));
         assert_eq!(workspace.key(Key::Char('s')), Effect::Nothing);
         assert_eq!(workspace.notice(), Some("no tracked changes to stash"));
+    }
+
+    #[test]
+    fn selected_stash_dispatch_cancel_and_external_removal_preserve_identity() {
+        let mut initial = snapshot(None);
+        initial.stashes = vec![
+            crate::StashRow { id: "a".repeat(40), subject: "newer".into() },
+            crate::StashRow { id: "b".repeat(40), subject: "older".into() },
+        ];
+        let mut workspace = Workspace::new(initial.clone());
+        workspace.open();
+        workspace.key(Key::Char('5'));
+        workspace.key(Key::Down);
+        let Job::Prepare { action, .. } = sent(workspace.key(Key::Char('d'))) else { panic!() };
+        assert_eq!(*action, Job::StashAction { id: "b".repeat(40), expected: vec!["a".repeat(40), "b".repeat(40)], operation: "drop".into() });
+        assert_eq!(sent(workspace.key(Key::Escape)), Job::CancelPrepared);
+        assert_eq!(workspace.selected(Pane::Stashes), 1);
+        initial.stashes.reverse();
+        workspace.reply(Reply::Full(initial.clone()));
+        assert_eq!(workspace.selected(Pane::Stashes), 0, "reordering preserves the full selected OID");
+        initial.stashes.remove(0);
+        workspace.reply(Reply::Full(initial));
+        assert!(workspace.notice().unwrap().contains("was removed"));
+    }
+
+    #[test]
+    fn a_full_refresh_cancels_an_outstanding_confirmation_and_releases_its_worker_record() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        let Job::Prepare { generation, .. } = sent(workspace.key(Key::Char('d'))) else { panic!() };
+        assert_eq!(sent(workspace.reply(Reply::Full(snapshot(None)))), Job::CancelPrepared);
+        assert!(workspace.confirm().is_none());
+        assert!(workspace.notice().unwrap().contains("confirmation cancelled"));
+        workspace.reply(Reply::Prepared { generation, ticket: "obsolete".into(), lines: vec!["old recovery state".into()] });
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Nothing);
+        assert!(workspace.confirm().is_none());
+        assert!(!workspace.main().lines[0].text.contains("Loading"), "cancelled confirmation cannot leave a permanent loading view");
+    }
+
+    #[test]
+    fn refresh_preserves_selected_identities_when_rows_are_inserted_before_them() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.key(Key::Down);
+        workspace.key(Key::Char('3'));
+        workspace.key(Key::Down);
+        workspace.key(Key::Char('4'));
+        workspace.key(Key::Down);
+        let mut updated = snapshot(None);
+        updated.files.insert(0, file("0-new.txt", true, false));
+        updated.branches.insert(0, branch("aaa", false));
+        updated.commits.insert(0, commit("new"));
+        let Job::Main { request, .. } = sent(workspace.reply(Reply::Full(updated))) else { panic!() };
+        assert_eq!(request, MainRequest::Commit { id: "2".into() });
+        assert_eq!(workspace.selected(Pane::Files), 2);
+        assert_eq!(workspace.selected(Pane::Branches), 2);
+        assert_eq!(workspace.selected(Pane::Commits), 2);
+    }
+
+    #[test]
+    fn failed_committed_detail_is_visible_and_returns_to_the_scrolled_file_list() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.key(Key::Char('4'));
+        let Job::Main { generation, .. } = sent(workspace.key(Key::Enter)) else { panic!() };
+        let files: Vec<_> = (0..30).map(|i| crate::CommittedFile { status: "A".into(), old_mode: "000000".into(), new_mode: "100644".into(), path: NativePath::new(format!("f{i}.txt")), old_path: None }).collect();
+        let mut list = MainView::text(&format!("Commit 1\nBase: empty tree\n{}", (0..30).map(|i| format!("A f{i}.txt\n")).collect::<String>()));
+        list.committed = Some(crate::CommittedFiles { id: "1".into(), base: "empty tree".into(), files });
+        workspace.reply(Reply::Main { generation, view: list.clone() });
+        workspace.set_view_rows(5);
+        workspace.key(Key::End);
+        let before = (workspace.cursor(), workspace.scroll());
+        assert!(before.1 > 0);
+        let Job::Main { generation, .. } = sent(workspace.key(Key::Enter)) else { panic!() };
+        assert_eq!(workspace.scroll(), 0, "loading remains visible after drilling into a low row");
+        workspace.reply(Reply::MainFailed { generation, text: "Commit 1\nBase: unavailable\nObject missing".into() });
+        assert_eq!((workspace.cursor(), workspace.scroll()), (0, 0));
+        assert_eq!(workspace.main().lines.len(), 3);
+        workspace.key(Key::Escape);
+        assert_eq!(workspace.main(), &list);
+        assert_eq!((workspace.cursor(), workspace.scroll()), before);
+    }
+
+    #[test]
+    fn committed_detail_returns_to_list_and_cannot_mutate_or_accept_a_late_diff() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.key(Key::Char('4'));
+        let Job::Main { generation, request: MainRequest::CommitFiles { id } } = sent(workspace.key(Key::Enter)) else { panic!() };
+        assert_eq!(id, "1");
+        let file = crate::CommittedFile { status: "D".into(), old_mode: "100644".into(), new_mode: "000000".into(), path: NativePath::new("gone.txt"), old_path: None };
+        let mut list = MainView::text("Commit 1\nBase: empty tree\nD gone.txt\n");
+        list.committed = Some(crate::CommittedFiles { id: id.clone(), base: "empty tree".into(), files: vec![file.clone()] });
+        workspace.reply(Reply::Main { generation, view: list.clone() });
+        assert_eq!(workspace.cursor(), 2);
+        let Job::Main { generation: diff_generation, request: MainRequest::CommitFile { id: target, file: selected } } = sent(workspace.key(Key::Enter)) else { panic!() };
+        assert_eq!((target, selected), (id, file));
+        workspace.reply(Reply::Main { generation: diff_generation, view: MainView::text("@@ -1 +0,0 @@\n-deleted\n") });
+        for key in [Key::Space, Key::Char('a'), Key::Char('d')] {
+            assert_eq!(workspace.key(key), Effect::Nothing, "history is read-only");
+            assert!(workspace.confirm().is_none());
+        }
+        workspace.key(Key::Escape);
+        assert_eq!(workspace.main(), &list);
+        assert_eq!(workspace.cursor(), 2);
+        workspace.reply(Reply::Main { generation: diff_generation, view: MainView::note("late diff") });
+        assert_eq!(workspace.main(), &list);
+        workspace.key(Key::Escape);
+        assert_eq!(workspace.focus(), Pane::Commits);
     }
 
     #[test]
@@ -1080,7 +1390,7 @@ mod tests {
         workspace.key(Key::Char('j'));
         workspace.key(Key::Space);
         assert_eq!(workspace.confirm(), Some(&Confirm::Detach { id: "2".to_owned(), short: "2".to_owned() }));
-        assert_eq!(sent(workspace.key(Key::Char('y'))), Job::Detach("2".to_owned()));
+        assert_eq!(approve(&mut workspace), Job::ExecutePrepared("fixture".to_owned()));
     }
 
     #[test]
@@ -1094,10 +1404,10 @@ mod tests {
         workspace.key(Key::Up);
         workspace.key(Key::Char('d'));
         assert_eq!(workspace.confirm(), Some(&Confirm::DeleteBranch("feature".to_owned())));
-        assert_eq!(workspace.key(Key::Char('n')), Effect::Nothing);
+        assert_eq!(workspace.key(Key::Char('n')), Effect::Send(Job::CancelPrepared));
         assert!(workspace.confirm().is_none());
         workspace.key(Key::Char('d'));
-        assert_eq!(sent(workspace.key(Key::Char('y'))), Job::DeleteBranch("feature".to_owned()));
+        assert_eq!(approve(&mut workspace), Job::ExecutePrepared("fixture".to_owned()));
     }
 
     #[test]
@@ -1113,7 +1423,7 @@ mod tests {
         workspace.key(text(" review "));
         assert_eq!(sent(workspace.key(Key::Enter)), Job::CreateBranch("review".to_owned()));
         assert!(workspace.prompt().is_some(), "the prompt stays until the backend answers");
-        workspace.reply(Reply::Full(snapshot(None)));
+        workspace.reply(Reply::BranchCreated(snapshot(None)));
         assert!(workspace.prompt().is_none());
     }
 
@@ -1125,10 +1435,57 @@ mod tests {
         assert_eq!(workspace.prompt().map(Prompt::text), Some("draft text"));
         workspace.key(Key::Char('!'));
         assert_eq!(sent(workspace.key(Key::CtrlEnter)), Job::Commit("draft text!".to_owned()));
-        workspace.reply(Reply::Notice("nothing is staged to commit".to_owned()));
+        workspace.reply(Reply::PromptFailed { action: PromptAction::Commit, text: "nothing is staged to commit".to_owned() });
         assert_eq!(workspace.prompt().map(Prompt::text), Some("draft text!"));
         assert_eq!(sent(workspace.key(Key::CtrlEnter)), Job::Commit("draft text!".to_owned()));
+        workspace.reply(Reply::Committed(snapshot(None)));
+        assert!(workspace.prompt().is_none());
+    }
+
+    #[test]
+    fn completed_write_with_unavailable_refresh_closes_only_its_own_prompt_and_reports_stale_state() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.key(Key::Char('c'));
+        workspace.key(Key::Text("already created".into()));
+        assert_eq!(workspace.key(Key::CtrlEnter), Effect::Send(Job::Commit("already created".into())));
+        let old_generation = workspace.generation;
+        workspace.reply(Reply::PromptCompleted { action: PromptAction::Commit, text: "Commit abc created.\nState refresh unavailable; displayed lists may be stale.\nDo not resubmit.".into() });
+        assert!(workspace.prompt().is_none(), "a known completed write is acknowledged");
+        assert!(workspace.main().lines.iter().any(|line| line.text.contains("stale")));
+        workspace.reply(Reply::Main { generation: old_generation, view: MainView::note("obsolete preview") });
+        assert!(!workspace.main().lines.iter().any(|line| line.text == "obsolete preview"), "an older preview must not erase the reconciliation guidance");
+        workspace.key(Key::Char('c'));
+        workspace.key(Key::Text("keep unrelated draft".into()));
+        workspace.key(Key::Escape);
+        workspace.reply(Reply::PromptCompleted { action: PromptAction::CreateBranch, text: "Branch created; refresh unavailable".into() });
+        assert_eq!(workspace.prompt().unwrap().submitted, Some(PromptAction::SaveDraft), "a different completion cannot acknowledge a pending draft save");
+    }
+
+    #[test]
+    fn an_unrelated_snapshot_cannot_acknowledge_a_pending_commit() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.key(Key::Char('c'));
+        workspace.key(text("retain this message"));
+        sent(workspace.key(Key::CtrlEnter));
         workspace.reply(Reply::Full(snapshot(None)));
+        assert_eq!(workspace.prompt().map(Prompt::text), Some("retain this message"));
+        workspace.reply(Reply::Notice("earlier stage refused".into()));
+        assert_eq!(workspace.key(Key::CtrlEnter), Effect::Nothing, "a different job's failure cannot enable duplicate submit");
+    }
+
+    #[test]
+    fn a_draft_save_failure_keeps_the_unsaved_message_available() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.key(Key::Char('c'));
+        workspace.key(text("keep after I/O failure"));
+        sent(workspace.key(Key::Escape));
+        assert_eq!(workspace.prompt().map(Prompt::text), Some("keep after I/O failure"), "closing before persistence is acknowledged loses the message on failure");
+        workspace.reply(Reply::PromptFailed { action: PromptAction::SaveDraft, text: "profile write denied".into() });
+        assert_eq!(workspace.prompt().map(Prompt::text), Some("keep after I/O failure"));
+        assert_eq!(sent(workspace.key(Key::Escape)), Job::SaveDraft("keep after I/O failure".into()));
+        workspace.reply(Reply::DraftSaved(Some("keep after I/O failure".into())));
         assert!(workspace.prompt().is_none());
     }
 
@@ -1141,6 +1498,8 @@ mod tests {
         workspace.key(Key::Enter);
         workspace.key(text("body"));
         assert_eq!(sent(workspace.key(Key::Escape)), Job::SaveDraft("subject\nbody".to_owned()));
+        assert!(workspace.prompt().is_some());
+        workspace.reply(Reply::DraftSaved(Some("subject\nbody".to_owned())));
         assert!(workspace.prompt().is_none());
     }
 
@@ -1195,7 +1554,7 @@ mod tests {
         workspace.open();
         workspace.reply(Reply::Main {
             generation: workspace.generation,
-            view: MainView { lines: lines_of(12), hunks: vec![0, 5, 9], file: None },
+            view: MainView { lines: lines_of(12), hunks: vec![0, 5, 9], file: None, committed: None },
         });
         workspace.click_main(Some(6));
         assert_eq!((workspace.focus(), workspace.cursor(), workspace.hunk()), (Pane::Main, 6, 1));
@@ -1213,7 +1572,7 @@ mod tests {
         assert_eq!(workspace.focus(), focus, "the wheel over a list keeps the focus");
         workspace.reply(Reply::Main {
             generation: workspace.generation,
-            view: MainView { lines: lines_of(12), hunks: Vec::new(), file: None },
+            view: MainView { lines: lines_of(12), hunks: Vec::new(), file: None, committed: None },
         });
         workspace.wheel(Pane::Main, 3);
         assert_eq!((workspace.focus(), workspace.scroll()), (Pane::Main, 3));

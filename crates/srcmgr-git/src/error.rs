@@ -47,11 +47,17 @@ pub enum GitError {
     NoChangedLines,
     /// The worktree has no `.git` entry that this slice can read directly.
     NotARepository,
+    StaleSelection,
+    UnsupportedStashStorage,
+    StashPublicationIncomplete,
 }
 
 impl fmt::Display for GitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnsupportedStashStorage => formatter.write_str("stash removal requires bounded ordinary files storage with an unpacked direct stash ref and an external recovery profile"),
+            Self::StashPublicationIncomplete => formatter.write_str("stash removal publication is incomplete; original ref/reflog are retained in this profile's recovery transaction; refresh and inspect before manual repair; do not replay apply"),
+            Self::StaleSelection => formatter.write_str("stash list changed, is ambiguous, or reached the 200-entry bound; refresh and select again"),
             Self::Spawn(_) => formatter.write_str("the configured Git executable could not be started"),
             Self::Io(_) => formatter.write_str("supervising the Git process failed"),
             Self::Supervision => formatter.write_str("the Git process did not expose captured output"),

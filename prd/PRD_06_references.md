@@ -32,7 +32,7 @@ Tags support lightweight and annotated creation; annotation/signing are explicit
 
 ## Integration and history actions
 
-Merge shows current branch, source ref/OID and fast-forward possibility. User chooses fast-forward-only, normal merge, or explicit no-fast-forward; normal does not silently squash. Squash merge is a separate action with explanation that it prepares index/worktree without recording a merge parent; committing remains explicit. Dirty-state and active-operation preflight apply. Conflicts enter the dedicated continuation state.
+Merge shows current branch, source ref/OID and fast-forward possibility. User chooses fast-forward-only, normal merge, or explicit no-fast-forward; normal does not silently squash. Squash merge is a separate action with explanation that it prepares index/worktree without recording a merge parent; committing remains explicit. Dirty-state and active-operation preflight apply. Conflicts enter the dedicated continuation state. Before a merge or rebase starts, the preview lists the commits in destination..source (or the rebase source list) and a changed-file summary of that range. Both are paged and use the same resolved OIDs that the operation binds.
 
 Rebase shows source commits and new base; default auto-stash is off. Detect a remote-tracking reachability risk and require rewrite confirmation. M3 interactive rebase supports reorder, reword, squash, fixup and drop; list affected OIDs and resulting order before start. Preserve message edits across conflict/restart. Merge-containing ranges are blocked unless explicit topology-preserving behavior is implemented and qualified; do not silently flatten them. Arbitrary shell `exec` in a plan is excluded.
 

@@ -66,6 +66,12 @@ pub struct CommitRow {
     pub merge: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StashRow {
+    pub id: String,
+    pub subject: String,
+}
+
 /// Everything the lists show. Main-panel content is requested separately.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Snapshot {
@@ -75,6 +81,9 @@ pub struct Snapshot {
     pub branches: Vec<BranchRow>,
     pub commits: Vec<CommitRow>,
     pub draft: Option<String>,
+    /// Last observed stage/unstage result, naming its own path scope.
+    pub stage_result: Option<String>,
+    pub stashes: Vec<StashRow>,
 }
 
 impl Snapshot {
@@ -93,6 +102,8 @@ impl Snapshot {
             branches,
             commits,
             draft,
+            stage_result: None,
+            stashes: Vec::new(),
         }
     }
 }
@@ -111,12 +122,29 @@ pub struct MainView {
     /// Line index of each hunk header, in hunk order.
     pub hunks: Vec<usize>,
     pub file: Option<FileTarget>,
+    pub committed: Option<CommittedFiles>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommittedFile {
+    pub status: String,
+    pub old_mode: String,
+    pub new_mode: String,
+    pub path: NativePath,
+    pub old_path: Option<NativePath>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommittedFiles {
+    pub id: String,
+    pub base: String,
+    pub files: Vec<CommittedFile>,
 }
 
 impl MainView {
     #[must_use]
     pub fn note(text: &str) -> Self {
-        Self { lines: vec![Line { tone: Tone::Muted, text: text.to_owned() }], hunks: Vec::new(), file: None }
+        Self { lines: vec![Line { tone: Tone::Muted, text: text.to_owned() }], hunks: Vec::new(), file: None, committed: None }
     }
 
     #[must_use]
@@ -125,6 +153,7 @@ impl MainView {
             lines: text.lines().map(|line| Line { tone: Tone::Text, text: line.to_owned() }).collect(),
             hunks: Vec::new(),
             file: None,
+            committed: None,
         }
     }
 
@@ -133,13 +162,16 @@ impl MainView {
         let lines = diff_lines(text);
         let hunks =
             lines.iter().enumerate().filter(|(_, line)| line.tone == Tone::Hunk).map(|(index, _)| index).collect();
-        Self { lines, hunks, file: Some(file) }
+        Self { lines, hunks, file: Some(file), committed: None }
     }
 }
 
 /// What the main panel should show for the focused list.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MainRequest {
+    CommitFiles { id: String },
+    CommitFile { id: String, file: CommittedFile },
+    Stash { id: String },
     File { path: NativePath, staged_view: bool, untracked: bool },
     Commit { id: String },
 }
@@ -148,6 +180,11 @@ pub enum MainRequest {
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Job {
+    StashAction { id: String, expected: Vec<String>, operation: String },
+    /// Prepare a target-bound, expiring confirmation on the worker.
+    Prepare { generation: u64, action: Box<Job> },
+    ExecutePrepared(String),
+    CancelPrepared,
     Reload,
     /// `generation` lets the window drop a main-panel reply that was overtaken
     /// by a newer selection.
@@ -196,8 +233,6 @@ pub enum Job {
     },
     /// Saves tracked changes as a stash.
     Stash,
-    /// Applies the newest stash and keeps it.
-    ApplyStash,
     /// Checks out a commit by its full id, leaving HEAD detached.
     Detach(String),
     Commit(String),
@@ -207,6 +242,16 @@ pub enum Job {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reply {
+    Committed(Snapshot),
+    BranchCreated(Snapshot),
+    DraftSaved(Option<String>),
+    PromptFailed { action: PromptAction, text: String },
+    /// The Git write completed, but the following snapshot is unavailable.
+    PromptCompleted { action: PromptAction, text: String },
+    NoChange,
+    MainFailed { generation: u64, text: String },
+    ConfirmationFailed { generation: u64, text: String },
+    Prepared { generation: u64, ticket: String, lines: Vec<String> },
     /// The lists changed; the window reloads the main panel for its focus.
     Full(Snapshot),
     Main {
@@ -215,6 +260,13 @@ pub enum Reply {
     },
     /// An action was refused. The text is shown to the user as is.
     Notice(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PromptAction {
+    Commit,
+    CreateBranch,
+    SaveDraft,
 }
 
 /// Runs jobs on behalf of the window. It is moved to a worker thread, so it

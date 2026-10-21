@@ -46,7 +46,7 @@ Freshness checks detect observed changes and Git supplies its native locks/condi
 | Remote publication/deletion | push, lease rewrite, delete remote ref | Destination/ref preview; lease rewrite and delete require a distinct confirmation |
 | Irrecoverable deletion | remove untracked content, delete worktree files, delete local safety copy | Typed target confirmation and explicit no-guaranteed-recovery warning |
 
-No permanent “never warn again” switch for destructive classes. Keyboard Enter cannot confirm while a modal is still receiving its opening keypress; destructive default focus is Cancel. Snapshot/backup creation happens only after a valid confirmation and before its associated destructive write; it is not a side effect of browsing a preview. The user sees whether a durable safety copy exists before proceeding.
+No permanent “never warn again” switch for destructive classes. Keyboard Enter cannot confirm while a modal is still receiving its opening keypress; destructive default focus is Cancel. Snapshot/backup creation happens only after a valid confirmation and before its associated destructive write; it is not a side effect of browsing a preview. The user sees whether a durable safety copy exists before proceeding. Each destructive or irrecoverable row in the risk table shows one recovery label as part of its preview, before confirmation: restorable from a recovery ref or safety copy, restorable with the limits stated, or not restorable. The label is not a help link.
 
 ## Conflict center
 
@@ -69,6 +69,8 @@ Before destructive tracked-content actions, offer a durable safety copy of affec
 Before ref rewrites, retain an application recovery ref to the old OID and record the operation. Reflog/recovery refs can restore reachable commits, not never-committed bytes or external hook effects. Restore previews current versus recovered state and uses the same gate; do not overwrite new work because an old job has an Undo button. Delete safety records only through storage management under [13](PRD_13_state_control.md). No unlimited durable backup guarantee.
 
 Reserve `refs/srcmgr/recovery/<opaque-operation-id>` for application recovery refs. They remain ordinary local refs: exclude them from default product history/query/push selections and clearly identify them in recovery management. Never issue a broad mirror/all-ref push that publishes them. They can retain otherwise unreachable source objects until explicitly removed; show that storage/privacy consequence. Creation failure blocks the dependent ref rewrite, and restore/delete uses expected old OIDs rather than acting on a display label. Git tools outside this product can still enumerate or publish such refs.
+
+Selected stash removal may use the bounded Git-generated publication mechanism in [02](PRD_02_architecture_reuse.md). Retain the original ref/reflog in a private profile transaction before publishing. The ref and reflog replacements are not a single filesystem transaction: an interruption can leave partial publication and stale Git locks. Report the uncertainty, retain the original metadata and recovery ref, refresh what can be read, and require inspection before manual repair; never replay the apply portion of Pop or silently remove a lock. A failed preview/authorization also refreshes trusted state where possible so a moved list is not presented as current.
 
 ## Delivery contracts
 

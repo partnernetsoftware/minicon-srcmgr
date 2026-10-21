@@ -144,6 +144,23 @@ fn run_mutation(
     )
 }
 
+/// Resolves an exact ref, not an arbitrary revision expression.
+pub fn reference_target(git: &GitInstallation, repo: &RepositoryIdentity, reference: &str) -> Result<String, GitError> {
+    let output = run_mutation(git, repo, &["show-ref".into(), "--verify".into(), "--hash".into(), reference.into()], None)?;
+    let oid = std::str::from_utf8(&output.stdout).map_err(|_| GitError::InvalidRevision)?.trim();
+    revision(oid.as_bytes())?;
+    Ok(oid.to_owned())
+}
+
+/// Creates a new recovery ref; an existing record is never overwritten.
+pub fn retain_recovery_ref(git: &GitInstallation, repo: &RepositoryIdentity, ticket: &str, oid: &str) -> Result<(), GitError> {
+    if ticket.len() != 32 || !ticket.bytes().all(|b| b.is_ascii_hexdigit()) || !oid.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(GitError::InvalidRevision);
+    }
+    run_mutation(git, repo, &["update-ref".into(), format!("refs/srcmgr/recovery/{ticket}").into(), oid.into(), "".into()], None)?;
+    Ok(())
+}
+
 /// Returns the textual diff of one path, either index-against-HEAD (`staged`)
 /// or working-tree-against-index. External diff and textconv drivers are
 /// disabled, so repository-configured programs do not run for display.

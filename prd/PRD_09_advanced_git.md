@@ -28,6 +28,8 @@ Stash creation previews tracked edits, staged content and optional untracked fil
 
 Apply is preferred to Pop because it preserves the source. Pop is a distinct action: remove the exact stash only after confirmed successful apply, and keep it on conflict/uncertain result. Drop/clear previews exact OIDs and recovery limitations; there is no automatic dropping during cleanup. Shared worktree stash lists refresh after external changes.
 
+The 0.1.5 slice selects up to 200 entries with display selector, short OID and subject; execution binds full OID and observed list identity. An ambiguous duplicate or a list at its conservative bound refuses mutation until the scope can be established. Inspection names the full stash/base OIDs and includes captured untracked payload; this does not add untracked/ignored capture controls to creation. Removal initially qualifies only ordinary files storage with a direct unpacked stash ref and bounded metadata, using [02](PRD_02_architecture_reuse.md)'s Git-generated publication path and [08](PRD_08_recovery.md)'s partial-publication recovery limits. Other storage refuses removal explicitly. Implementation and qualification status remain in [the version plan](../plan/plan-0.1.5.md).
+
 ## Worktrees
 
 List every Git-reported worktree with path, HEAD/branch, locked/prunable/missing status and app tab. Add creates a worktree with a selected existing/new branch or explicit detached OID. Destination checks match repository creation safety. A branch occupied elsewhere offers navigation instead of force checkout. Common-dir mutation serialization is owned by [02](PRD_02_architecture_reuse.md).

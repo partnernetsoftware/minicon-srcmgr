@@ -1,6 +1,6 @@
 # MiniCon SrcMgr — product requirements index
 
-Baseline: **1.2 · 2026-10-18 · reviewed for M0 implementation handoff; not implemented**. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
+Baseline: **1.4 · 2026-10-21 · reorganizes the product feature design around seven user jobs, with explicit decisions not to copy (01); not implemented**. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
 
 ## Outcome tree DAG
 

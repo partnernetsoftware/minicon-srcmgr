@@ -58,6 +58,150 @@ Use the TUI application [lazygit](https://github.com/jesseduffield/lazygit) as a
 
 The benchmark guides daily workflow coverage and low-friction panel navigation. The deliverable remains a native GUI; a separate TUI edition is not added by this requirement. Do not require lazygit at runtime, copy every command, reproduce destructive shortcuts or add a plugin/shell system for nominal parity. Reference snapshot: [lazygit at `4e1eebe278790f257a875da6633234391a5a85b3`](https://github.com/jesseduffield/lazygit/tree/4e1eebe278790f257a875da6633234391a5a85b3), reviewed 2026-10-18. Compare the listed workflows against that snapshot; future upstream changes do not silently expand release scope.
 
+## reference GUI analysis
+
+reference GUI (Atlassian) is the desktop Git client most users compare against. Observed on this Windows host on 2026-10-20:
+
+- Installed build folder `app-3.4.21`. Its localisation resources list the feature vocabulary used below. The live window was not captured: the only visible reference GUI window is a 146 × 28 helper, and the main window was not on screen, so no layout claim here is visual evidence. Feature names come from those resource strings; behavior beyond the names is not verified in this session.
+- Idle footprint, one snapshot with the main window hidden: working set 762 MB, private memory 667 MB, 43 threads and 2,139 handles in the `reference GUI` process. This is the reference point for the footprint pillar. SrcMgr's own idle and active budgets are still unmeasured and are owned by [14](PRD_14_verification_roadmap.md).
+
+What reference GUI sets as the baseline for a desktop Git client:
+
+- A sidebar as the navigation spine for branches, remotes, tags, stashes and bookmarks, with one tab per repository.
+- A changes view with unstaged, staged and untracked sections, a tree or flat file-list toggle, and stage, unstage and discard for files, hunks and lines.
+- A commit panel with a staged-only mode, an amend warning and commit-message text replacement.
+- History with a graph, file log, blame, search and file status views.
+- Common workflows as menu commands: merge, rebase (including interactive), cherry-pick, revert, reset (mixed, hard and all), tag and stash.
+- Git LFS, submodule and subtree tooling, patch create and apply, and Git Flow.
+- First-run onboarding that detects or installs Git tooling and offers an account.
+
+## Design decisions: what SrcMgr does not copy
+
+| Not copied | Seen in | SrcMgr disposition | Reason | Owner |
+|---|---|---|---|---|
+| Bypass commit hooks | reference GUI `BypassCommitHooks` | Not offered | Hooks run under trust; no automatic `--no-verify`; a bypass needs its own trust policy first | [04](PRD_04_changes_commits.md) |
+| Custom actions and scripts | reference GUI `CustomActionsWindowFooter`, `CustomActionScriptBlankMsg` | Excluded | Arbitrary plugin or script execution is outside the baseline | 01 (this module) |
+| Automatic Git installation during onboarding | reference GUI `OnboardingInstallTools`, `OnboardingToolDownloading` | Excluded | A missing Git shows setup guidance (PROD-02) | 01 (this module) |
+| Hosted accounts, pull requests and hosted project browsing | reference GUI `AddAccount`, `CreatePullRequestMenu`, `BrowseHostedProjects` | Excluded | Hosting-specific review clients are outside scope; an account is not the workspace identity | 01 (this module) |
+| Usage analytics toggle | reference GUI `EnableAnalytics` | No telemetry | Governing invariant 6 | [11](PRD_11_security.md) |
+| Saved passwords | reference GUI `SavedPasswords` | Not stored | No built-in secret store in the baseline | [11](PRD_11_security.md) |
+| Ignore by extension as the default | reference GUI `IgnoreAllFilesWithThisExtension` | Exact path is the default | A broad wildcard may be reviewed later as an explicit option | [03](PRD_03_workspace.md) |
+| Mercurial shelves | reference GUI `SidebarShelves` | Out of scope | Non-Git backends follow the extension contract | [15](PRD_15_vcs_backends.md) |
+| Git Flow | reference GUI `FlowFeatureBranchLogDesc`, `FlowMergeXintoY` | Candidate, not admitted | A branch-naming layer with its own configuration writes; revisit after M3 | 01 (this module) |
+| Subtree | reference GUI `AddLinkSubtreeMenu`, `ConfirmPullSubtreeMsg` | Candidate, not admitted | No owner in this PRD; submodules are M3 | [09](PRD_09_advanced_git.md) |
+| Graft | reference GUI `GraftMenu` | Not admitted | Creating grafts rewrites ancestry views; history only displays existing replacement effects | [05](PRD_05_history.md) |
+| PuTTY SSH client | reference GUI `WelcomeUsePuTTY`, `SSHClientConfiguration` | Not in baseline | The configured Git transport is the only path; PuTTY would be a second one | [07](PRD_07_remotes.md) |
+| Silent commit-message replacement | reference GUI commit panel | Not copied | Rewriting the user's draft breaks the draft promise; a draft is user-owned | [04](PRD_04_changes_commits.md) |
+| Stage-all or commit-all in one step | Common GUI shortcut | Not copied | Commit submits the live index only and never stages unseen content | [04](PRD_04_changes_commits.md) |
+| One-step sync (pull and push together) | Common GUI shortcut | Not copied | Each remote write has its own preview; pull mode is chosen explicitly | [07](PRD_07_remotes.md) |
+| Ambient defaults for pull mode, push refspecs and auto-stash | Common GUI defaults | Not copied | A silent default can change history or stash work the user did not choose | [06](PRD_06_references.md), [07](PRD_07_remotes.md) |
+| Discard without a safety copy or a recovery label | Common GUI discard | Not copied | Every destructive action states what can and cannot be restored | [08](PRD_08_recovery.md) |
+| Universal undo | Common expectation of a GUI undo | Not promised | Only recovery refs, safety copies and reflog-reachable commits are restorable | [08](PRD_08_recovery.md) |
+| Idle cost that grows with open repositories | reference GUI idle snapshot: 762 MB working set, 43 threads, window hidden | Not accepted | Repositories not visible hold bounded metadata only; budgets are measured, not asserted | [03](PRD_03_workspace.md), [14](PRD_14_verification_roadmap.md) |
+| Periodic remote polling by default | Common GUI background refresh | Not copied | Auto-fetch is opt-in per repository; no continuous polling | [03](PRD_03_workspace.md), [07](PRD_07_remotes.md) |
+
+## Target jobs
+
+SrcMgr is organized around seven jobs where a Git GUI should be most useful to its users. The list follows from the users named in Positioning and the product promise, not from competitor features. No user study yet ranks these jobs (see open questions).
+
+| Job | What the user is trying to do | Why SrcMgr should own it | Owner |
+|---|---|---|---|
+| 1 Triage many repositories | Find which local repository is dirty, mid-operation or behind | Developers keep several repositories open; the overview must cost little and never show stale state as current | [03](PRD_03_workspace.md) |
+| 2 Know what a command changes | Read the exact effect before a write runs | Discard, reset, integrate and push can lose or publish work; a precise preview is the trust signal | [08](PRD_08_recovery.md), [06](PRD_06_references.md), [07](PRD_07_remotes.md) |
+| 3 Stage and commit the intent | Commit the chosen content and see what the index now holds | Contributors learning staged changes need the index effect in view | [04](PRD_04_changes_commits.md) |
+| 4 Recover with stated limits | Undo a mistake without guessing what survives | Users need the restoring mechanism named before they act | [08](PRD_08_recovery.md), [09](PRD_09_advanced_git.md) |
+| 5 Review and integrate | Read the commits and file changes a merge or rebase brings in | Maintainers review histories; a range review before integration prevents surprises | [06](PRD_06_references.md), [05](PRD_05_history.md) |
+| 6 Work from the keyboard | Repeat daily actions without pointer travel | Keyboard-first is the differentiator; pointer use keeps the same meaning | [10](PRD_10_desktop_ux.md) |
+| 7 Stay light and local | Keep SrcMgr open beside other tools; work offline without an account | This is the product promise: small footprint, no account, no telemetry | [01](PRD_01_product.md), [11](PRD_11_security.md), [14](PRD_14_verification_roadmap.md) |
+
+Design rules that every feature follows:
+
+1. The sidebar and tabs are the navigation spine. Every repository object (branch, tag, remote, stash, worktree, submodule) is reachable from the sidebar.
+2. A command sits next to the object it changes, in the sidebar, list or history view, and has one keyboard path.
+3. Every mutation shows a preview of its exact targets, and its confirmation names the consequence rather than asking a generic question.
+4. Advanced operations stay out of the default path until the selection needs them, for example reset modes and rebase plans.
+5. Local work needs no network, account, background daemon or bundled tool.
+
+## Product feature design
+
+Rows are grouped by the job they serve. "Milestone" is the milestone that admits the feature; "Candidate" means not yet admitted; "Excluded" means outside M3. "Shipped" = yes means the feature is in the 0.0.4 source release, per the [README](../README.md); partial means only the part named in the row is shipped; a dash means not shipped or not verified.
+
+Type: **Differentiator** is a stated SrcMgr advantage (trust, footprint, keyboard, honest state). **Core** is needed to finish a job but is not a reason to choose SrcMgr. **Compatibility** must not corrupt or mishandle a repository. **Parity** is kept only because the baseline or a reference client includes it.
+
+| Job | Feature | Why it matters | Type | Milestone | Owner | Shipped |
+|---|---|---|---|---|---|---|
+| 1 Triage | Repository overview: branch, change count and operation state per repository, from last-known snapshots with their age | Find the repository that needs attention without opening each one | Differentiator | M2 | [03](PRD_03_workspace.md) | — |
+| 1 Triage | Groups, favourites and local search of repositories | Keep many repositories findable | Core | M1 | [03](PRD_03_workspace.md) | — |
+| 1 Triage | Open by path; recent entries; init and clone from the welcome view | Enter the right repository | Core | M1 open and init, M2 clone | [03](PRD_03_workspace.md), [07](PRD_07_remotes.md) | — |
+| 1 Triage | One tab per repository and per linked worktree | Each tab binds one identity; tabs do not share state | Core | M1 tabs, M2 worktree tabs | [03](PRD_03_workspace.md), [10](PRD_10_desktop_ux.md) | — |
+| 1 Triage | Repository settings with visible scope | Know which configuration applies and where a write goes | Core | M1 | [03](PRD_03_workspace.md), [13](PRD_13_state_control.md) | — |
+| 2 Preview | Mutation preview naming exact paths, refs and OIDs; a stale preview cannot run | The preview is the authorization, not a generic question | Differentiator | M1 | [08](PRD_08_recovery.md) | partial (discard names its file or hunk) |
+| 2 Preview | Confirmations state the consequence and accept only `y`; `n` or Esc cancels, and other keys keep the prompt open | Users read what happens, and Enter cannot confirm by accident | Differentiator | M1 | [08](PRD_08_recovery.md) | partial (discard and detached checkout ask first) |
+| 2 Preview | Refusal shows Git's first error line and changes nothing | The reason is visible and state is preserved | Core | M1 | [06](PRD_06_references.md), [08](PRD_08_recovery.md) | yes |
+| 3 Stage | Staged and unstaged versions shown independently | A partially staged file is two selections, not one checkbox | Core | M1 | [04](PRD_04_changes_commits.md) | yes |
+| 3 Stage | Stage and unstage whole files, hunks and line ranges | Commit exactly the chosen content | Core | M1 files and hunks; M3 lines (delivered early) | [04](PRD_04_changes_commits.md) | yes |
+| 3 Stage | Result line after each stage or unstage: index-to-HEAD file and line counts, and the worktree stated unchanged | Shows what the next commit will contain | Differentiator | M1 | [04](PRD_04_changes_commits.md) | — |
+| 3 Stage | Commit with a saved draft | The message survives failure and restart | Core | M1 | [04](PRD_04_changes_commits.md), [13](PRD_13_state_control.md) | partial (draft only) |
+| 3 Stage | Sign-off and signing status shown before commit | Some projects require them | Core | M1 sign-off; M2 signing interaction | [04](PRD_04_changes_commits.md) | — |
+| 3 Stage | Amend with rewrite-risk preview | Fix the last commit knowingly | Core | M2 | [04](PRD_04_changes_commits.md) | — |
+| 3 Stage | Empty commit as an explicit action | Used to trigger CI runs | Parity | M3 | [04](PRD_04_changes_commits.md) | — |
+| 3 Stage | Git LFS pointers, status, fetch, prune and tracking | LFS repositories must show pointers honestly, never commit an unmaterialized file as content | Compatibility | M3 | [09](PRD_09_advanced_git.md) | — |
+| 4 Recover | Recovery label on each destructive action: restorable from a recovery ref or safety copy, restorable with stated limits, or not restorable | Users decide with the limit in view | Differentiator | M2 | [08](PRD_08_recovery.md) | — |
+| 4 Recover | Discard a file's unstaged changes (tracked or untracked) or one hunk | Remove unwanted work against a named target | Core | M2 with safeguards | [08](PRD_08_recovery.md) | yes |
+| 4 Recover | Discard a line range | The same action at line granularity | Core | M3 | [08](PRD_08_recovery.md) | — |
+| 4 Recover | Recovery refs and restore preview | Restores reachable commits; the preview compares current and recovered state | Differentiator | M2 | [08](PRD_08_recovery.md) | — |
+| 4 Recover | Stash tracked changes; apply and keep | Park work without losing it | Core | M2 core | [09](PRD_09_advanced_git.md) | yes |
+| 4 Recover | Stash list, pop, drop and named messages | Manage parked work | Core | M2 | [09](PRD_09_advanced_git.md) | — |
+| 4 Recover | Stash including untracked files, as an explicit option | Include new files deliberately | Core | M2 | [09](PRD_09_advanced_git.md) | — |
+| 4 Recover | Reset soft, mixed and hard, each with a preview | Move history deliberately; a hard reset states what it overwrites | Core | M3 | [06](PRD_06_references.md), [08](PRD_08_recovery.md) | — |
+| 4 Recover | Operation log of jobs, outcomes and OIDs, bounded and redacted | Explains what happened after an interruption | Core | Candidate for M2 | [13](PRD_13_state_control.md) | — |
+| 5 Review | Incoming review before merge or rebase: commits in destination..source and a changed-file summary, bound to the OIDs the operation will use | Know what arrives before it lands | Differentiator | M2 | [06](PRD_06_references.md), [05](PRD_05_history.md) | — |
+| 5 Review | Compare two commits | Understand the change between two points | Core | M2 | [05](PRD_05_history.md) | — |
+| 5 Review | Quick filter by message or OID | Find a commit quickly | Core | M2 | [05](PRD_05_history.md) | — |
+| 5 Review | Signature display with honest trust states | Show verified, unverified and missing signatures without claiming more | Differentiator | M2 | [05](PRD_05_history.md) | — |
+| 5 Review | Advanced search by author, date, ref and path | Find changes by who or where | Core | M3 | [05](PRD_05_history.md) | — |
+| 5 Review | File history with optional rename following; blame at a selected commit | Maintainers trace how a file or line arrived | Core | M3 | [05](PRD_05_history.md) | — |
+| 5 Review | Merge: fast-forward only, normal or no-fast-forward, each explicit | No hidden merge shape | Core | M2 | [06](PRD_06_references.md) | — |
+| 5 Review | Rebase onto a base, with source commits previewed | Move a branch deliberately | Core | M2 | [06](PRD_06_references.md) | — |
+| 5 Review | Interactive rebase with an ordered preview | Contributors clean a branch before review | Core | M3 | [06](PRD_06_references.md) | — |
+| 5 Review | Cherry-pick and revert, ordered | Apply or undo selected commits | Core | M3 | [06](PRD_06_references.md) | — |
+| 5 Review | Create, switch and delete (merged-safe) local branches | Work on branches | Core | M1 create and switch; M2 delete | [06](PRD_06_references.md) | yes |
+| 5 Review | Detached checkout of a commit | Inspect older code without moving a branch | Core | M2 | [06](PRD_06_references.md) | yes |
+| 5 Review | Rename and upstream tracking | Keep branch names and tracking correct | Core | M2 | [06](PRD_06_references.md) | — |
+| 5 Review | Lightweight and annotated tags | Mark releases | Core | M2 | [06](PRD_06_references.md) | — |
+| 5 Review | Remote configuration, fetch, explicit pull and reviewed push | Exchange exactly the intended refs | Core | M2 | [07](PRD_07_remotes.md) | — |
+| 5 Review | Lease-protected rewrite push | Publish an intentional rewrite safely | Core | Candidate for M3 | [07](PRD_07_remotes.md) | — |
+| 5 Review | External diff and merge tool chosen by the user | Use a familiar tool when needed | Core | M2 | [11](PRD_11_security.md) | — |
+| 6 Keyboard | Numbered panels; keyboard and pointer share one meaning | Repeat actions without pointer travel | Differentiator | M1 | [10](PRD_10_desktop_ux.md) | yes |
+| 6 Keyboard | Open the terminal or editor at the repository | Hand off to the user's own tools explicitly | Core | M1 | 01 (this module) | — |
+| 6 Keyboard | Themes and fonts in the MiniCon design language | Consistent suite look and legibility | Core | M2 | [10](PRD_10_desktop_ux.md) | — |
+| 6 Keyboard | English and Simplified Chinese; Traditional Chinese | Work in the user's language | Core | M2; M3 | [10](PRD_10_desktop_ux.md) | — |
+| 7 Stay light | Local open, init, status, stage, commit, history and branch work offline, with no account or telemetry | The tool stays usable on any machine | Differentiator | M1 | [01](PRD_01_product.md), [11](PRD_11_security.md) | yes (Windows local slice) |
+| 7 Stay light | Measured idle, active and repeated-use footprint and responsiveness budgets | The footprint claim is proven, not asserted | Differentiator | From M0; gated at each milestone | [14](PRD_14_verification_roadmap.md) | — |
+| 7 Stay light | Git executable selection and diagnostics; Git is not bundled, and a missing Git shows setup guidance | Uses the user's own Git and says which one runs | Compatibility | M1 | [02](PRD_02_architecture_reuse.md), [11](PRD_11_security.md) | — |
+
+### Removed and demoted rows
+
+| Previous row | Disposition | Reason |
+|---|---|---|
+| Tree or flat file list (Candidate, M2) | Removed | A presentation toggle with no job of its own; a flat list with search covers triage. Revisit with usage evidence |
+| Commit message templates (Candidate, M2) | Removed | A team convention layer with no owner in 04; the draft model stays simple. Revisit after a contributor study |
+| Git Flow; custom actions; hosted accounts and pull-request review | Removed from the table | Already admitted or excluded in the decisions above; one fact has one place |
+| Undo for work no recovery ref covers | Moved to decisions | A stated limit owned by 08, not a feature |
+| Create and apply patches; empty commit (both M3); LFS | Demoted to Parity or Compatibility | Still in the M3 baseline because 04 and 09 specify them. Removing them changes 01, 04, 09 and the QA-J07/J11 coverage in one scope change (open question) |
+| Advanced search, file history and blame (M3) | Kept as Core, lowest priority in Job 5 | Maintainer review needs them; they are not selection reasons |
+
+### Open product questions
+
+These cannot be settled from documents and are not decided here:
+
+- Should patch exchange and empty commits leave the M3 baseline? This needs evidence of who exchanges patches and how often.
+- Is the M2 repository overview enough for users managing five or more repositories, or do they need aggregate groups? This needs a task study.
+- Does the stage result line change contributor behaviour? This needs a counted metric in the usability study below.
+- SrcMgr's reference-environment footprint and responsiveness qualification remains open; [14](PRD_14_verification_roadmap.md) owns the methodology and links the version plan's scoped local evidence.
+
+A candidate row becomes scope only through a change to this module, the owner's acceptance clauses and the release label, as the change-control section requires.
+
 ## Cumulative milestones and scope
 
 | Milestone | Required product scope | Exit meaning |

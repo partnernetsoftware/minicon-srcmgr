@@ -103,7 +103,11 @@ Binary size target is ≤ 20 MiB compressed per single-ISA product archive, excl
 
 Resource reports sample at ≤ 100 ms during tasks, include settled idle after 30 s, and distinguish app-only from the complete owned process tree. Sampling alone can miss short-lived peaks: collect OS/process high-water and lifetime CPU counters where available, and record any measurement limitation as BLOCKED for that gate instead of a passing peak estimate. Combined-tree peak uses simultaneous aggregate samples/high-water evidence, not the sum of unrelated per-process peak times. Count helper lifetime and work left after cancellation; also record read bytes, Git launches, timer wakeups and presented frames per scenario. A user-supplied heavyweight hook/signer is measured separately from the deterministic no-custom-hook benchmark; it never justifies an unresponsive GUI. Record real input-to-present timing for selected-row/diff feedback, not only handler entry. High-DPI/accessibility-enabled runs remain mandatory interaction tests; their resource deltas must be explicit and reviewed rather than silently excluded from claims.
 
-When an OS lacks an exact aggregate-tree RSS peak counter, a documented conservative upper bound from complete lifetime high-water evidence may qualify a budget if that bound is within it; label it Upper bound, not Measured simultaneous peak. An upper bound exceeding the ceiling is inconclusive until better measurement, rather than proof of an actual exceedance. Missing lifetime coverage remains BLOCKED. Benchmark monitor overhead is measured/reported separately and is not counted as product-owned work.
+When an OS lacks an exact aggregate-tree RSS peak counter, a documented conservative upper bound from complete lifetime high-water evidence may qualify a budget if that bound is within it; label it Upper bound, not Measured simultaneous peak. For example, at each kernel lifetime interval boundary sum only high-waters of processes whose lifetimes overlap, then take the maximum. This is a ceiling bound, not an estimate of when each process peaked. Account for every owned process, including exited helpers, and reconcile against independent accounting totals to detect missed notifications. A bound exceeding the ceiling is inconclusive until better measurement, rather than proof of an observed exceedance. Incomplete coverage remains BLOCKED. This does not replace latency, idle or repeated-use measurements. Benchmark monitor overhead is measured/reported separately and is not counted as product-owned work.
+
+Local UI qualification may explicitly enable `SRCMGR_MEASURE_UI=1` with an isolated profile outside the repository. The implemented counters are default-off, bounded histograms and a bounded numeric activity timeline, written once on normal window shutdown; they add no timer, worker, network reporting or repository-content log. Callback wall time, rendering time, native wait callbacks and worker wakes are distinct observations. Five warmups and sufficient samples are required for a percentile; report all observed maxima and missing/truncated evidence. Align idle intervals with the timeline before claiming no application render/wake activity. Include instrumentation overhead in the measured candidate footprint. These counters exclude OS queueing and desktop presentation, so they cannot alone qualify dispatch or input-to-present budgets. Calibrate desktop observation overhead separately; an observation method whose own latency exceeds the budget leaves that gate BLOCKED, without subtracting overhead to manufacture a pass.
+
+An optional Windows desktop observer may pair an acquired DXGI desktop pixel with that frame's OS update QPC, using [DXGI's documented frame metadata](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_2/ns-dxgi1_2-dxgi_outdupl_frame_info). Verify a prior reset, exclude zero-time/empty frames, retain capture-completion time separately, and refuse protected or unavailable output. Calibrate pixel identity and clock agreement before timed use. A coalesced last-update timestamp is an upper bound on the first matching desktop update; record its frame count. This is desktop-image feedback evidence, not a physical scanout measurement or an inference from a client drawing surface. Static calibration alone does not qualify interactive latency.
 
 ## Stability and suite-quality acceptance
 
@@ -340,7 +344,7 @@ Release: the workspace version is `0.0.3` and the release commit is tagged `v0.0
 
 ### Release 0.0.4 plan (discard, stash, detached checkout)
 
-Scope is the behaviour in [10](PRD_10_desktop_ux.md#release-004-shell-target-discard-stash-and-detached-checkout), benchmarked against lazygit, SourceTree and Git SCM. Each package is a slice with the cheapest test that proves it.
+Scope is the behaviour in [10](PRD_10_desktop_ux.md#release-004-shell-target-discard-stash-and-detached-checkout), benchmarked against lazygit, reference GUI and Git SCM. Each package is a slice with the cheapest test that proves it.
 
 | Package | Scope | Evidence |
 | --- | --- | --- |
@@ -355,3 +359,7 @@ Live verification used SendKeys only after the window was verified as foreground
 Gate at the release commit: `cargo test --workspace` 164 passing with MinGit 2.56.0 through `SRCMGR_TEST_GIT`; `cargo clippy --workspace --all-targets` zero warnings; `python scripts/check_docs.py` PASS.
 
 Still open: key-to-redraw latency and resource budgets (not measured); line discard; the stash list with pop, drop and a message; commit files; search and filter; reset and revert; remote actions (M2).
+
+### 0.1.5 implementation plan
+
+The 0.1.5 scope, work sequence, package status and execution evidence live in [plan/plan-0.1.5.md](../plan/plan-0.1.5.md). This module owns verification methodology and quality gates; the plan references them and does not redefine them.

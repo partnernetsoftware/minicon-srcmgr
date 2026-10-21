@@ -143,6 +143,10 @@ Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Rele
 - No IME composition beyond committed text, no screen-reader bridge, no checkout of a commit, no commit files, no search or filter, no discard, stash or rebase.
 - Linux and macOS cells are not run.
 
+## Development 0.1.5 status
+
+Workspace target: **0.1.5**, a source-only candidate under qualification; no `v0.1.5` public tag or GitHub Release has been published. Local optimized binaries exist solely for validation and are not distribution artifacts. The latest public release remains 0.0.4 below. Current scope, scoped host evidence and remaining gates live in [the version plan](../plan/plan-0.1.5.md). Reference-environment response/resource certification remains open; implementation and a passing diagnostic do not waive that gate.
+
 ## Release 0.0.4 status
 
 Source-level release, tagged `v0.0.4` and published to `origin` as a GitHub Release with source only. No binary is built or attached: the signing and six-cell evidence in the release gates above are not available. The limits of 0.0.1 to 0.0.3 still apply.
@@ -162,6 +166,6 @@ Source-level release, tagged `v0.0.4` and published to `origin` as a GitHub Rele
 
 ### Known limits
 
-- Line discard, the stash list with pop, drop and messages, commit files, search and filter, reset and revert are not in 0.0.4. The plan and the benchmark against lazygit, SourceTree and Git SCM are in [10](PRD_10_desktop_ux.md#release-004-shell-target-discard-stash-and-detached-checkout).
+- Line discard, the stash list with pop, drop and messages, commit files, search and filter, reset and revert are not in 0.0.4. The plan and the benchmark against lazygit, reference GUI and Git SCM are in [10](PRD_10_desktop_ux.md#release-004-shell-target-discard-stash-and-detached-checkout).
 - Key-to-redraw latency and resource use are not measured against the budgets in [14](PRD_14_verification_roadmap.md#performance-and-resource-budgets).
 - No IME composition beyond committed text, no screen-reader bridge. Linux and macOS cells are not run.

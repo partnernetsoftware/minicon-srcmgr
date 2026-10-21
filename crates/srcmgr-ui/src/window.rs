@@ -5,6 +5,7 @@
 //! thread that runs Git so the window never waits on it.
 
 use std::sync::Arc;
+use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Instant;
@@ -19,8 +20,9 @@ use minicon_platform::window_host::{
 use minicon_ui_core::GlyphCache;
 use minicon_ui_core::pixel::{blend_mask_xrgb, fill_xrgb_rect};
 
-use crate::model::{Backend, Job, Line, Reply, Snapshot, Tone, short};
+use crate::model::{Backend, Job, Line, PromptAction, Reply, Snapshot, Tone, short};
 use crate::workspace::{Confirm, Effect, Key, Pane, PromptKind, Workspace};
+use crate::timing_receipt::{Category, TimingReceipt};
 
 const BASE_SIZE_PX: f64 = 16.0;
 const MARGIN_PX: f64 = 12.0;
@@ -49,7 +51,8 @@ const HELP_LINES: &[&str] = &[
     "c            commit: Ctrl+Enter commits, Esc keeps the draft",
     "n            new branch (Branches panel)",
     "d            delete a branch (Branches); discard a file or hunk (Files, diff); asks first",
-    "s / S        stash tracked changes / apply the newest stash (Files)",
+    "s / S        stash tracked changes / open stash list (Files)",
+    "5            stash list: Space apply/keep, p pop, d drop; asks first",
     "Space        in Commits: check out that commit detached; asks first",
     "r            reload;  ?  this help;  q or Ctrl+C quits",
 ];
@@ -71,8 +74,14 @@ fn colour(tone: Tone) -> u32 {
 /// Opens the workspace window and blocks until the user quits. Git work runs on
 /// a worker thread that owns `backend`; the window wakes when a reply arrives.
 pub fn show(snapshot: Snapshot, backend: Box<dyn Backend>) -> Result<(), PixelWindowError> {
+    show_with_timing(snapshot, backend, None)
+}
+
+pub fn show_with_timing(snapshot: Snapshot, backend: Box<dyn Backend>, timing: Option<std::fs::File>) -> Result<(), PixelWindowError> {
     let options = PixelWindowOptions::new(snapshot.title.clone(), LogicalSize { width: 1040.0, height: 680.0 });
-    run_pixel_window(options, Box::new(StatusWindow::new(snapshot, backend)))
+    let mut application = StatusWindow::new(snapshot, backend);
+    application.timing = timing.map(TimingReceipt::new);
+    run_pixel_window(options, Box::new(application))
 }
 
 struct StatusWindow {
@@ -82,11 +91,15 @@ struct StatusWindow {
     replies: Option<Receiver<Reply>>,
     /// Jobs sent whose replies have not arrived; shown as "working".
     pending: usize,
+    /// Only one job reaches the worker at a time. Superseded detail reads
+    /// collapse here instead of spawning Git for every intermediate selection.
+    queued: VecDeque<Job>,
     glyphs: GlyphCache<(char, u16), Arc<Option<RasterGlyph>>>,
     /// The last pointer position in logical pixels, for events that omit one.
     pointer: Option<(f64, f64)>,
     /// The size and grid of the last frame, so pointer positions can be mapped to panels.
     surface: Option<Surface>,
+    timing: Option<TimingReceipt>,
 }
 
 impl StatusWindow {
@@ -97,9 +110,11 @@ impl StatusWindow {
             jobs: None,
             replies: None,
             pending: 0,
+            queued: VecDeque::new(),
             glyphs: GlyphCache::with_capacity(GLYPH_CACHE_ENTRIES),
             pointer: None,
             surface: None,
+            timing: None,
         }
     }
 
@@ -167,13 +182,32 @@ impl StatusWindow {
             Effect::Nothing => PixelWindowDirective::Continue,
             Effect::Quit => PixelWindowDirective::Exit,
             Effect::Send(job) => {
-                let sent = self.jobs.as_ref().is_some_and(|jobs| jobs.send(job).is_ok());
-                if sent {
-                    self.pending += 1;
+                if (matches!(job, Job::Main { .. }) && self.queued.back().is_some_and(|last| matches!(last, Job::Main { .. })))
+                    || (matches!(job, Job::CancelPrepared) && self.queued.back() == Some(&Job::CancelPrepared)) {
+                    *self.queued.back_mut().unwrap() = job;
+                } else if self.queued.len() < 16 || matches!(job, Job::CancelPrepared) {
+                    self.queued.push_back(job);
                 } else {
-                    let _ = self.workspace.reply(Reply::Notice("the Git worker has stopped".to_owned()));
+                    let reply = job_failure(&job, "Work queue is full; wait for the current work, then retry");
+                    let _ = self.workspace.reply(reply);
                 }
+                self.pump();
                 PixelWindowDirective::Continue
+            }
+        }
+    }
+
+    fn pump(&mut self) {
+        if self.pending != 0 { return; }
+        if let Some(job) = self.queued.pop_front() {
+            let sent = if let Some(jobs) = &self.jobs { jobs.send(job).map_err(|error| error.0) } else { Err(job) };
+            if let Err(job) = sent {
+                let _ = self.workspace.reply(job_failure(&job, "the repository worker has stopped"));
+                for waiting in self.queued.drain(..) {
+                    let _ = self.workspace.reply(job_failure(&waiting, "the repository worker has stopped"));
+                }
+            } else {
+                self.pending = 1;
             }
         }
     }
@@ -210,6 +244,18 @@ impl StatusWindow {
             pen += style.advance.round() as i64;
         }
         Ok(())
+    }
+}
+
+fn job_failure(job: &Job, message: &str) -> Reply {
+    let text = message.to_owned();
+    match job {
+        Job::Main { generation, .. } => Reply::MainFailed { generation: *generation, text },
+        Job::Prepare { generation, .. } => Reply::ConfirmationFailed { generation: *generation, text },
+        Job::Commit(_) => Reply::PromptFailed { action: PromptAction::Commit, text },
+        Job::CreateBranch(_) => Reply::PromptFailed { action: PromptAction::CreateBranch, text },
+        Job::SaveDraft(_) => Reply::PromptFailed { action: PromptAction::SaveDraft, text },
+        _ => Reply::Notice(text),
     }
 }
 
@@ -290,7 +336,15 @@ impl PixelWindowApplication for StatusWindow {
         window: &PixelWindow,
         event: PixelWindowEvent,
     ) -> Result<PixelWindowDirective, PixelWindowError> {
-        match event {
+        let started = self.timing.as_ref().map(|_| Instant::now());
+        let category = started.map(|_| match &event {
+            PixelWindowEvent::Keyboard(key) if key_of(key).is_some() => if self.workspace.prompt().is_some() { Category::Text } else { Category::Keyboard },
+            PixelWindowEvent::PointerButton { .. } | PixelWindowEvent::MouseWheel { .. } => Category::Pointer,
+            PixelWindowEvent::Wake => Category::Wake,
+            PixelWindowEvent::GeometryChanged { .. } | PixelWindowEvent::ResizeInteractionEnded => Category::Layout,
+            _ => Category::Other,
+        });
+        let result = (|| { match event {
             PixelWindowEvent::CloseRequested => Ok(PixelWindowDirective::Exit),
             PixelWindowEvent::Wake => {
                 let replies: Vec<Reply> =
@@ -303,6 +357,7 @@ impl PixelWindowApplication for StatusWindow {
                         directive = PixelWindowDirective::Exit;
                     }
                 }
+                self.pump();
                 window.request_redraw();
                 Ok(directive)
             }
@@ -337,7 +392,11 @@ impl PixelWindowApplication for StatusWindow {
                 self.pointer_gesture(window, position.map(|point| (point.x, point.y)), Gesture::Wheel(delta))
             }
             _ => Ok(PixelWindowDirective::Continue),
+        } })();
+        if let (Some(started), Some(category), Some(timing)) = (started, category, self.timing.as_mut()) {
+            timing.record(category, started.elapsed());
         }
+        result
     }
 
     fn render(
@@ -345,6 +404,8 @@ impl PixelWindowApplication for StatusWindow {
         window: &PixelWindow,
         frame: &mut XrgbPixelFrame<'_>,
     ) -> Result<PixelWindowDirective, PixelWindowError> {
+        let started = self.timing.as_ref().map(|_| Instant::now());
+        let result = (|| {
         let scale = window.scale_factor()?;
         let size = (BASE_SIZE_PX * scale).round().max(8.0) as u16;
         let metrics = font::primary_metrics(size)
@@ -363,7 +424,7 @@ impl PixelWindowApplication for StatusWindow {
         // The main panel's visible rows, so the cursor stays on screen after a resize.
         let main_rows = inner_of(layout(i64::from(width), i64::from(height), grid).main, grid).rows;
         self.workspace.set_view_rows(main_rows.max(0) as usize);
-        let draws = scene(&self.workspace, i64::from(width), i64::from(height), grid, self.pending);
+        let draws = scene(&self.workspace, i64::from(width), i64::from(height), grid, self.pending + self.queued.len());
         let mut canvas = Canvas { pixels: frame.pixels_mut(), stride: width, height };
         fill_xrgb_rect(canvas.pixels, width, 0, 0, width, height, BACKGROUND);
         for draw in draws {
@@ -376,6 +437,9 @@ impl PixelWindowApplication for StatusWindow {
             }
         }
         Ok(PixelWindowDirective::Wait)
+        })();
+        if let (Some(started), Some(timing)) = (started, self.timing.as_mut()) { timing.record(Category::Render, started.elapsed()); }
+        result
     }
 
     fn about_to_wait(
@@ -383,6 +447,7 @@ impl PixelWindowApplication for StatusWindow {
         _window: &PixelWindow,
         _now: Instant,
     ) -> Result<PixelWindowDirective, PixelWindowError> {
+        if let Some(timing) = &mut self.timing { timing.record(Category::Wait, std::time::Duration::ZERO); }
         Ok(PixelWindowDirective::Wait)
     }
 }
@@ -439,9 +504,14 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
     draws.push(Draw::Text {
         x: margin,
         baseline: margin + ascent,
-        text: fit(&header, grid.columns(width - 2 * margin)),
+        text: fit(&header, grid.columns(width - 2 * margin).saturating_sub(14)),
         colour: colour(Tone::Heading),
     });
+    if pending > 0 {
+        let size = (row / 2).max(2);
+        draws.push(Draw::Text { x: width - margin - (grid.advance * 13.0) as i64, baseline: margin + ascent, text: "Working".to_owned(), colour: colour(Tone::Heading) });
+        draws.push(Draw::Rect { rect: Rect { x: width - margin - size, y: margin, width: size, height: size }, colour: FOCUS_BORDER });
+    }
 
     let Layout {
         footer_top,
@@ -462,19 +532,24 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         &[Line { tone: Tone::Text, text: snapshot.head.clone() }],
         selected(Pane::Status),
     );
-    let file_rows: Vec<Line> =
-        snapshot.files.iter().map(|file| Line { tone: file.tone, text: file.label.clone() }).collect();
+    let file_pane = if workspace.stash_list_visible() { Pane::Stashes } else { Pane::Files };
+    let file_rows: Vec<Line> = if workspace.stash_list_visible() {
+        snapshot.stashes.iter().enumerate().map(|(index, s)| Line { tone: Tone::Text, text: format!("stash@{{{index}}} {} {}", short(&s.id), s.subject) }).collect()
+    } else {
+        snapshot.files.iter().map(|file| Line { tone: file.tone, text: file.label.clone() }).collect()
+    };
+    let file_title = if workspace.stash_list_visible() { format!("[5] Stashes ({}; max 200)", snapshot.stashes.len()) } else { format!("[2] Files ({})", snapshot.files.len()) };
     list_panel(
         &mut draws,
         files_rect,
         grid,
         Panel {
-            focused: focus == Pane::Files,
-            title: &format!("[2] Files ({})", snapshot.files.len()),
-            empty: "Working tree clean",
+            focused: focus == file_pane,
+            title: &file_title,
+            empty: if workspace.stash_list_visible() { "No stashes" } else { "Working tree clean" },
         },
         &file_rows,
-        selected(Pane::Files),
+        selected(file_pane),
     );
     let branch_rows: Vec<Line> = snapshot
         .branches
@@ -519,7 +594,7 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
 
     main_panel(&mut draws, main_rect, grid, workspace);
 
-    let notice = workspace.notice().unwrap_or("");
+    let notice = workspace.notice().or(snapshot.stage_result.as_deref()).unwrap_or("");
     draws.push(Draw::Text {
         x: margin,
         baseline: footer_top + ascent,
@@ -605,7 +680,7 @@ fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
     let snapshot = workspace.snapshot();
     let lists = [
         (Pane::Status, panels.status, 1),
-        (Pane::Files, panels.files, snapshot.files.len()),
+        (if workspace.stash_list_visible() { Pane::Stashes } else { Pane::Files }, panels.files, if workspace.stash_list_visible() { snapshot.stashes.len() } else { snapshot.files.len() }),
         (Pane::Branches, panels.branches, snapshot.branches.len()),
         (Pane::Commits, panels.commits, snapshot.commits.len()),
     ];
@@ -716,6 +791,7 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
     }
     if let Some(confirm) = workspace.confirm() {
         let text = match confirm {
+            Confirm::Stash { id, operation } => format!("{operation} stash {}? Full OID: {id}", short(id)),
             Confirm::DeleteBranch(name) => format!("Delete branch {name}?   y deletes it   n keeps it"),
             Confirm::DiscardFile { path, untracked: true } => {
                 format!("Delete untracked file {}?   y deletes it   n keeps it", path.display_label())
@@ -728,13 +804,21 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
             }
             Confirm::Detach { short, .. } => format!("Check out {short} detached?   y checks out   n keeps HEAD"),
         };
-        text_panel(draws, rect, grid, true, "Confirm", &[Line { tone: Tone::Removed, text }], 0, None);
+        let mut messages = vec![text];
+        messages.extend_from_slice(workspace.confirmation_lines());
+        let columns = inner_of(rect, grid).cols.max(1);
+        let lines: Vec<Line> = messages.iter().flat_map(|message| {
+            let chars: Vec<char> = message.chars().collect();
+            chars.chunks(columns).map(|chunk| Line { tone: Tone::Removed, text: chunk.iter().collect() }).collect::<Vec<_>>()
+        }).collect();
+        text_panel(draws, rect, grid, true, "Confirm and recovery", &lines, 0, None);
         return;
     }
     let main = workspace.main();
     let title = match workspace.source() {
         Pane::Commits => "Commit",
         Pane::Branches => "Branch",
+        Pane::Stashes => "Selected stash",
         Pane::Status | Pane::Files | Pane::Main => "Diff",
     };
     let highlight = if focused { Some(workspace.selection()) } else { None };
@@ -836,9 +920,12 @@ fn hints(workspace: &Workspace) -> String {
     }
     let focus = match workspace.focus() {
         Pane::Status => "2 3 4 focus lists",
-        Pane::Files => "Space stage/unstage   a all   d discard   s stash   c commit",
+        Pane::Files => "Space stage/unstage   a all   d discard   s stash   5 stashes   c commit",
+        Pane::Stashes => "Space/S apply and keep   p pop   d drop   2 files   Enter inspect",
         Pane::Branches => "Space checkout   n new   d delete   Enter details",
-        Pane::Commits => "Space checkout detached   Enter details",
+        Pane::Commits => "Enter files   Space checkout detached",
+        Pane::Main if workspace.main().committed.is_some() => "Enter file diff   Esc commits",
+        Pane::Main if workspace.main().file.is_none() => "j/k scroll   Esc back",
         Pane::Main if workspace.anchor_set() => "Space stage lines   v end range   a stage hunk   Esc back",
         Pane::Main => "Space stage line   v range   a stage hunk   d discard   Esc back",
     };
@@ -934,6 +1021,8 @@ mod tests {
             branches: vec![BranchRow { name: "main".to_owned(), label: "main".to_owned(), current: true }],
             commits: vec![CommitRow { id: "0123456789abcdef".to_owned(), subject: "first".to_owned(), merge: false }],
             draft: None,
+            stage_result: None,
+            stashes: Vec::new(),
         }
     }
 
@@ -945,6 +1034,54 @@ mod tests {
                 Draw::Rect { .. } => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn slow_worker_coalesces_selection_reads_and_preserves_mutation_order() {
+        struct UnusedBackend;
+        impl Backend for UnusedBackend { fn run(&mut self, _: Job) -> Reply { panic!("channel fixture only") } }
+        let mut window = StatusWindow::new(snapshot(1), Box::new(UnusedBackend));
+        let (sender, receiver) = mpsc::channel();
+        window.jobs = Some(sender);
+        let read = |generation| Job::Main { generation, request: crate::MainRequest::Commit { id: format!("{generation:040x}") } };
+        window.dispatch(Effect::Send(read(0)));
+        assert_eq!(receiver.try_recv().unwrap(), read(0));
+        for generation in 1..=100 { window.dispatch(Effect::Send(read(generation))); }
+        assert_eq!(window.queued.len(), 1);
+        assert!(receiver.try_recv().is_err(), "no queued read spawns Git while one is active");
+        let mutation = Job::SetFile { path: NativePath::new("f0.txt"), stage: true };
+        window.dispatch(Effect::Send(mutation.clone()));
+        window.dispatch(Effect::Send(read(101)));
+        window.dispatch(Effect::Send(read(102)));
+        for expected in [read(100), mutation, read(102)] {
+            window.pending = 0; // observed completion of the sole in-flight job
+            window.pump();
+            assert_eq!(receiver.try_recv().unwrap(), expected);
+        }
+        assert!(window.queued.is_empty());
+        for _ in 0..100 { window.dispatch(Effect::Send(Job::Reload)); }
+        assert_eq!(window.queued.len(), 16, "bounded input while the worker is busy");
+    }
+
+    #[test]
+    fn a_stopped_worker_keeps_the_unsaved_message_editable() {
+        struct UnusedBackend;
+        impl Backend for UnusedBackend { fn run(&mut self, _: Job) -> Reply { panic!("channel fixture only") } }
+        let mut window = StatusWindow::new(snapshot(1), Box::new(UnusedBackend));
+        let (sender, receiver) = mpsc::channel();
+        window.jobs = Some(sender);
+        drop(receiver);
+        window.workspace.open();
+        window.workspace.key(Key::Char('c'));
+        window.workspace.key(Key::Text("copy this message".into()));
+        window.pending = 1;
+        window.dispatch(Effect::Send(Job::Reload));
+        let save = window.workspace.key(Key::Escape);
+        window.dispatch(save);
+        window.pending = 0;
+        window.pump();
+        assert_eq!(window.workspace.prompt().map(|p| p.text()), Some("copy this message"));
+        assert_eq!(window.workspace.key(Key::Escape), Effect::Send(Job::SaveDraft("copy this message".into())), "failed save stays available for retry/copy");
     }
 
     #[test]

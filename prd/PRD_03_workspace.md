@@ -55,3 +55,4 @@ Ignore from the file list previews a literal escaped rule and destination: track
 - A permission denied directory, ownership safety rejection or removed mount has a specific reason and retry/locate action. Ownership rejection never writes a wildcard `safe.directory` exception.
 - An empty/unborn repository can stage and make its first commit; history is an explanatory empty state.
 - A fresh profile can complete init or local open entirely offline. Network is requested only for the selected clone or remote action.
+- The repository overview shows branch, change count and operation state from each repository's last snapshot, with its age. Listing starts no Git status for a repository that is neither selected nor visible; the opt-in auto-fetch in [07](PRD_07_remotes.md) is the only exception. A stale snapshot is labelled stale, never shown as current.

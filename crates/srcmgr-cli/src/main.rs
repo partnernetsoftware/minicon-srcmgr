@@ -22,6 +22,7 @@ use srcmgr_git::{
 use srcmgr_state::{TrustStore, default_root, fingerprint};
 
 mod window_backend;
+mod confirmation;
 
 const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] status <worktree> [--json]
@@ -89,9 +90,20 @@ fn gui(options: &Options) -> Result<(), String> {
     let backend = window_backend::WindowBackend {
         options: options.clone(),
         worktree: worktree.to_path_buf(),
+        prepared: None,
     };
     let snapshot = backend.snapshot()?;
-    srcmgr_ui::show(snapshot, Box::new(backend))
+    let timing = if env::var_os("SRCMGR_MEASURE_UI").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        let profile = std::fs::canonicalize(profile_root(options)?).map_err(|e| e.to_string())?;
+        let repository = canonical_worktree(worktree)?;
+        if profile.starts_with(&repository) {
+            return Err("UI qualification receipts require a profile outside the repository".to_owned());
+        }
+        Some(std::fs::OpenOptions::new().write(true).create_new(true)
+            .open(profile.join(format!("timing-{}.json", std::process::id())))
+            .map_err(|e| format!("cannot create exclusive UI timing receipt: {e}"))?)
+    } else { None };
+    srcmgr_ui::show_with_timing(snapshot, Box::new(backend), timing)
         .map_err(|error| format!("the status window could not be shown: {error}"))
 }
 
