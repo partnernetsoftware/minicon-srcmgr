@@ -24,7 +24,7 @@ flowchart TD
 
 ## Traceability and journey registry
 
-These are **specified cases, not existing tests**. Every case currently has verdict `NOT-RUN`. Each journey may contain multiple fixtures, but reports outcomes separately; one happy path cannot satisfy an entire family. Named requirement IDs are the source of truth; implementation changes add cases without moving requirements into test comments.
+These rows define **journey families, not executable tests or family-wide verdicts**. Implemented subcases have scoped evidence in the historical records and version plans below; unexecuted subcases remain NOT-RUN and missing required prerequisites are BLOCKED. Each journey may contain multiple fixtures and reports their outcomes separately; one happy path cannot satisfy an entire family. Named requirement IDs are the source of truth; implementation changes add cases without moving requirements into test comments.
 
 | Journey | Requirement coverage | Minimum observable scenario and oracle |
 |---|---|---|
@@ -367,3 +367,17 @@ The 0.0.5 scope, work sequence, package status and execution evidence live in [p
 ### 0.0.6 proposed next-version design
 
 The [0.0.6 plan](../plan/plan-0.0.6.md) selects quick filtering of existing file, branch and loaded-commit lists, with explicit action scope and changed-path evidence. It is a product design, not an implemented or qualified version. Current development remains 0.0.5. Existing reference-host blockers and quality budgets are unchanged; no package version, release status or milestone completion follows from this plan.
+
+### Requirements baseline 1.5 review disposition
+
+Review scope: the 15-module ownership/dependency map, current-entry status statements, near-term admission and the proposed 0.0.6 task tree. This is documentation/product review, not a new runtime audit or certification of every historical clause.
+
+| Finding | Disposition | Remaining boundary |
+|---|---|---|
+| Index said no behavior evidence and every journey NOT-RUN despite scoped implementation receipts | Index and journey registry now distinguish requirements, subcase evidence and cumulative qualification | No whole-family or six-cell PASS inferred |
+| Architecture/UI/backend introductions still described planned crates or a read-only window | Updated current responsibility/status pointers in 02/10/15 | Historical release sections remain historical; no newly qualified feature |
+| Backend terminology could classify S3 storage as another VCS | 15 separates VCS meaning from 07's future remote-provider admission; 11 retains executable/credential authority | No helper selected/installed or runtime plugin system admitted |
+| 0.0.6 described controls more clearly than user task order | Plan now orders changed-file journey, loaded-commit review and bounded branch reuse, carrying safety/quality through each | Scope and clear-first commit tradeoff remain proposed for owner discussion |
+| A past third-party memory observation could imply a controlled product comparison | 01 labels it unmatched historical context and points to scoped SrcMgr evidence | Reference-environment gates remain open |
+
+Selected verification: documentation ownership/links, scope/version consistency and diff review. Stop after those pass; no product source, build, dependency, functional-test or long-session replay is justified by this review alone.

@@ -1,6 +1,6 @@
 # MiniCon SrcMgr — product requirements index
 
-Baseline: **1.4 · 2026-10-21 · reorganizes the product feature design around seven user jobs, with explicit decisions not to copy (01); not implemented**. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
+Requirements baseline: **1.5 · 2026-10-24 · reconciles design versus delivered evidence, separates VCS from remote transports, and reviews the 0.0.6 task tree**. This is a documentation baseline number, not the application version. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
 
 ## Outcome tree DAG
 
@@ -48,7 +48,7 @@ flowchart TD
 5. Cross-architecture means matching native artifacts and independently recorded build/runtime evidence. Compilation alone proves no GUI behavior.
 6. No mandatory service account, telemetry or network for local workflows. Repository-controlled code needs explicit trust.
 7. One fact has one owning PRD. Links express dependencies; acceptance evidence cannot be inferred from documentation completeness.
-8. Git is the initial backend; shared identities, storage and actions preserve a capability boundary for SVN and other VCS without inventing Git semantics for them. The extension contract is owned by 15.
+8. Git is the initial backend; shared identities, storage and actions preserve a capability boundary for SVN and other VCS without inventing Git semantics for them. The extension contract is owned by 15. Git remote transports/storage, including a candidate S3 helper, remain within the Git backend and follow 07/11.
 9. Simple, practical, intuitive workflows and low resource use are release criteria. The lazygit functional comparison is owned by 01, interaction rules by 10 and measurable budgets by 14.
 10. SrcMgr is a MiniCon productivity-suite component whose core promise is a small memory footprint, fast UI/UX response and stable operation. Product priority is owned by 01; all three pillars must qualify together under 14 before an affected milestone can pass.
 
@@ -78,12 +78,26 @@ Read 01 → 02 → 10 for intent and composition; read a behavior owner plus 08/
 
 Implementation entry: [M0 work order and evidence](prd/PRD_14_verification_roadmap.md#implementation-work-order-and-evidence). Review findings/disposition are owned by [14](prd/PRD_14_verification_roadmap.md); pending mechanism proofs remain owned by 02. The work order permits beginning implementation, not declaring all risks resolved or publishing binaries.
 
-`M0`, `M1`, `M2` and `M3` denote cumulative delivery milestones, defined only in [01](prd/PRD_01_product.md). All application requirements start `[_]`. `PASS`, `FAIL`, `BLOCKED` and `NOT-RUN` are evidence verdicts; no verdict currently certifies application behavior.
+`M0`, `M1`, `M2` and `M3` denote cumulative delivery milestones, defined only in [01](prd/PRD_01_product.md); they are not application version numbers. Requirement text describes intended behavior, not completion. `PASS`, `FAIL`, `BLOCKED` and `NOT-RUN` apply to named scoped evidence. Passing one implemented slice does not qualify a whole journey, milestone or platform matrix. Historical release evidence remains labeled with its original version and artifact.
+
+## Product layers and near-term sequence
+
+| Layer | Product question | Owner and current boundary |
+|---|---|---|
+| Daily local work | Can I find, inspect and commit the intended change? | 03–06/09/10; version plans select bounded slices rather than the entire feature catalogue |
+| Trust and state | Do I know the target, effect, freshness and recovery limit? | 08/11/13; shared prerequisites for every delivered operation |
+| Collaboration | Which remote receives which refs, and what actually happened? | 07; ordinary remote workflows precede candidate provider-specific integrations |
+| VCS semantics | Is this Git or a future system such as SVN? | 15; S3 storage does not create another VCS kind |
+| Shared mechanisms | Can MiniCon supply the platform/input/rendering/process capability? | 02; immutable reuse, no product state in shared crates |
+| Quality and delivery | Is the declared slice small, responsive, stable and actually qualified? | 14/12; applicable gates follow each slice; six-cell product qualification remains cumulative |
+
+The near-term sequence is to close the [0.0.5 local-workflow checkpoint](plan/plan-0.0.5.md), then consider the [0.0.6 quick-location task tree](plan/plan-0.0.6.md). Network collaboration, S3 remote helpers and future VCS adapters remain separately scoped work. Designing a candidate does not assign it a release date or authorize helper installation/network access.
 
 ## Current frontier
 
 - [v] Requirements baseline: this index and 15 linked owner modules; documentation checks are reproducible through `python scripts/check_docs.py`.
-- [_] M0 architecture and native capability proofs, especially pixel UI accessibility, subprocess cancellation and fork resolution.
-- [_] M1 local Git vertical slice; M2 team workflow beta; M3 full baseline and six-cell release qualification.
+- [-] M0 foundation and Windows local Git/UI slices have implementation and scoped evidence. Native accessibility, remaining capability proofs and full milestone qualification stay open; see 02/14.
+- [-] M1 local workflows are partially delivered; paged graph, workspace/control and other cumulative clauses remain open. M2/M3 are not complete because selected later behaviors shipped early.
+- [-] Current development target 0.0.5 is under qualification; 0.0.6 remains a proposed design. Exact source-release status is owned by [12](prd/PRD_12_platform_delivery.md), current execution evidence by the version plans linked from 14.
 
 The documentation checker validates structure and local links, not semantic correctness or implementation. Source research and unresolved feasibility gates are owned by 02; requirement-to-evidence mapping is owned by 14.

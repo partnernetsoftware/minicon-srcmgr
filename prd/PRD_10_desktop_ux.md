@@ -2,7 +2,7 @@
 
 Parent: [PRD index](../PRD.md). Owns visual language, layout, interaction, localization and accessibility. Reuse source status is owned by [02](PRD_02_architecture_reuse.md).
 
-Implementation status: a read-only status window (`minicon-srcmgr gui`) renders the trust-gated snapshot through MiniCon's native pixel host, platform font and ui-core blend kernels on Windows. It has no input handling, layout, accessibility, IME, localization or resource budget evidence yet; those remain open under this owner.
+Implementation status: the Windows local GUI uses MiniCon's native pixel host, font and ui-core mechanisms with numbered panels, keyboard/pointer input, resizing and local Git actions. Historical release sections below and the version plans linked from 14 identify their exact evidence. Full accessibility/IME/localization coverage and reference-environment resource/response qualification remain open; existing input or a scoped measurement does not prove those broader requirements complete.
 
 ## Outcome tree
 

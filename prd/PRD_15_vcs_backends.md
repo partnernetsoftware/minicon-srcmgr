@@ -1,6 +1,6 @@
 # 15 · VCS backend extension: Git first, SVN and others later
 
-Parent: [PRD index](../PRD.md). Owns backend identity, capability dispatch, semantic isolation and the extension acceptance seam. Product delivery scope is owned by [01](PRD_01_product.md). Status: specified; the Git read-only adapter and the inert contract fixture are implemented in the M0 slice. Mutations and the remaining backend seam are not.
+Parent: [PRD index](../PRD.md). Owns backend identity, capability dispatch, semantic isolation and the extension acceptance seam. Product delivery scope is owned by [01](PRD_01_product.md). Status: the Git adapter has read and selected local mutation implementations; the inert non-Git domain fixture is contract evidence only. End-to-end multi-backend persistence/UI/control acceptance remains incomplete. No SVN or other production VCS adapter is delivered.
 
 ## Outcome tree
 
@@ -30,6 +30,12 @@ M0–M3 implement Git only. They must establish a small built-in backend seam, w
 Shared product concepts are working context, file changes, revision/history summaries, comparison requests, job/progress states, risk/confirmation, trust, diagnostics and durable UI context. Actual revisions, branch semantics, staging, locks, remote publication, conflict resolution and recovery stay backend-owned. Git-specific modules 04–09 remain normative for the Git adapter; they are not a universal VCS protocol.
 
 SVN is the first design check because its working-copy and centralized revision/update/commit model differs from Git's local commit/index and separate push model. A working copy may carry mixed revisions; locks and versioned properties need native representation. Do not model SVN Update as an unlabeled Git Pull or require SVN to manufacture a Git index, commit DAG, stash or worktree family. This semantic distinction is grounded in the [Subversion working-copy model](https://svnbook.red-bean.com/en/1.8/svn.basic.in-action.html); concrete future SVN command/trust/recovery behavior requires its own reviewed specification.
+
+## VCS versus remote transport
+
+Backend kind describes source-control semantics: Git now, potentially SVN or another VCS later. A Git repository whose remote is stored in S3 remains Git, with the same index, OIDs, refs and local actions. Do not create a new VCS kind, duplicate local repository state or make generic VCS identities depend on an object-storage vendor.
+
+Git remote-helper identity, transport capabilities and storage-format compatibility belong to [07](PRD_07_remotes.md#candidate-object-storage-remotes); executable and credential authority belongs to [11](PRD_11_security.md). An unavailable helper disables the affected remote operation, not local Git inspection/commit. This candidate introduces no dynamic plugin runtime or initialization for inactive providers.
 
 ## Minimal backend contract
 

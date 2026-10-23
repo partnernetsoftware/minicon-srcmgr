@@ -1,6 +1,6 @@
 # 01 · Product, users and scope
 
-Parent: [PRD index](../PRD.md). This module owns product intent, milestone membership and scope changes. Status: specified; implementation `[_]`.
+Parent: [PRD index](../PRD.md). This module owns product intent, milestone membership and scope changes. Status: product baseline specified; Windows local slices are partially implemented and have scoped evidence. This does not complete the cumulative milestones below. Release status is owned by 12 and version execution evidence by the plans linked from 14.
 
 ## Outcome tree
 
@@ -63,7 +63,7 @@ The benchmark guides daily workflow coverage and low-friction panel navigation. 
 reference GUI (Atlassian) is the desktop Git client most users compare against. Observed on this Windows host on 2026-10-20:
 
 - Installed build folder `app-3.4.21`. Its localisation resources list the feature vocabulary used below. The live window was not captured: the only visible reference GUI window is a 146 × 28 helper, and the main window was not on screen, so no layout claim here is visual evidence. Feature names come from those resource strings; behavior beyond the names is not verified in this session.
-- Idle footprint, one snapshot with the main window hidden: working set 762 MB, private memory 667 MB, 43 threads and 2,139 handles in the `reference GUI` process. This is the reference point for the footprint pillar. SrcMgr's own idle and active budgets are still unmeasured and are owned by [14](PRD_14_verification_roadmap.md).
+- Historical idle footprint, one snapshot with the main window hidden: working set 762 MB, private memory 667 MB, 43 threads and 2,139 handles in the `reference GUI` process. This unmatched single observation is design context, not a controlled comparative benchmark or evidence for a resource claim. SrcMgr has scoped local measurements in the version plan; reference-environment qualification remains open under [14](PRD_14_verification_roadmap.md).
 
 What reference GUI sets as the baseline for a desktop Git client:
 
@@ -201,6 +201,12 @@ These cannot be settled from documents and are not decided here:
 - SrcMgr's reference-environment footprint and responsiveness qualification remains open; [14](PRD_14_verification_roadmap.md) owns the methodology and links the version plan's scoped local evidence.
 
 A candidate row becomes scope only through a change to this module, the owner's acceptance clauses and the release label, as the change-control section requires.
+
+## Near-term product admission
+
+The next proposed increment is [0.0.6](../plan/plan-0.0.6.md): find an item in the existing Files, Branches or loaded Commits list, inspect the intended content, act through existing guards and return without losing context. This advances Jobs 3/5/6 while preserving Job 7. The core is a complete daily task, not a count of search controls. Its loaded-commit filter is only a bounded subset of HIST-02; advanced history search stays later. The task tree and unresolved UX tradeoffs in the plan remain proposed until settled with the owner; this does not start implementation or bump the package version.
+
+S3-backed Git remotes are a future collaboration candidate owned by [07](PRD_07_remotes.md#candidate-object-storage-remotes). Admission requires the ordinary remote/trust/result path and provider-specific qualification; no version is assigned. A Git remote helper does not become an SVN-style backend under [15](PRD_15_vcs_backends.md#vcs-versus-remote-transport). Core local work must remain independent of any provider/helper/account, and unused integrations add no process, polling or credential discovery.
 
 ## Cumulative milestones and scope
 

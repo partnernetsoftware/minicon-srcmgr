@@ -36,6 +36,18 @@ Construct explicit reviewed source/destination refspecs; do not let ambient `pus
 
 Ordinary force push is excluded. A deliberate rewrite uses `--force-with-lease` with an explicit expected destination OID recorded at the reviewed fetch; background fetch cannot silently update that expectation. On lease mismatch, fetch/review/reconfirm; never retry with bare force. Lease protects against that ref moving, not branch policy or all server-side effects. Server protections/hooks/permissions surface as remote rejection. Cancellation or lost connection may leave remote completion unknown: mark Unknown, query the destination and reconcile before retry. A timed-out push is never automatically replayed.
 
+## Candidate object-storage remotes
+
+Status: future candidate, not implemented, not selected for 0.0.6 and assigned no release. The initial product role is a **Git remote transport/storage option**, not a new VCS backend. Reuse the installed Git and its reviewed remote helper through the existing supervised worker; no embedded S3 SDK, always-running service or automatic helper download is admitted by this candidate. [Git's remote-helper protocol](https://git-scm.com/docs/gitremote-helpers) defines the extension mechanism; actual compatibility still requires a pinned helper and execution evidence.
+
+Candidate selection must identify the helper implementation/version and remote storage format as well as bucket/prefix, endpoint, region and profile. Sharing an `s3://` URL shape does not establish interchangeable object layouts. Do not probe a prefix with an unrelated helper or initialize/overwrite an unrecognized remote format. A setup/connectivity check must state its network effects and remain separate from first publication. UI capability states must distinguish unsupported operations, missing prerequisites, access denial and unknown outcome. Helper capabilities are an input, not independent proof of atomic pushes or safe rewrites.
+
+Credentials remain with a trusted external provider/profile; the workspace stores nonsecret configuration only. Review actual credential sources, including any network-based discovery, under [11](PRD_11_security.md). A remote URL alone cannot authorize execution of a discovered `git-remote-s3` binary; identify and approve the executable and relevant configuration, scope protocol permission to the approved job, and do not weaken global Git settings. A missing/disabled integration leaves all local Git workflows usable.
+
+Before admitting a provider, qualify ordinary clone/fetch/explicit-ref push; competing writers to one ref; timeout/cancel after possible publication; actual-result reconciliation; access/expired-credential failure; and bounded memory/CPU/temp-storage behavior. Use a disposable object-store prefix and two clients; object-store compatibility or helper documentation alone is not a PASS. Report the complete owned helper process tree. Rewrites, multi-ref atomicity, deletion, submodules and LFS are individually qualified capabilities, not inferred from basic clone/push. Server-side protection/review/backup guarantees must not be inferred from bucket storage or client locks. Do not automatically replay an uncertain push or run remote maintenance/garbage collection.
+
+This section owns provider admission behavior. [15](PRD_15_vcs_backends.md#vcs-versus-remote-transport) owns the VCS distinction; product scheduling belongs to [01](PRD_01_product.md). Provider selection and implementation require a later scoped plan; neither current version plan expands as a side effect.
+
 ## Delivery contracts
 
 | ID / leaf | Invariant | Observable evidence | Safe failure | Dependencies | Non-goal |

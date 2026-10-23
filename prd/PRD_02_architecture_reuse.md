@@ -1,6 +1,6 @@
 # 02 · Architecture and MiniCon reuse
 
-Parent: [PRD index](../PRD.md). Owns source provenance, reuse boundaries, Git adapter design and architecture decisions. Status: design baseline; `minicon-core` and `minicon-platform` (contained process spawn only) are integrated at the pinned revision for the M0 Git slice. Other gates in this owner remain open.
+Parent: [PRD index](../PRD.md). Owns source provenance, reuse boundaries, Git adapter design and architecture decisions. Status: pinned MiniCon core/platform/UI mechanisms support the implemented Windows local slice, including contained process spawning and the selected entropy/filesystem capabilities. Manifests identify actual features; the version plan records consumer evidence. This is not full native/platform qualification; other gates in this owner remain open.
 
 ## Outcome tree
 
@@ -52,7 +52,7 @@ The upstream manifests declare Rust 1.97. The future toolchain lock must satisfy
 
 ## Product-owned boundaries
 
-Planned crates, not existing code: `srcmgr-domain` (backend-tagged IDs, common change/history envelopes, capability and operation contracts); `srcmgr-git` (Git invocation, parsing, index/refs/graph and sequencer semantics); `srcmgr-ui` (layout, components and semantic accessibility tree); binary composition (application lifecycle, control, persistence). The backend contract and future SVN seam are owned by [15](PRD_15_vcs_backends.md); they may initially live inside the domain crate rather than a separate framework package. Prefer these boundaries over premature extra packages. Native extensions go through a reviewed platform capability; VCS trust and UX policy remain product-owned. Never put branch, account or repository state in MiniCon shared crates.
+Existing workspace boundaries: `srcmgr-domain` (backend-tagged identities and common contracts); `srcmgr-git` (installed-Git execution and repository semantics); `srcmgr-state` (durable profile/draft/trust state); `srcmgr-ui` (window models and interaction); `srcmgr-cli` (CLI/GUI composition and worker integration). These are responsibilities, not claims that every planned graph, sequencer, control or accessibility feature is implemented. The backend contract and future SVN seam are owned by [15](PRD_15_vcs_backends.md); retain the small domain seam rather than adding a speculative framework package. Native extensions go through a reviewed platform capability; VCS trust and UX policy remain product-owned. Never put branch, account or repository state in MiniCon shared crates.
 
 For a proven missing native mechanism, an optional narrowly scoped `srcmgr-platform-ext` crate in this repository may implement the adapter behind a typed host-neutral facade, using existing MiniCon contracts where suitable. Record the missing upstream API/behavior, proposed contract and per-OS failure semantics in this owner before coding it. This is the authorized local route for accessibility publication or supervised-process gaps; it does not require editing the sibling checkout or waiting for a separate upstream release. Do not duplicate capabilities MiniCon already provides or create a second general platform framework. UI/domain code cannot call native APIs directly. If the mechanism is later upstreamed in a separate task, migrate to a reviewed immutable MiniCon revision and remove the duplicate adapter.
 

@@ -36,6 +36,42 @@ flowchart LR
     G -->|No| H["Fix changed scope or record blocker"]
 ```
 
+## Core task tree for product discussion
+
+Recommendation: retain one release theme, **quickly locate and confidently inspect an existing item**. The tree below is a proposed product ordering, not a record of owner approval or completed work. A–D are user outcomes; P0–P4 below are engineering packages supporting them.
+
+```text
+0.0.6 · quick location without losing context
+├── A. Locate a changed file and prepare the intended content (first vertical slice)
+│   ├── Open Filter by pointer or /; type a literal path fragment
+│   ├── Understand matched/loaded counts, path and staged/unstaged state
+│   ├── Inspect the selected file; stage only its intended file/hunk/lines
+│   └── Clear/cancel and return to the prior logical position
+├── B. Locate and review a loaded commit (second vertical slice)
+│   ├── Match subject or OID prefix; state loaded-history scope
+│   ├── Open commit → changed files → read-only diff
+│   └── Return with query, full-OID selection and scroll intact
+├── C. Reuse the same interaction for local branches (bounded completion)
+│   ├── Filter names in the existing branch list; retain current-branch marker
+│   └── Explicit selected-branch switch retains existing dirty-worktree guards
+└── D. Preserve trust and low cost throughout A–C (release-critical)
+    ├── Text input never invokes shortcuts or creates invisible action targets
+    ├── Refresh/removal cannot retarget selected actions or show a stale diff
+    ├── Whole-scope operations remain distinct from filtered views
+    └── No query-triggered Git/DB/network work; scoped response/resource evidence
+```
+
+Deliver A end to end before spreading filter controls across all panes; deliver B next, then C using the same pattern. D is part of each vertical slice, not a final cleanup phase. C adds no new branch/tag management or remote branch behavior. A does not add line discard. B adds no history traversal, graph layout or content search. Full repository search/overview belongs to 03 and is not a fourth filter target here.
+
+| Product decision | Recommended initial choice | What remains to discuss |
+|---|---|---|
+| Release focus | One daily quick-location theme; three existing lists share the interaction | If effort exceeds a small increment, explicitly reduce targets before implementation rather than silently leaving a Must incomplete |
+| Commit while Files is filtered | Keep the current conservative clear-first rule in 04 | A full-index preview could reduce interruption but adds a different review flow; it needs an explicit owner decision before replacing the rule |
+| Recent versus all-history search | Loaded commits only, visibly labeled | Full-history search is a later bounded-query design, not a hidden expansion of this filter |
+| S3 | Record future remote-provider admission in 07; no version assigned | Choose and qualify a helper only in a later collaboration plan |
+
+The principal usability risk is that clear-first interrupts users who expect to commit after narrowing a list. Keep that tradeoff visible in review and the short task demonstration. Do not resolve it by silently committing hidden staged content or making a query change the commit tree. Until a revised behavior is explicitly accepted, the existing conservative owner contract remains the proposed implementation baseline.
+
 ## Users and concrete journeys
 
 | Situation | Intended journey | Successful outcome |
@@ -102,7 +138,7 @@ Counts above are examples, not a new hardcoded list limit. Always describe the a
 
 ## Work packages and evidence
 
-All packages start `[_]`. Implementation may revise engineering order after inspecting the actual baseline, but a scope/behavior change first updates its PRD owner. Version numbers change only when 0.0.6 implementation is explicitly started.
+All packages start `[_]`. Implement in vertical slices A → B → C, carrying D throughout; P1–P3 therefore repeat narrowly per target rather than forming three separate horizontal projects. P0 identifies the baseline and P4 consolidates only the remaining changed-scope evidence. Implementation may revise engineering order after inspecting the actual baseline, but a scope/behavior change first updates its PRD owner. Version numbers change only when 0.0.6 implementation is explicitly started.
 
 | Package | Work | Minimum evidence and stop condition |
 |---|---|---|
