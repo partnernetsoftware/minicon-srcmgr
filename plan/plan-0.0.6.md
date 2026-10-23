@@ -1,175 +1,99 @@
 # 0.0.6 product and delivery plan
 
-Status: `[_]` proposed next-version design; no implementation or acceptance claimed. Current development version remains **0.0.5**, whose [qualification plan](plan-0.0.5.md) remains authoritative for its delivery. This document does not bump package versions, publish a release or move unfinished 0.0.5 gates into a later version.
+Status: `[_]` revised design; no implementation or acceptance claimed. Current package version remains **0.0.5**. This revision follows the owner's direction to reach a usable client at 0.1.0, superseding the earlier filter-only proposal. The [0.1.0 roadmap](roadmap-0.1.0.md) owns version allocation, [01](../prd/PRD_01_product.md#010-first-user-feature-tree) owns product admission, and [10](../prd/PRD_10_desktop_ux.md#first-user-workspace-and-journeys) owns UI/UX. This is not release notes or an instruction to publish.
 
-This plan selects and sequences a small product increment. The [PRD series](../PRD.md) owns behavior; the links below identify its owners. Planning is permitted while 0.0.5 is blocked. Implementation starts after its release baseline is established, or after an explicit decision to develop against an identified unreleased checkpoint without claiming that checkpoint shipped.
+## Product outcome
 
-## Product decision
+**Open a project, understand its changes, prepare the intended commit and resume work without losing context.**
 
-**Find the right item quickly, inspect it, then act on that exact item.**
-
-0.0.5 strengthens operation truth and recovery. The next useful increment reduces the daily cost of finding a changed file, a branch or a recent commit in the existing workspace. Deliver one consistent quick-filter interaction across those three lists. Keep the window familiar; add neither another workspace nor a full search subsystem.
-
-The core promise remains small memory footprint, fast UI/UX response and stable operation. A fast-looking filter that launches Git for every character, retains duplicate snapshots, or makes hidden files eligible for accidental bulk operations fails this version.
+0.0.6 turns the existing local Git operations into a coherent local client. Quick filters remain useful supporting tools; they no longer define the entire release. Clone and authenticated collaboration are allocated to 0.0.7. Preserve 0.0.5's completed work and exact evidence rather than reimplement it.
 
 ```text
-0.0.6: find → inspect → act on the intended item
-├── Find a changed file by its displayed repository-relative path
-├── Find a branch by its name
-├── Find a recent loaded commit by subject or OID prefix
-├── Recognize the query, scope, result count and empty state
-├── Clear/cancel without losing orientation
-└── Preserve raw identities, action scope and existing quality budgets
+0.0.6 · usable local client foundation
+├── A. Enter a repository
+│   ├── Welcome: Open / Create / recent entries
+│   ├── Git and identity guidance; bounded trust decision
+│   └── Distinct local init, existing repository and missing-path states
+├── B. Stay oriented across projects
+│   ├── Repository tabs with path, branch and operation state
+│   ├── Independent drafts, queries, selections and scroll
+│   └── Reopen recent project; close without losing acknowledged input
+├── C. Prepare a commit
+│   ├── Coherent unstaged/staged/untracked display and selected Diff
+│   ├── Existing file/hunk/line stage/unstage and truthful result
+│   ├── Discoverable existing ignore/discard with their safety guards
+│   ├── Full-index review beside durable message composition
+│   └── Commit → actual OID → refreshed history; preserve failed draft
+├── D. Find and hand off
+│   ├── Literal quick filter: changed files, branches, loaded commits
+│   ├── Explicit limited history scope and clear/cancel/return behavior
+│   └── User-selected editor/terminal at the intended file/repository
+└── E. Keep the product small, responsive and dependable
+    ├── Same typed actions across pointer/keyboard/help
+    ├── Existing trust/recovery/stale-result and queue boundaries
+    └── Targeted integrity, interaction and changed-path resource evidence
 ```
 
 ```mermaid
 flowchart LR
-    B["Identified 0.0.5 baseline"] --> F["Quick filter: existing lists"]
-    F --> I["Visible result + stable identity"]
-    I --> D["Existing inspect flow"]
-    D --> A["Existing target-bound action"]
-    F --> E["Zero results: clear query"]
-    A --> Q["Focused integrity + response/resource evidence"]
-    E --> Q
-    Q --> G{"Applicable gates complete?"}
-    G -->|Yes| R["Prepare scoped source release"]
-    G -->|No| H["Fix changed scope or record blocker"]
+    B["Identified 0.0.5 source and evidence"] --> A["Enter / reopen repo"]
+    A --> T["Isolated tabs and context"] --> C["Inspect / stage / compose"]
+    C --> R["Actual commit outcome and durable return"]
+    F["Quick location and external handoff"] --> C
+    R --> Q["Scoped quality and first-user review"]
+    Q --> N["0.0.7 collaboration entry"]
 ```
 
-## Core task tree for product discussion
+## Task and interaction contracts
 
-Recommendation: retain one release theme, **quickly locate and confidently inspect an existing item**. The tree below is a proposed product ordering, not a record of owner approval or completed work. A–D are user outcomes; P0–P4 below are engineering packages supporting them.
-
-```text
-0.0.6 · quick location without losing context
-├── A. Locate a changed file and prepare the intended content (first vertical slice)
-│   ├── Open Filter by pointer or /; type a literal path fragment
-│   ├── Understand matched/loaded counts, path and staged/unstaged state
-│   ├── Inspect the selected file; stage only its intended file/hunk/lines
-│   └── Clear/cancel and return to the prior logical position
-├── B. Locate and review a loaded commit (second vertical slice)
-│   ├── Match subject or OID prefix; state loaded-history scope
-│   ├── Open commit → changed files → read-only diff
-│   └── Return with query, full-OID selection and scroll intact
-├── C. Reuse the same interaction for local branches (bounded completion)
-│   ├── Filter names in the existing branch list; retain current-branch marker
-│   └── Explicit selected-branch switch retains existing dirty-worktree guards
-└── D. Preserve trust and low cost throughout A–C (release-critical)
-    ├── Text input never invokes shortcuts or creates invisible action targets
-    ├── Refresh/removal cannot retarget selected actions or show a stale diff
-    ├── Whole-scope operations remain distinct from filtered views
-    └── No query-triggered Git/DB/network work; scoped response/resource evidence
-```
-
-Deliver A end to end before spreading filter controls across all panes; deliver B next, then C using the same pattern. D is part of each vertical slice, not a final cleanup phase. C adds no new branch/tag management or remote branch behavior. A does not add line discard. B adds no history traversal, graph layout or content search. Full repository search/overview belongs to 03 and is not a fourth filter target here.
-
-| Product decision | Recommended initial choice | What remains to discuss |
+| Task | Visible path and finish | Owning behavior |
 |---|---|---|
-| Release focus | One daily quick-location theme; three existing lists share the interaction | If effort exceeds a small increment, explicitly reduce targets before implementation rather than silently leaving a Must incomplete |
-| Commit while Files is filtered | Keep the current conservative clear-first rule in 04 | A full-index preview could reduce interruption but adds a different review flow; it needs an explicit owner decision before replacing the rule |
-| Recent versus all-history search | Loaded commits only, visibly labeled | Full-history search is a later bounded-query design, not a hidden expansion of this filter |
-| S3 | Record future remote-provider admission in 07; no version assigned | Choose and qualify a helper only in a later collaboration plan |
+| First launch without Git | Welcome remains usable; select installed Git or read setup guidance; no auto-install/account | 02/03/10/11 |
+| Open/init | Choose explicit path → trust/setup → Changes; init never stages/commits existing files automatically | 03/11 |
+| Reopen/switch | Recent entry or tab → named repo/branch → preserved draft/selection; unavailable path offers Locate/Remove | 03/10/13 |
+| Review/stage | Select raw-identity file → staged or unstaged diff → named action → observed index effect | 04/08/10 |
+| Commit | Review the full staged index → edit message → deliberate submit → actual OID or actionable failure; never stage implicitly | 04/13 |
+| Filter | `/` or visible Filter → literal query → inspect result; full-index commit review stays unfiltered | 04/05/10 |
+| Hand off | Open file/editor/terminal → reviewed configured tool and exact destination; return without resetting context | 10/11 |
+| Settings/diagnostics | Distinct app preferences versus repository identity/settings; show actual Git and unavailable capabilities | 02/03/10/11/13 |
 
-The principal usability risk is that clear-first interrupts users who expect to commit after narrowing a list. Keep that tradeoff visible in review and the short task demonstration. Do not resolve it by silently committing hidden staged content or making a query change the commit tree. Until a revised behavior is explicitly accepted, the existing conservative owner contract remains the proposed implementation baseline.
+Changes is the first complete task surface. Existing numbered-pane shortcuts remain valid aliases; users also get named pointer actions and a visible focus path. Reuse MiniCon's shell/input/rendering capabilities; do not build a second UI toolkit or a new general docking system. Semantic names, IME-safe text routing and localization keys are part of new controls from the start.
 
-## Users and concrete journeys
+A Files filter does not change commit scope. The revised rule permits commit from a filtered worktree list **only through the complete, unfiltered staged-index review** specified in 04. If that review is unavailable or stale, submission is disabled with a reason. Whole-file-list stage/unstage and stash creation still require clearing the Files filter; no hidden filtered-all mode is added. This replaces the earlier blanket clear-before-commit rule, avoiding a disruptive extra step while keeping the complete commit target visible.
 
-| Situation | Intended journey | Successful outcome |
-|---|---|---|
-| Many changed paths; review one configuration file | Files → Filter → type a path fragment → choose a result → inspect → stage that file/hunk | Less scrolling; the real selected path is the only target |
-| Many local branches; return to a known task | Branches → Filter → type a branch fragment → inspect the result → use the existing switch action | The name remains visible and existing dirty-worktree protections still apply |
-| Recall a recent change by its subject or copied OID | Commits → Filter → choose a result → files → diff → back | Explicit loaded-history scope; read-only detail and selection return remain intact |
+## Boundaries
 
-A first-time user must be able to find the Filter affordance with a pointer. A keyboard user can reach it with `/` from the supported list. Neither needs to learn a query language.
+Must: A–E above and repairs necessary for their truthful results, retained context and measured quality. No new repository-writing engine, background service, search index or per-tab polling. Existing safe refusals remain visible.
 
-## Scope and deliberate omissions
+Deferred to their allocated increments: clone/fetch/pull/push/auth (0.0.7), merge/rebase/conflict center and stash extensions (0.0.8), graph/history expansion and other assigned corrections (0.0.9). Existing commit detail and branch/stash actions remain available; this plan does not remove delivered behavior. Interactive rebase, S3, other VCS, full LFS/submodule/worktree administration and broader platform releases are outside this increment.
 
-| Priority | Deliverable | Owning behavior |
-|---|---|---|
-| Must | Literal quick filtering for Files, Branches and loaded Commits | [10 · quick-filter interaction](../prd/PRD_10_desktop_ux.md#quick-filter-interaction), [05 · loaded-history filtering](../prd/PRD_05_history.md#loaded-history-quick-filter) |
-| Must | Visible query, matched/loaded counts, clear control and actionable zero state | 10 |
-| Must | Keyboard/text/pointer parity, selection restoration and stale-detail protection | 10, [13 · state/control](../prd/PRD_13_state_control.md) |
-| Must | Safe selected-item actions and explicit prevention of hidden bulk scope | [04 · filtered change lists](../prd/PRD_04_changes_commits.md#filtered-change-lists), [08 · recovery](../prd/PRD_08_recovery.md) |
-| Must | Bounded memory and no character-triggered Git/database/network work | [02 · reuse](../prd/PRD_02_architecture_reuse.md), [14 · verification](../prd/PRD_14_verification_roadmap.md) |
-| Deferred | Search beyond loaded history, author/date/path/ref query forms, regex and fuzzy matching | Separate HIST-02 delivery; never imply this version completes it |
-| Deferred | Diff text search, stash filtering, graph lanes, repository-wide content indexing and multi-repository search | Separate product decisions |
-| Deferred | Fetch/pull/push, merge/rebase/reset/revert, extra VCS, new OS/ISA support, binary distribution | No scope added by this plan |
-
-There is no optional feature bucket to fill if work finishes early. Resolve defects and complete evidence for this slice instead.
-
-## Experience specification and examples
-
-The interaction contract is owned by 10. The following sketch illustrates its visible hierarchy; it does not introduce a new layout system.
-
-```text
-Files                 3 / 200 loaded     [Filter /]
-Filter: config                         [Clear ×]
-  M  app/config.rs
-  M  config/default.toml
-  ?  docs/config-notes.md
-
-Commits               2 / 200 loaded     [Filter /]
-Filter: timeout                        [Clear ×]
-Loaded history only · HEAD · 200 commits
-  8b42d1a  Handle timeout after completed write
-  c91a6f0  Explain timeout status
-```
-
-Counts above are examples, not a new hardcoded list limit. Always describe the actual loaded set and any existing truncation. An empty result says `No matches in loaded items` with Clear available; it does not say the repository contains no matching commit or has no changes.
-
-| Moment | Required user-visible result |
-|---|---|
-| Open Filter | A focused text field shows the existing query; list remains visible |
-| Type or paste | Loaded results update; text never invokes application shortcuts; no new Git job |
-| Press Enter in the field | Apply the query and leave editing; no stage, switch, checkout or commit |
-| Navigate after applying | Existing navigation/inspection behavior, using visible stable identities |
-| Escape while editing | Restore the query/selection from before editing where still valid |
-| Escape with applied filter in its list | Clear that filter and consume the key; do not also exit the view |
-| Clear with pointer | Restore the unfiltered list and logical position without another panel opening |
-| Refresh or external change | Re-evaluate the same query against the new snapshot; no row-number retargeting |
-
-## Safety and quality decisions
-
-1. Filtering is a view, never a new mutation target selector. Existing confirmation, trust and fresh-state checks remain mandatory. A hidden or removed selection cannot remain an invisible action target.
-2. While Files has a nonempty query, disable all-files stage/unstage, stash creation and commit submission, even if focus moved elsewhere. Explain `Clear Files filter to review the full operation scope` and offer Clear. Single visible file/hunk/line actions remain available through existing rules. This deliberately avoids adding a second meaning of “all” or a new confirmation flow in a patch increment.
-3. Filtering commits is not repository-wide history search. Display the current reachability scope and loaded count. Do not increase history loading, walk the object database or fetch objects to make a query look complete.
-4. Reuse loaded rows; retain query text, visible indices and stable selection anchors rather than copied repositories/diffs/search caches. Query length is bounded at 256 Unicode scalar values, with a visible limit indication. No persisted search history, telemetry, timer or new dependency is required.
-5. Input-to-visible results inherit 14's response budgets, including while an owned Git read is active. Filter editing must remain usable without waiting for that read. No lower budget or acceptance waiver is introduced by this plan.
+A Clone affordance may explain that it is unavailable in this checkpoint, but must not appear functional before its slice lands. Do not expose a toolbar of misleading inactive commands solely to resemble the final mockup. Signing/package/native-host feasibility is investigated early under 12; public binary promotion is not performed by a design task.
 
 ## Work packages and evidence
 
-All packages start `[_]`. Implement in vertical slices A → B → C, carrying D throughout; P1–P3 therefore repeat narrowly per target rather than forming three separate horizontal projects. P0 identifies the baseline and P4 consolidates only the remaining changed-scope evidence. Implementation may revise engineering order after inspecting the actual baseline, but a scope/behavior change first updates its PRD owner. Version numbers change only when 0.0.6 implementation is explicitly started.
+All packages start `[_]`. Inspect actual code before assigning missing work. P0 is a source review, not an automatic full test pass. Implement A → C as the first vertical slice, then B/D; carry E throughout. Change the package version only when implementation is explicitly started.
 
-| Package | Work | Minimum evidence and stop condition |
+| Package | Change and user risk | Minimum evidence / stopping condition |
 |---|---|---|
-| P0 · baseline | Identify source/artifact, existing list bounds, input routing and reusable 0.0.5 evidence; list inherited blockers separately | A short scoped baseline record; no routine rebuild or long replay just to start planning |
-| P1 · matching and identities | Project the existing three lists to bounded visible indices; raw paths/full OIDs remain action identities | Focused model cases distinguish duplicate labels, zero matches, refresh/removal, clear/cancel restoration and query isolation |
-| P2 · interaction | Existing MiniCon text input; Filter/Clear hit targets; editing state; counts/scope; details entered only after deliberate result activation | One real keyboard and pointer journey across the three lists, including pasted Unicode/IME committed text and an empty result; keys typed in the field dispatch no mutation |
-| P3 · action integration | Route selected visible identities through existing actions; guard global Files operations; reject stale details | One disposable real-Git mixed-index fixture proves selected stage changes only the intended entry and hidden files remain unchanged; focused dispatch checks prove blocked whole-scope actions issue no write jobs |
-| P4 · scoped qualification | Measure changed filter paths and inspect retained state; reconcile result truth and current release prerequisites | Changed-path timing/resource receipt plus integrity outcomes; every applicable gate is PASS/FAIL/BLOCKED, with no numeric PASS inferred from callback timing alone |
+| P0 · baseline and reuse | Identify actual 0.0.5 source/artifacts, current worker/actions, existing native controls and inherited blockers | Record reusable evidence and true gaps; do not rebuild unaffected operations or replay long tests |
+| P1 · entry and setup | Wrong destination/trust, accidental initialization or lost recent path | Disposable existing/nonempty/new target checks; first-run missing Git, trust deny/grant and failed Locate/Open shown once in real UI |
+| P2 · local commit surface | Staged/unstaged confusion, hidden staged content or lost message | Actual mixed-index fixture; filtered file view with unrelated staged entry remains visible in full-index review; successful commit tree matches review, failure keeps draft |
+| P3 · context and handoff | Cross-repository draft/action routing, stale reply after tab switch, unsafe tool destination | Two disposable repos with distinct edits/drafts; switch/reopen verifies isolation and stale rejection; one reviewed editor/terminal launch checks destination |
+| P4 · quick location | Text shortcuts accidentally mutate; matching display label changes action target | Focused model/input/identity tests plus one combined keyboard/pointer journey across three lists; no per-character Git/DB/network job |
+| P5 · integration and feasibility | Coherent flow fails on a clean profile or retained state grows | One native entry→stage→draft→commit→switch→reopen journey with actual Git-state/draft oracles; changed-path response/memory/CPU evidence; explicit package/accessibility/reference-host feasibility record |
 
-Do not write tests merely mirroring matching code or replay every prior stash/recovery test. One fixture can cover several meaningful boundaries. Add a negative control only for a materially changed loss guard or uncertain discriminating test. Expand checks only when a failure or changed dependency justifies it.
+Use the existing disposable fixtures and owned-process tools where their measurement boundary fits the new path. Do not count a focus border as evidence of staged-list/filter-result presentation. Expand checking only for demonstrated failures, new writer scope or changed dependencies. The 0.0.5 long-session receipt is not relabeled as a new binary; unchanged contracts can reuse it with original identity. No new 30-minute/eight-hour/six-cell campaign is triggered merely by this plan.
 
-## Acceptance ledger
+## Acceptance and exit ledger
 
-These are version acceptance scenarios, not new PRD requirement IDs or evidence of completion.
-
-| Case | Outcome to establish | Status |
+| Case | Required outcome | State |
 |---|---|---|
-| F1 · find and clear | Query/count/zero state truthful; prior selected identity restored when present | `[_]` |
-| F2 · input isolation | `q`, `c`, `d`, `s`, spaces and pasted text remain text while editing; Enter applies only; Escape cancels only | `[_]` |
-| F3 · correct target | Duplicate/truncated display labels and list refresh cannot change the raw path/full OID acted upon | `[_]` |
-| F4 · hidden scope | Filtered Files prevents whole-scope operations, including from another pane; clearing re-enables existing behavior | `[_]` |
-| F5 · history truth | Loaded-history scope stays visible through filter → commit files → diff → back; no all-history claim or eager traversal | `[_]` |
-| F6 · response | On the qualified reference host, filter feedback meets 14's actual presentation and dispatch limits; busy-read input remains responsive | `[_]` |
-| F7 · footprint/stability | No Git/DB/network launches attributable to query edits; no idle filter wakeups; repeated query/clear/view operations release retained state and stay within 14's memory budgets | `[_]` |
+| L1 · entry | Fresh profile opens or creates a local repository with clear Git/trust/identity guidance; existing content preserved | `[_]` |
+| L2 · commit | Pointer and keyboard can inspect/stage/compose/commit; visible full-index review matches actual committed content | `[_]` |
+| L3 · continuity | Two repositories keep independent drafts, selection, filter and scroll; close/reopen preserves acknowledged state | `[_]` |
+| L4 · find | Query/count/empty/reset are truthful; loaded history limit visible; text/IME input invokes no shortcuts | `[_]` |
+| L5 · action truth | Filtered/stale/removed items cannot retarget a write; true success, refusal and uncertain result remain distinct | `[_]` |
+| L6 · quality | Applicable changed-path resource/response/integrity gates pass; inherited missing prerequisites remain explicit | `[_]` |
+| L7 · readiness | First-user package/native-host/accessibility dependencies have concrete owners and next steps; no fake delivery claim | `[_]` |
 
-Use the existing standard fixture and measurement tools only where they measure the changed behavior. A focus-border observer does not establish filtered-result presentation. If a necessary observer or reference host is unavailable, keep that row BLOCKED and continue independent work. Do not repeatedly calibrate unchanged remote display prerequisites. Inherited 0.0.5 environment and measurement blockers must be resolved, not renamed away.
-
-For F7, select one bounded repeated query/clear/detail journey against the existing 100-cycle/+8 MiB criterion; do not launch another 30-minute journey solely because this plan is new. Reuse unaffected sustained-use evidence with original source/artifact identities. Accessibility/DPI claims remain limited to actual evidence under 10/14; custom controls must expose name, query value, result count and clear action through the existing semantic boundary rather than relying on color.
-
-## Release decision and handoff
-
-Release only the declared Windows local-workflow source slice after applicable inherited and changed-scope gates pass. No claim of full M1/M2, full HIST-02, cross-platform qualification or complete lazygit parity follows. Release wording should explain the everyday benefit and the loaded-history limit in plain language. Preserve the latest actual published version until publication is verified.
-
-Implementation handoff must contain source/artifact identity, package and acceptance status, the selected checks and stopping conditions, reused evidence, remaining blockers and a short filter → inspect → selected action demonstration. If prerequisites remain open, hand back an implementation checkpoint. Publication follows the owner's applicable authorization and [12](../prd/PRD_12_platform_delivery.md); this design task itself performs no publication.
+The handoff records source/artifact, cases, actual state oracles, reused evidence and blockers. An unmet applicable release gate remains BLOCKED, while independent work can proceed against a clearly identified source checkpoint. Release status stays under 12 and named publication authority. This plan changes neither current version metadata nor any past release claim.

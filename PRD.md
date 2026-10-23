@@ -1,6 +1,6 @@
 # MiniCon SrcMgr — product requirements index
 
-Requirements baseline: **1.5 · 2026-10-24 · reconciles design versus delivered evidence, separates VCS from remote transports, and reviews the 0.0.6 task tree**. This is a documentation baseline number, not the application version. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
+Requirements baseline: **1.6 · 2026-10-24 · defines the first-user 0.1.0 feature tree, workspace journeys and 0.0.x delivery allocation**. This is a documentation baseline number, not the application version. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
 
 ## Outcome tree DAG
 
@@ -91,13 +91,13 @@ Implementation entry: [M0 work order and evidence](prd/PRD_14_verification_roadm
 | Shared mechanisms | Can MiniCon supply the platform/input/rendering/process capability? | 02; immutable reuse, no product state in shared crates |
 | Quality and delivery | Is the declared slice small, responsive, stable and actually qualified? | 14/12; applicable gates follow each slice; six-cell product qualification remains cumulative |
 
-The near-term sequence is to close the [0.0.5 local-workflow checkpoint](plan/plan-0.0.5.md), then consider the [0.0.6 quick-location task tree](plan/plan-0.0.6.md). Network collaboration, S3 remote helpers and future VCS adapters remain separately scoped work. Designing a candidate does not assign it a release date or authorize helper installation/network access.
+The owner-directed near-term goal is [a usable 0.1.0 Git client](prd/PRD_01_product.md#010-first-user-feature-tree), sequenced in [the 0.0.x → 0.1.0 roadmap](plan/roadmap-0.1.0.md). Preserve the [0.0.5 checkpoint](plan/plan-0.0.5.md); the revised [0.0.6 plan](plan/plan-0.0.6.md) brings local entry, repository context and commit review into one coherent client, with quick filtering as a supporting feature. UI/UX task surfaces and return/failure states are owned by [10](prd/PRD_10_desktop_ux.md#first-user-workspace-and-journeys). Standard remote collaboration and conflict recovery are allocated before 0.1.0; S3 and future VCS adapters remain separate candidates. A roadmap neither bumps application versions nor authorizes helper installation/network access or publication.
 
 ## Current frontier
 
 - [v] Requirements baseline: this index and 15 linked owner modules; documentation checks are reproducible through `python scripts/check_docs.py`.
 - [-] M0 foundation and Windows local Git/UI slices have implementation and scoped evidence. Native accessibility, remaining capability proofs and full milestone qualification stay open; see 02/14.
 - [-] M1 local workflows are partially delivered; paged graph, workspace/control and other cumulative clauses remain open. M2/M3 are not complete because selected later behaviors shipped early.
-- [-] Current development target 0.0.5 is under qualification; 0.0.6 remains a proposed design. Exact source-release status is owned by [12](prd/PRD_12_platform_delivery.md), current execution evidence by the version plans linked from 14.
+- [-] Current development target 0.0.5 is under qualification; 0.0.6 and the route to 0.1.0 are planned, not implemented. Exact source-release status is owned by [12](prd/PRD_12_platform_delivery.md), current execution evidence by the version plans linked from 14.
 
 The documentation checker validates structure and local links, not semantic correctness or implementation. Source research and unresolved feasibility gates are owned by 02; requirement-to-evidence mapping is owned by 14.

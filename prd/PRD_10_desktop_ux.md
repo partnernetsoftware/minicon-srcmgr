@@ -55,6 +55,63 @@ Usability acceptance adds a task-path audit: from an already selected applicable
 
 Performance affects interaction design: virtualize long lists/diffs, reuse bounded glyph/layout caches, redraw only damage and suspend animation/redraw while idle or occluded. Do not preload every tab's history or instantiate hidden heavy panels. Backend-specific controls follow [15](PRD_15_vcs_backends.md); future extensibility must not clutter the Git-first screen. Measurable resource/latency budgets remain solely in 14.
 
+## First-user workspace and journeys
+
+The [0.1.0 feature tree](PRD_01_product.md#010-first-user-feature-tree) owns product admission; [the roadmap](../plan/roadmap-0.1.0.md) owns version allocation. This is a target UI/UX contract, not a claim that the current numbered-panel window implements it. Evolve the existing MiniCon composition and semantic action model incrementally; no second UI toolkit, generic docking framework or all-at-once shell rewrite is required.
+
+```text
+Welcome
+[Open repository] [Create repository] [Clone repository] [Settings]
+Recent repositories: name / path / last known branch / availability
+Git or identity missing: actionable setup, no account requirement
+
+Repository workspace
+┌ [repo-A ×] [repo-B ×] [+ Open] ─────────── Settings / Help ────────┐
+│ repo path · branch/upstream · operation · Fetch / Pull / Push      │
+├ navigation ─────┬ task list ─────────────┬ main content ──────────┤
+│ Changes         │ Query / clear / count │ Staged | Unstaged Diff │
+│ History         │ File or history rows  │ Selected item / action │
+│ Branches / Tags │ Status + selection    │ Metadata / review      │
+│ Remotes / Stash ├───────────────────────┴────────────────────────┤
+│ Conflicts*      │ Changes: full staged-index review + message    │
+│ Worktrees**     │ [Commit] · saved-state / sign-off / signing     │
+├─────────────────┴──────────────────────────────────────────────┤
+│ outcome / freshness / job progress and cancel / diagnostics      │
+└────────────────────────────────────────────────────────────────┘
+* Prominent during an active conflicted operation.
+** Existing worktree navigation; future management is not implied.
+```
+
+The staged-index review and composer belong to Changes; History/Branches do not retain an unrelated composer at the expense of review space. A sidebar object opens its relevant task surface. Inactive future features do not fill menus with dead actions. An unavailable applicable action shows its reason; an inapplicable action is absent. Existing DIP/minimum-window rules apply: retain active repo/branch/operation, collapse secondary surfaces first and keep primary actions reachable.
+
+| Surface | Main information and primary action | Return/failure behavior |
+|---|---|---|
+| Welcome/Open/Create | Recent path/availability; explicit init target and branch; Open/Create | Cancel writes nothing; existing content is never staged automatically; missing path offers Locate/Remove |
+| Clone | URL/redacted endpoint, destination/options; Clone with progress/cancel | Preserve identified partial destination; auth/transport error gives a next step, no automatic destructive cleanup |
+| Changes | Distinct staged/unstaged versions and counts, status and selected Diff; Stage/Unstage, then Commit | Partial staging and binary/large limits explicit; error preserves draft and raw target |
+| History | Bounded graph/refs, selected OID/parents/message; files/Diff/A→B comparison | Back restores query, selection and scroll; new ref generation invalidates page/detail cursors |
+| Branches/Tags | Current/local/remote, upstream and occupancy; named selected action | No implicit stash/discard on switch; local delete differs from remote delete; tags never move silently |
+| Remotes | Name/redacted effective URLs; Fetch, explicit Pull, reviewed Push | Fetch and integration outcomes separate; uncertain writes stay Unknown until reconciled |
+| Conflicts | Operation, unresolved paths, exact base/current/incoming/result roles | Saving is not resolving; Mark resolved inspects Git state; Continue/Abort/valid Skip match actual operation |
+| Stash | Subject/scope/OID/source retention; Apply primary, Pop/Drop secondary | Apply conflict keeps source; moved rows cannot retarget removal |
+| Settings/Diagnostics | App versus repo scope; actual Git/tools/job/error/remediation | Preserve state; no raw secret/path/environment dump or automatic configuration repair |
+
+Core task sequences:
+
+1. **Enter → commit:** Open/Create → trust/identity → select unstaged content → inspect/stage → review complete staged index → compose → Commit → actual OID and refreshed state. Routine stage/commit uses direct named actions, not modal confirmation chains; the visible scope is its preview under 08.
+2. **Clone → publish:** Clone/authenticate for selected endpoint → open completed repo → create branch → stage/commit → explicit destination/ref preview → Push → per-ref result. No hidden Commit-and-Push or combined Sync behavior.
+3. **Update → resolve:** Fetch → inspect incoming/divergence → choose applicable FF/merge/rebase → review targets → integrate → resolve if needed → Mark resolved → Continue → actual result. Conflicts remain reachable after restart; clean operations do not open an empty conflict center.
+4. **Inspect → return:** History query/selection → commit → files → Diff or blame → Back. Preserve full OID/parent/query/viewport; no implicit checkout to inspect content.
+5. **Correct → recover:** Selected stash/reset/revert/amend → consequence/recovery preview → deliberate action → observed result. Recovery remains reachable from the outcome, not only a transient toast.
+
+Toolbar, menu, keyboard and palette use one semantic action registry and identical target/capability checks. Existing numbered-pane keys remain compact-navigation aliases; Ctrl+1/2 and named sidebar controls select Changes/History. `/` is list-local, never a global action while typing. Text controls own edit shortcuts and committed IME input; composition cannot leak into Commit. Visible names/tooltips make pointer use independent of memorizing TUI keys. A primary action remains at most one deliberate invocation after selection, excluding necessary text entry and risk confirmation.
+
+The complete staged-index review stays unfiltered beside the composer even when the worktree list is filtered, per [04](PRD_04_changes_commits.md#filtered-change-lists). Selecting a hidden staged entry inside that review is explicit selection, not an invisible target. Empty index, unresolved conflict, missing identity and stale/unavailable review show distinct disabled reasons. Preserve the message on every refusal or unknown outcome.
+
+Editor/terminal handoff names the raw selected file/repository and reviewed executable, using the typed platform boundary instead of interpolated shell code. External tool exit does not establish conflict resolution. External tools are optional handoffs, not required for ordinary stage/commit/push in the completed first-user client.
+
+States are consistent: loading retains context; refresh labels cached data stale; busy permits selection/scroll/text and supported cancel; empty explains scope; errors preserve input and offer Retry/Setup/Inspect; completed writes identify actual OIDs/refs; Unknown offers reconciliation instead of replay. Localization keys, English/zh-CN primary strings, accessible names/states and IME-safe text controls accompany each new surface rather than arriving only at final packaging.
+
 ## Visual system
 
 Keep MiniCon theme IDs `neutral`, `docs`, `paper`, `dark` and semantic roles: canvas, sidebar, surface, panel, border, text, muted, accent, error. Neutral is the default. Add SrcMgr roles for added/deleted/modified/conflicted files, diff additions/deletions and graph lanes. Palette values must be verified against a published upstream revision when implemented; copying local uncommitted theme values is not a stable contract.
@@ -145,7 +202,7 @@ Show query, matched/loaded counts and Clear whenever a filter is active. A no-ma
 
 Enter applies the query and returns focus to its list; it performs no mutation or existing Enter action in that same event. Up/Down while editing may move the preview selection but must not request details; result activation after leaving editing uses the existing inspection flow. Escape while editing restores the previous query, selection and scroll where their identities remain valid. Tab or clicking another pane applies the current query and changes focus without executing an item. Clicking a result applies and inspects that result once. A separate Clear control, or Escape in the filtered list when not editing, clears its filter and consumes that event. Escape inside a commit detail still returns one detail level before a later list Escape can clear the query.
 
-Queries are independent per supported list and held only for the current repository window session. Switching panes retains them; changing repository clears them. Before filtering, retain a stable selection/scroll anchor. Keep the selected identity if visible, otherwise highlight the first match; zero matches has no action target. Clearing restores the pre-filter identity where present, otherwise a valid nearby item, without an automatic mutation. On refreshed snapshots, recompute visible indices and preserve resolvable visible identities. Removed/hidden targets invalidate pending detail generations; never show a previous target's diff as the new selection. During editing, retain details only if they still match the visible selection, otherwise show a neutral selection hint without a new Git request. Apply/click may request one current detail, coalescing obsolete reads through the existing worker.
+Queries are independent per supported list and held only for the current repository window session. Switching panes retains them; changing repository clears them. Before filtering, retain a stable selection/scroll anchor. Keep the selected identity if visible, otherwise highlight the first match; zero matches has no selected-list-item action target; the full-index commit review is a separate scope. Clearing restores the pre-filter identity where present, otherwise a valid nearby item, without an automatic mutation. On refreshed snapshots, recompute visible indices and preserve resolvable visible identities. Removed/hidden targets invalidate pending detail generations; never show a previous target's diff as the new selection. During editing, retain details only if they still match the visible selection, otherwise show a neutral selection hint without a new Git request. Apply/click may request one current detail, coalescing obsolete reads through the existing worker.
 
 Typing, deleting, clearing and cancelling use already loaded rows and launch no Git, database or network job. Do not duplicate full snapshots/diffs or introduce idle polling. New snapshots may arrive during editing; cancellation restores anchors only if still valid. Action rules for a filtered Files list are owned by [04](PRD_04_changes_commits.md#filtered-change-lists). Version sequencing and evidence live in [the 0.0.6 plan](../plan/plan-0.0.6.md).
 

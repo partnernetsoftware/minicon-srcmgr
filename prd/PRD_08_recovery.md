@@ -46,6 +46,8 @@ Freshness checks detect observed changes and Git supplies its native locks/condi
 | Remote publication/deletion | push, lease rewrite, delete remote ref | Destination/ref preview; lease rewrite and delete require a distinct confirmation |
 | Irrecoverable deletion | remove untracked content, delete worktree files, delete local safety copy | Typed target confirmation and explicit no-guaranteed-recovery warning |
 
+Pointer and keyboard confirmations share the same prepared plan: use a named consequence-bearing confirm button for pointer input and the established explicit keyboard confirmation, with Cancel initially focused. Ordinary stage/unstage/create-branch/commit uses direct named actions and visible target/result, not a generic confirmation modal. Irrecoverable typed-target requirements remain unchanged.
+
 No permanent “never warn again” switch for destructive classes. Keyboard Enter cannot confirm while a modal is still receiving its opening keypress; destructive default focus is Cancel. Snapshot/backup creation happens only after a valid confirmation and before its associated destructive write; it is not a side effect of browsing a preview. The user sees whether a durable safety copy exists before proceeding. Each destructive or irrecoverable row in the risk table shows one recovery label as part of its preview, before confirmation: restorable from a recovery ref or safety copy, restorable with the limits stated, or not restorable. The label is not a help link.
 
 ## Conflict center

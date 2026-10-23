@@ -366,7 +366,7 @@ The 0.0.5 scope, work sequence, package status and execution evidence live in [p
 
 ### 0.0.6 proposed next-version design
 
-The [0.0.6 plan](../plan/plan-0.0.6.md) selects quick filtering of existing file, branch and loaded-commit lists, with explicit action scope and changed-path evidence. It is a product design, not an implemented or qualified version. Current development remains 0.0.5. Existing reference-host blockers and quality budgets are unchanged; no package version, release status or milestone completion follows from this plan.
+The revised [0.0.6 plan](../plan/plan-0.0.6.md) combines repository entry/context, existing local Git actions and full-index commit review; quick filtering supports that user task. The [0.1.0 roadmap](../plan/roadmap-0.1.0.md) allocates standard remotes, integrations/conflicts and everyday history/ref work before first-user beta delivery. These are product plans, not implemented or qualified releases. Current package version remains 0.0.5; existing budgets and missing qualification prerequisites are not waived.
 
 ### Requirements baseline 1.5 review disposition
 
@@ -381,3 +381,11 @@ Review scope: the 15-module ownership/dependency map, current-entry status state
 | A past third-party memory observation could imply a controlled product comparison | 01 labels it unmatched historical context and points to scoped SrcMgr evidence | Reference-environment gates remain open |
 
 Selected verification: documentation ownership/links, scope/version consistency and diff review. Stop after those pass; no product source, build, dependency, functional-test or long-session replay is justified by this review alone.
+
+### Requirements baseline 1.6 · first-user product route
+
+The owner prioritizes a client people can actually use at 0.1.0, rather than versions centered only on small isolated controls. 01 owns its Must/Next task tree and explicit limited-cell beta meaning; 10 owns concrete workspace surfaces and complete success/refusal/return journeys; 12 owns runnable first-user delivery; the linked roadmap owns 0.0.x allocation. The earlier baseline-1.5 review remains historical, including its then-proposed clear-first commit rule. 04 now permits filtered-view commits only with a complete unfiltered staged-index review; no implementation PASS follows from this design revision.
+
+First-user readiness requires the existing actual-state, response, memory, CPU, recovery and task-study evidence for the declared slice. Plan one integrated initial collaboration endurance qualification on its native cell under the existing eight-hour scope; do not rerun it per feature, document edit or intermediate version. Subsequent candidates reuse unaffected evidence and check only invalidated contracts. Missing qualified display/storage, signing or native access is tracked early rather than discovered at the final release step. This is not permission to relabel unsuitable-host measurements or to drop required Must tasks.
+
+Selected checks for this documentation revision: owner/links, task-to-version coverage, conflicting active scope/interaction wording and unchanged package metadata. Stop after those pass. No build, functional test, GUI calibration or long run is selected for this edit.

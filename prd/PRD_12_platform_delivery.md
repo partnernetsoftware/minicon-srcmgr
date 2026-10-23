@@ -52,6 +52,16 @@ Freeze source before qualification. Build once per cell, package/sign, then hash
 
 A receipt records source/artifact identity, environment, actual ISA/translation, enabled features, test cases, timestamps and verdict. Missing native court, signing authority or evidence is BLOCKED. Do not fabricate a pass or silently drop a target. M3 stable promotion requires every baseline requirement, all six cells and explicit human authority for the named version. Creating this repository is authorized; publishing a future binary version is not authorized by this PRD task. Promotion publishes the already qualified bytes without rebuilding.
 
+## 0.1.0 first-user beta delivery target
+
+Status: planned, not built, signed, qualified or published. Product admission is owned by [01](PRD_01_product.md#010-first-user-feature-tree) and sequencing by [the roadmap](../plan/roadmap-0.1.0.md). Existing 0.0.x source releases retain their original scope; a source archive alone does not satisfy the new first-user runnable-client target.
+
+The first named beta cell is **Windows x86_64** at this document's supported OS floor. Supply the signed portable ZIP, directly runnable executable, notices, actual runtime/Git prerequisites, concise start/known-limits instructions, version/source/artifact identity and a feedback path. A clean user profile must launch without Rust, a developer SDK, a mandatory account or admin installation. Git remains separately installed; missing Git has actionable guidance. Returning users keep settings/drafts; archive extraction is not permission to overwrite repository data.
+
+This explicitly scoped early beta does not require claiming full M2/M3 or native qualification for the other five cells. List their status accurately; keep their existing baseline requirements. The Windows x86_64 candidate must meet all applicable functional, security, accessibility, IME/DPI, performance, stability, Authenticode and malware-scan gates on its declared cell. Statements above about both Windows ISAs apply to full Windows baseline delivery; each early-beta artifact still needs its own native/signing evidence. Do not bypass signatures or weaken a core quality gate for speed. M3 stable promotion still needs the entire baseline and all six cells.
+
+Package/signing procedure, clean-launch environment and reference display/storage access are implementation dependencies investigated from 0.0.6, not paperwork deferred until 0.1.0. Qualify the final signed candidate identity, reuse unaffected evidence only within its actual scope, and publish only under applicable named release authority. This design task provisions no keys, installs no package, publishes no binary and grants no unrelated account access.
+
 ## Updates
 
 Default is no background check. Manual Check for updates shows channel/version/release notes and performs no download until chosen. A later optional scheduled check requires opt-in. Verify trusted signed metadata binding repository/channel/version/OS/ISA/length/hash, then verify downloaded bytes and applicable OS signatures. A hash fetched from the same unauthenticated location is insufficient trust. Trust-root/key provisioning and rotation must be designed/tested before updater implementation; absent roots disable in-app installation and offer a release-page link.

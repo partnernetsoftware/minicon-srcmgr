@@ -19,7 +19,7 @@ P1–P4 have implementation and matching functional evidence for the Round 4 fro
 3. Reuse the completed actual-command CPU comparison in Round 7. Desktop-frame diagnostics ran but did not pass; the active remote display is 32 Hz, not the required 60 Hz reference. Obtain the matching environment before reference response qualification rather than repeat timings on this session. Retain source/dirty-input, artifact and harness identity with each receipt.
 4. Close each acceptance row with PASS/FAIL/BLOCKED and a scoped receipt. Resolve the reference-environment prerequisites before claiming their budgets passed. Publish only after the declared gates pass and source/release identity is verified.
 
-Stop adding features while these conditions remain open. Historical rounds below explain earlier decisions; this section and the tracking table are the current handoff.
+Keep this 0.0.5 checkpoint bounded; do not add unrelated features to clear its gates. The owner has separately directed the [0.0.x → 0.1.0 usable-client route](roadmap-0.1.0.md). Missing performance-host prerequisites block certification/publication claims, not independent work against an identified source checkpoint; a missing loss guard still blocks its affected write. Historical rounds below explain earlier decisions; this section and the tracking table are the current handoff.
 
 ## Outcome and scope
 

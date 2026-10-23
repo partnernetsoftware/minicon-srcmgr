@@ -136,7 +136,7 @@ Type: **Differentiator** is a stated SrcMgr advantage (trust, footprint, keyboar
 | 1 Triage | One tab per repository and per linked worktree | Each tab binds one identity; tabs do not share state | Core | M1 tabs, M2 worktree tabs | [03](PRD_03_workspace.md), [10](PRD_10_desktop_ux.md) | — |
 | 1 Triage | Repository settings with visible scope | Know which configuration applies and where a write goes | Core | M1 | [03](PRD_03_workspace.md), [13](PRD_13_state_control.md) | — |
 | 2 Preview | Mutation preview naming exact paths, refs and OIDs; a stale preview cannot run | The preview is the authorization, not a generic question | Differentiator | M1 | [08](PRD_08_recovery.md) | partial (discard names its file or hunk) |
-| 2 Preview | Confirmations state the consequence and accept only `y`; `n` or Esc cancels, and other keys keep the prompt open | Users read what happens, and Enter cannot confirm by accident | Differentiator | M1 | [08](PRD_08_recovery.md) | partial (discard and detached checkout ask first) |
+| 2 Preview | Risk confirmations state the consequence; pointer uses a named confirm action, keyboard `y` confirms and `n`/Esc cancels; opening Enter cannot accidentally confirm | Users read what happens, and Enter cannot confirm by accident | Differentiator | M1 | [08](PRD_08_recovery.md) | partial (discard and detached checkout ask first) |
 | 2 Preview | Refusal shows Git's first error line and changes nothing | The reason is visible and state is preserved | Core | M1 | [06](PRD_06_references.md), [08](PRD_08_recovery.md) | yes |
 | 3 Stage | Staged and unstaged versions shown independently | A partially staged file is two selections, not one checkbox | Core | M1 | [04](PRD_04_changes_commits.md) | yes |
 | 3 Stage | Stage and unstage whole files, hunks and line ranges | Commit exactly the chosen content | Core | M1 files and hunks; M3 lines (delivered early) | [04](PRD_04_changes_commits.md) | yes |
@@ -204,9 +204,76 @@ A candidate row becomes scope only through a change to this module, the owner's 
 
 ## Near-term product admission
 
-The next proposed increment is [0.0.6](../plan/plan-0.0.6.md): find an item in the existing Files, Branches or loaded Commits list, inspect the intended content, act through existing guards and return without losing context. This advances Jobs 3/5/6 while preserving Job 7. The core is a complete daily task, not a count of search controls. Its loaded-commit filter is only a bounded subset of HIST-02; advanced history search stays later. The task tree and unresolved UX tradeoffs in the plan remain proposed until settled with the owner; this does not start implementation or bump the package version.
+The owner-directed near-term goal is **0.1.0: a usable daily Git client for real users**, reached through focused 0.0.x increments. A quick filter alone is too small a product outcome for 0.0.6. Its revised [plan](../plan/plan-0.0.6.md) delivers local entry, repository switching and a complete inspect/stage/compose/commit loop; quick location supports that loop. The [0.1.0 roadmap](../plan/roadmap-0.1.0.md) sequences collaboration, conflict recovery, everyday history/ref management and first-user delivery. This design does not start implementation or change the current package version.
 
 S3-backed Git remotes are a future collaboration candidate owned by [07](PRD_07_remotes.md#candidate-object-storage-remotes). Admission requires the ordinary remote/trust/result path and provider-specific qualification; no version is assigned. A Git remote helper does not become an SVN-style backend under [15](PRD_15_vcs_backends.md#vcs-versus-remote-transport). Core local work must remain independent of any provider/helper/account, and unused integrations add no process, polling or credential discovery.
+
+## 0.1.0 first-user feature tree
+
+This tree defines the first-user product target. It selects concrete behaviors from the existing owners, including selected later-milestone functions; it neither promises full feature parity nor replaces the cumulative M0–M3 scope. Initial runtime delivery targets the Windows x86_64 cell under 12. The six native cells remain the product baseline; unqualified cells are labeled unavailable, not advertised as supported by 0.1.0.
+
+```text
+0.1.0 · complete ordinary Git work in a small, responsive native client
+├── Enter and orient
+│   ├── Open / Create / Clone; recent repositories; repository tabs
+│   ├── Selected Git, identity setup, trust and actionable setup errors
+│   └── Active repository / branch / operation / freshness always visible
+├── Prepare and commit
+│   ├── Distinct unstaged / staged / untracked / conflicted states
+│   ├── Exact file / hunk / line stage and unstage; safe discard and ignore
+│   ├── Full-index review, durable message draft, commit, sign-off and amend
+│   └── Open file/editor/terminal; clear result with actual OID
+├── Review and navigate
+│   ├── Incremental commit graph, refs, commit → files → diff and A → B compare
+│   ├── Quick loaded filters; bounded message/OID history query with continuation
+│   └── On-demand file history and committed-text blame
+├── Work on branches
+│   ├── Create / switch / rename / merged-safe delete; upstream mapping
+│   ├── Inspect remote branches; create local tracking branch explicitly
+│   └── Lightweight / annotated tags, local deletion and explicit tag push
+├── Exchange code
+│   ├── Clone / remote config / Fetch / explicit Pull / reviewed Push
+│   ├── HTTPS helper and SSH agent, progress, cancellation and useful errors
+│   └── Visible divergence and per-ref actual / unknown outcome
+├── Integrate and recover
+│   ├── Explicit merge / rebase; incoming review and current operation state
+│   ├── Conflict sides/result, explicit resolution, Continue / Abort / valid Skip
+│   ├── Stash create/list/apply/pop/drop with intended content scope
+│   └── Ordinary cherry-pick / revert / soft, mixed, guarded hard reset
+└── Use every day
+    ├── Keyboard + pointer, readable layouts, English + Simplified Chinese
+    ├── Missing LFS/submodule/tool capability explained without content damage
+    ├── Small footprint, fast feedback, stable sessions and durable drafts
+    └── Runnable package, first-run guidance, bounded diagnostics and feedback
+```
+
+### First-user admission matrix
+
+Must means a release-blocking 0.1.0 task, not that it is already implemented. The version allocations and execution status live only in the roadmap/plans. Existing historical Shipped rows above remain scoped to their named source release.
+
+| User task / tier | 0.1.0 completion boundary | Behavior owner |
+|---|---|---|
+| Enter a project · Must | Open/init/clone, recents, tabs, missing Git/identity guidance, no required hosting account | 03/07/11/13 |
+| Make a precise commit · Must | Independent index/worktree inspection, file/hunk/line stage, draft, full-index commit review, sign-off and explicit amend | 04/08/10/13 |
+| Understand a change · Must | Bounded graph/ref display, first-parent/root detail, explicit merge parent, two-commit comparison and message/OID history query | 05/10 |
+| Trace an ordinary file · Must | Bounded file history and on-demand blame at a selected committed text revision; binary/large/rename limits visible | 05 |
+| Manage a task branch/release tag · Must | Local CRUD with dirty/occupied guards, upstream and tracking setup, lightweight/annotated tags; no silent remote deletion | 06/07/09 |
+| Exchange work with another developer · Must | HTTPS/SSH clone/fetch/pull/push with actual ref outcomes, credentials delegated to trusted existing providers | 07/11 |
+| Finish a conflicted integration · Must | Merge/rebase preview, text resolution and reviewed external tool, special conflict explanation, restart-safe Continue/Abort and applicable Skip | 06/08/11/13 |
+| Park or correct work · Must | Stash scope/list/apply/pop/drop; normal single-commit pick/revert; reset modes with actual recovery limits | 06/08/09 |
+| Operate comfortably · Must | Named pointer actions and keyboard paths; CJK message input, English/zh-CN primary flows, reachable settings and diagnostics | 10/11/13 |
+| Trust daily use and installation · Must | Actual signed native package, clean-user launch, usability and applicable quality evidence, visible known limits | 12/14 |
+| Existing submodules/LFS/worktrees · Compatibility floor | Detect and name state; navigate an initialized trusted child/existing worktree; preserve pointer/payload distinction. Unqualified materialization/recursive writes are explicitly unavailable | 03/09/11 |
+| Advanced convenience · Next after first usable baseline | Interactive rebase editor; ordered multi-commit editing; full LFS administration/submodule management; worktree create/remove; advanced author/date/ref/path query forms; patch exchange; broader native cells | 05/06/09/12 |
+| Separate candidates · Unscheduled | S3 provider, SVN/other VCS, hosting review UI, arbitrary scripts and Git Flow | 01/07/15; existing exclusions still apply |
+
+"Must" cannot be silently changed to "not supported" to hit the version number. A safely refused edge case can satisfy its owner's explicit safe-failure boundary; an entirely missing required user task cannot. If the task needs more work, use additional 0.0.x checkpoints or change scope explicitly with the owner. No release date or implementation-complete claim follows from this tree.
+
+### Benchmark interpretation
+
+Use lazygit for efficient keyboard workflows, the reviewed desktop reference for discoverable repository/history/remote workflows, and Git SCM documentation for actual Git meanings. Git SCM is a documentation/command reference, not a single competing GUI. Review evidence on 2026-10-24 confirms that these references motivate a complete workflow rather than feature-count parity. No reference introduces mandatory accounts, custom script execution, unsafe force, bundled services or a large idle footprint into SrcMgr.
+
+Public sources for the checklist: [lazygit action reference](https://github.com/jesseduffield/lazygit/blob/master/docs/keybindings/Keybindings_en.md), [Git GUI](https://git-scm.com/docs/git-gui), [Git remotes](https://git-scm.com/book/en/v2/Git-Basics-Working-with-Remotes) and [Git merge-tool behavior](https://git-scm.com/docs/git-mergetool). Preserve the existing pinned lazygit reference for reproducible task comparisons; a current documentation review does not silently repin it. Desktop-reference observations remain internal product inputs described generically above.
 
 ## Cumulative milestones and scope
 

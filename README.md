@@ -6,7 +6,7 @@ A lightweight, native source-control GUI for Windows, macOS and Linux on x86_64 
 
 Development target: **0.0.5**, with local workflow improvements and resource, response and stability qualification in progress. Scope, current evidence and open release gates are tracked in [the implementation plan](plan/plan-0.0.5.md).
 
-Next-version design: [0.0.6 quick-filter plan](plan/plan-0.0.6.md), proposed and not implemented.
+Next-version design: [0.0.6 local-client plan](plan/plan-0.0.6.md) and [the 0.0.x → 0.1.0 usable-client roadmap](plan/roadmap-0.1.0.md), planned and not implemented. The first-user feature tree and UI/UX remain owned by the PRDs; current package version and published status are unchanged.
 
 Start with [PRD.md](PRD.md) for product scope, capability ownership and delivery gates. The [PRD series](prd/) defines behavior and acceptance criteria. [AGENTS.md](AGENTS.md) defines repository working rules.
 
