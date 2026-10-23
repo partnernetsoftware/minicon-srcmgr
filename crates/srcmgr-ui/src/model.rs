@@ -180,6 +180,7 @@ pub enum MainRequest {
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Job {
+    OpenRepository(NativePath),
     StashAction { id: String, expected: Vec<String>, operation: String },
     /// Prepare a target-bound, expiring confirmation on the worker.
     Prepare { generation: u64, action: Box<Job> },
@@ -242,6 +243,7 @@ pub enum Job {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reply {
+    RepositoryOpened(Snapshot),
     Committed(Snapshot),
     BranchCreated(Snapshot),
     DraftSaved(Option<String>),
@@ -264,6 +266,7 @@ pub enum Reply {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PromptAction {
+    OpenRepository,
     Commit,
     CreateBranch,
     SaveDraft,

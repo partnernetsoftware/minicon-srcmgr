@@ -21,6 +21,20 @@ pub struct WindowBackend {
 impl Backend for WindowBackend {
     fn run(&mut self, job: Job) -> Reply {
         let result = match job {
+            Job::OpenRepository(path) => {
+                let opened = (|| {
+                    let worktree = crate::canonical_worktree(std::path::Path::new(path.as_os_str()))?;
+                    let candidate = Self { options: self.options.clone(), worktree, prepared: None };
+                    let mut snapshot = candidate.snapshot()?;
+                    let recent = open_profile_store(&candidate.options)?.remember_repository(BACKEND_GIT, &candidate.worktree);
+                    if let Err(error) = recent {
+                        snapshot.stage_result = Some(format!("Recent list not updated: {error}; repository data was not changed"));
+                    }
+                    *self = candidate;
+                    Ok(Reply::RepositoryOpened(snapshot))
+                })();
+                Ok(opened.unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::OpenRepository, text }))
+            }
             Job::CancelPrepared => { self.prepared = None; Ok(Reply::NoChange) }
             Job::Main { generation, request } => {
                 let context = match &request {
@@ -105,10 +119,7 @@ impl WindowBackend {
             .collect();
         let key = repository_key(&self.worktree)?;
         let draft = store.get_draft(BACKEND_GIT, &key).map_err(|e| e.to_string())?;
-        let name = self
-            .worktree
-            .file_name()
-            .map_or_else(|| "repository".to_owned(), |name| name.to_string_lossy().into_owned());
+        let name = NativePath::new(identity.worktree_root.as_os_str()).display_label();
         let mut snapshot = Snapshot::new(format!("MiniCon SrcMgr - {name}"), &status, branches, commits, draft);
         snapshot.stashes = srcmgr_git::stash_list(installation, identity).map_err(|e| e.to_string())?.into_iter()
             .map(|s| srcmgr_ui::StashRow { id: s.id, subject: s.subject }).collect();
@@ -117,6 +128,7 @@ impl WindowBackend {
 
     fn perform(&mut self, job: Job, ticket: Option<&str>) -> Result<Reply, String> {
         Ok(match job {
+            Job::OpenRepository(_) => return Err("repository entry must use its isolated worker path".to_owned()),
             Job::StashAction { id, expected, operation } => {
                 let session = open_trusted(&self.options, &self.worktree)?;
                 let ticket = ticket.ok_or_else(|| "stash action requires a consumed confirmation".to_owned())?;
@@ -400,6 +412,36 @@ mod tests {
         fs::write(repo.join("a.txt"), "two\n").expect("modify");
         fs::write(repo.join("u.txt"), "new\n").expect("untracked");
         repo
+    }
+
+    #[test]
+    fn open_repository_refusal_preserves_target_then_success_routes_only_new_repo() {
+        let root = Scratch::new("open-repository");
+        let left = repository(&root.0, "left");
+        let right = repository(&root.0, "right");
+        let mut active = backend(&root.0, &left, true);
+        let refused = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(right.as_os_str())));
+        assert!(matches!(refused, Reply::PromptFailed { action: srcmgr_ui::PromptAction::OpenRepository, .. }));
+        assert_eq!(active.worktree, left);
+        let _granted = backend(&root.0, &right, true);
+        {
+            let mut store = crate::open_profile_store(&active.options).unwrap();
+            store.put_draft("git", &crate::repository_key(&left).unwrap(), "left draft").unwrap();
+            store.put_draft("git", &crate::repository_key(&right).unwrap(), "right draft").unwrap();
+        }
+        let opened = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(right.as_os_str())));
+        let Reply::RepositoryOpened(snapshot) = opened else { panic!("expected repository opened"); };
+        assert_eq!(snapshot.draft.as_deref(), Some("right draft"));
+        assert_eq!(active.worktree, fs::canonicalize(&right).unwrap());
+        assert!(matches!(active.run(Job::SetFile { path: srcmgr_domain::NativePath::new("a.txt"), stage: true }), Reply::Full(_)));
+        for (repo, expected) in [(&left, b"one\n".as_slice()), (&right, b"two\n".as_slice())] {
+            let output = Command::new(git_executable()).current_dir(repo).args(["show", ":a.txt"]).output().unwrap();
+            assert!(output.status.success());
+            assert_eq!(output.stdout, expected);
+        }
+        let store = crate::open_profile_store(&active.options).unwrap();
+        assert_eq!(store.get_draft("git", &crate::repository_key(&left).unwrap()).unwrap().as_deref(), Some("left draft"));
+        assert_eq!(store.recent_repositories().unwrap()[0].native_path().unwrap().as_os_str(), fs::canonicalize(&right).unwrap().as_os_str());
     }
 
     fn backend(root: &Path, repo: &Path, grant: bool) -> WindowBackend {

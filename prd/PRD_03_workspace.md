@@ -48,6 +48,10 @@ Ignore from the file list previews a literal escaped rule and destination: track
 | REPO-04 · freshness | Displayed state identifies its generation/freshness | QA-J05 lost watch, focus, external commit | Stale banner and explicit refresh | 02, 13 | Continuous remote polling |
 | REPO-05 · configure | Config/ignore changes preserve scope and exact intended paths | QA-J01/J08 scoped settings, escaped ignore and concurrent edit fixtures | Reject stale/ambiguous edit; preserve existing keys/rules | 04, 11, 13 | Automatically untrack ignored files |
 
+## Current 0.0.6 entry slice
+
+Partial implementation: the existing trusted repository window can request another path through Open/Ctrl+O. The worker verifies discovery/trust and builds its snapshot before replacing the active target. A refusal preserves the original target and submitted path. Entry cannot overtake active/queued old-repository work; successful entry loads that worktree's draft and rejects obsolete details. Recents are passive bounded metadata under 13, not trust grants. Native title/context updates identify the selected worktree. This is not yet Welcome, init, a graphical trust grant or retained multi-repository tabs. Implementation/evidence and the remaining task tree live in [the active plan](../plan/plan-0.0.6.md).
+
 ## Acceptance details
 
 - Opening a linked worktree and its parent shows separate HEAD/index state; opening the same worktree through an alias focuses the existing tab.

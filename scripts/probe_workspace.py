@@ -109,7 +109,10 @@ def native():
                     user.AttachThreadInput(thread, foreground_thread, False)
             if user.GetForegroundWindow() != hwnd:
                 raise RuntimeError(f"activation refused: no input sent; attached={bool(attached)}, set_return={bool(activated)}, foreground_before={foreground_before}, foreground_after={user.GetForegroundWindow()}, target={hwnd}, target_visible={bool(user.IsWindowVisible(hwnd))}")
-        if not ctrl and (0x30 <= vk <= 0x39 or 0x41 <= vk <= 0x5A):
+        if isinstance(vk, str):
+            raw = vk.encode("utf-16-le", errors="surrogatepass")
+            sequence = [(0, int.from_bytes(raw[i:i + 2], "little"), flag) for i in range(0, len(raw), 2) for flag in (4, 6)]
+        elif not ctrl and (0x30 <= vk <= 0x39 or 0x41 <= vk <= 0x5A):
             # Send the intended literal character without changing the target
             # thread's keyboard layout or relying on an IME/CapsLock state.
             scan = ord(chr(vk).lower())
@@ -584,6 +587,85 @@ def workflow(git, repo, root, hwnd, user, key):
     return {"git_oracles": "PASS: stage/index/worktree; discard cancel/copy; selected apply retains source; stale drop preserves list; exact pop/drop preserve other entries/worktree", "recovery_acl": acl, "captures": captures, "visual_verdict": "REVIEW-REQUIRED: inspect captured labels/focus/return; Git oracles do not prove rendering"}
 
 
+def entry_smoke(git, repo, other, root, prefix, hwnd, user, gdi, key):
+    """Actual Open/input, index and draft routing, in two owned fixtures."""
+    import sqlite3
+    from PIL import ImageGrab
+
+    def run(path, *args):
+        return sp.run([git, "-C", str(path), *args], check=True, capture_output=True).stdout
+
+    def normalize(path):
+        return os.path.normcase(str(path).removeprefix("\\\\?\\"))
+
+    def draft(path):
+        with sqlite3.connect(root / "profile" / "profile.sqlite3") as db:
+            rows = db.execute("SELECT repository, body FROM drafts WHERE backend='git'").fetchall()
+        return next((body.encode() for location, body in rows if normalize(location) == normalize(path / ".git")), None)
+
+    def wait(predicate, label):
+        until = time.monotonic() + 15
+        while time.monotonic() < until:
+            if predicate(): return
+            time.sleep(0.05)
+        raise RuntimeError(label)
+
+    def recent_is(path):
+        with sqlite3.connect(root / "profile" / "profile.sqlite3") as db:
+            value = db.execute("SELECT value FROM settings WHERE key='workspace.recents.v1'").fetchone()
+        return value and normalize(bytes.fromhex(value[0].splitlines()[0].split("\t")[2]).decode("utf-16-le")) == normalize(path)
+
+    def open_repo(path):
+        wait_quiet(hwnd, user, gdi)
+        key(hwnd, 0x4F, ctrl=True)
+        key(hwnd, str(path))
+        key(hwnd, 0x0D)
+        wait(lambda: recent_is(path), "Open did not acknowledge the intended recent worktree")
+        user.GetWindowTextW.argtypes = [w.HWND, w.LPWSTR, c.c_int]
+        def title_matches():
+            title = c.create_unicode_buffer(32768)
+            user.GetWindowTextW(hwnd, title, len(title))
+            return normalize(title.value.removeprefix("MiniCon SrcMgr - ")) == normalize(path)
+        wait(title_matches, "native window title did not identify the opened worktree")
+        wait_quiet(hwnd, user, gdi)
+        time.sleep(0.2)  # Functional settling only; never reported as latency.
+
+    def capture(name):
+        wait_quiet(hwnd, user, gdi)
+        time.sleep(0.15)
+        if user.GetForegroundWindow() != hwnd:
+            raise RuntimeError("cannot capture entry outside the owned foreground window")
+        bounds = w.RECT()
+        user.GetWindowRect.argtypes = [w.HWND, c.POINTER(w.RECT)]
+        if not user.GetWindowRect(hwnd, c.byref(bounds)):
+            raise c.WinError(c.get_last_error())
+        ImageGrab.grab(bbox=(bounds.left, bounds.top, bounds.right, bounds.bottom)).save(root / name)
+
+    source_head, source_index = run(repo, "rev-parse", "HEAD"), run(repo, "write-tree")
+    source_bytes = (repo / "f00000.txt").read_bytes()
+    target_bytes = (other / "f00000.txt").read_bytes()
+    open_repo(other)
+    key(hwnd, 0x20)
+    wait(lambda: run(other, "show", ":f00000.txt") == target_bytes, "stage did not target the opened worktree")
+    key(hwnd, 0x43)
+    key(hwnd, " edited")
+    key(hwnd, 0x1B)
+    wait(lambda: draft(other) == b"target draft edited", "target GUI draft not acknowledged")
+    capture("entry-target.png")
+    assert draft(repo) == b"source draft", "source draft was overwritten"
+    assert run(repo, "write-tree") == source_index, "source index changed after Open"
+    open_repo(repo)
+    key(hwnd, 0x43)
+    key(hwnd, " resumed")
+    key(hwnd, 0x1B)
+    wait(lambda: draft(repo) == b"source draft resumed", "return did not restore the source draft")
+    assert draft(other) == b"target draft edited", "return overwrote target draft"
+    assert run(repo, "rev-parse", "HEAD") == source_head and run(repo, "write-tree") == source_index
+    assert (repo / "f00000.txt").read_bytes() == source_bytes
+    capture("entry-return.png")
+    return {"git_state": "PASS: selected stage touched only target index; source HEAD/index/worktree preserved", "drafts": "PASS: independent acknowledged drafts after Open and return", "captures": ["entry-target.png", "entry-return.png"], "visual_verdict": "REVIEW-REQUIRED", "scope": "Two trusted owned fixtures; no tabs, first-run trust, init or latency claim"}
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--exe", required=True)
@@ -604,6 +686,7 @@ def main():
     p.add_argument("--soak-seconds", type=int, default=0)
     p.add_argument("--exercise-faults", action="store_true", help="inject supported failure/cancel cases only in the owned sustained fixture")
     p.add_argument("--workflow", action="store_true", help="run changed-path smoke and capture screens; requires Pillow and <= 200 commits")
+    p.add_argument("--entry-smoke", action="store_true", help="two-owned-repository Open/index/draft journey; requires small fixture and skip-latency")
     args = p.parse_args()
     if os.name != "nt":
         p.error("this native probe requires Windows")
@@ -615,6 +698,8 @@ def main():
         p.error("workflow smoke requires 1..200 commits and at least one file")
     if args.skip_latency and args.desktop_frames:
         p.error("skip-latency and desktop-frames cannot be combined")
+    if args.entry_smoke and (max(args.files, args.commits) > 200 or not args.skip_latency or args.cycles or args.soak_seconds or args.workflow or args.exercise_faults or args.postcommit_profile_fault):
+        p.error("entry-smoke requires <=200 files/commits, skip-latency and no other workflow/fault/soak mode")
     if args.busy_latency and not (args.tree and args.desktop_frames):
         p.error("busy-latency requires tree accounting and desktop-frames")
     if args.selection_latency and (not args.desktop_frames or min(args.files, args.commits) < 2):
@@ -638,6 +723,18 @@ def main():
     prefix = [exe, "--git", args.git, "--profile", str(root / "profile")]
     sp.run(prefix + ["trust", "grant", str(repo)], check=True, capture_output=True)
     sp.run(prefix + ["setting", "set", "history.limit", "200"], check=True, capture_output=True)
+    other = None
+    if args.entry_smoke:
+        other_root = root / "entry-other"
+        other_root.mkdir()
+        other = fixture(args.git, other_root, 5, 2)
+        target = other_root / "target-repo"
+        other.rename(target)
+        other = target.resolve()
+        sp.run([args.git, "-C", str(other), "branch", "-m", "entry-target"], check=True, capture_output=True)
+        sp.run(prefix + ["trust", "grant", str(other)], check=True, capture_output=True)
+        for path, text in ((repo, "source draft"), (other, "target draft")):
+            sp.run(prefix + ["draft", str(path), "save", "-m", text], check=True, capture_output=True)
     user, gdi, sample, key = native()
     previous = user.GetForegroundWindow()
     from windows_job_probe import OwnedTree
@@ -764,6 +861,8 @@ def main():
             receipt["latency_ms"] = desktop_focus(hwnd, user, gdi, key, points, receipt, tree if args.busy_latency else None, regions)
         if args.workflow:
             receipt["workflow"] = workflow(args.git, repo, root, hwnd, user, key)
+        if args.entry_smoke:
+            receipt["entry"] = entry_smoke(args.git, repo, other, root, prefix, hwnd, user, gdi, key)
         wait_quiet(hwnd, user, gdi)
         time.sleep(args.settle_seconds)
         initial_settled = sample(child.pid)

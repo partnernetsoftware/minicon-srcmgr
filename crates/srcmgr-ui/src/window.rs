@@ -37,6 +37,7 @@ const SELECTION_DIM: u32 = 0x0033_3740;
 const MUTED_TEXT: u32 = 0x0080_8080;
 
 const HELP_LINES: &[&str] = &[
+    "O            open another trusted repository (or click Open)",
     "1 2 3 4      focus Status, Files, Branches or Commits",
     "Tab          next pane (Shift+Tab previous)",
     "Up/Down j/k  move in a list, or the cursor in the main panel",
@@ -139,6 +140,7 @@ impl StatusWindow {
         let scale = window.scale_factor()?;
         let hit = hit_test(&self.workspace, surface, (x * scale).round() as i64, (y * scale).round() as i64);
         let effect = match (gesture, hit) {
+            (Gesture::Click, Hit::Open) => self.workspace.request_open(),
             (Gesture::Click, Hit::Panel(pane)) => self.workspace.click_row(pane, usize::MAX),
             (Gesture::Click, Hit::Row(pane, index)) => self.workspace.click_row(pane, index),
             (Gesture::Click, Hit::Main(line)) => self.workspace.click_main(line),
@@ -182,6 +184,10 @@ impl StatusWindow {
             Effect::Nothing => PixelWindowDirective::Continue,
             Effect::Quit => PixelWindowDirective::Exit,
             Effect::Send(job) => {
+                if matches!(job, Job::OpenRepository(_)) && (self.pending != 0 || !self.queued.is_empty()) {
+                    let _ = self.workspace.reply(job_failure(&job, "Wait for current repository work to finish, then retry Open"));
+                    return PixelWindowDirective::Continue;
+                }
                 if (matches!(job, Job::Main { .. }) && self.queued.back().is_some_and(|last| matches!(last, Job::Main { .. })))
                     || (matches!(job, Job::CancelPrepared) && self.queued.back() == Some(&Job::CancelPrepared)) {
                     *self.queued.back_mut().unwrap() = job;
@@ -250,6 +256,7 @@ impl StatusWindow {
 fn job_failure(job: &Job, message: &str) -> Reply {
     let text = message.to_owned();
     match job {
+        Job::OpenRepository(_) => Reply::PromptFailed { action: PromptAction::OpenRepository, text },
         Job::Main { generation, .. } => Reply::MainFailed { generation: *generation, text },
         Job::Prepare { generation, .. } => Reply::ConfirmationFailed { generation: *generation, text },
         Job::Commit(_) => Reply::PromptFailed { action: PromptAction::Commit, text },
@@ -352,7 +359,11 @@ impl PixelWindowApplication for StatusWindow {
                 let mut directive = PixelWindowDirective::Continue;
                 for reply in replies {
                     self.pending = self.pending.saturating_sub(1);
+                    let opened = matches!(&reply, Reply::RepositoryOpened(_));
                     let effect = self.workspace.reply(reply);
+                    if opened {
+                        window.set_title(&self.workspace.snapshot().title);
+                    }
                     if matches!(self.dispatch(effect), PixelWindowDirective::Exit) {
                         directive = PixelWindowDirective::Exit;
                     }
@@ -504,7 +515,7 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
     draws.push(Draw::Text {
         x: margin,
         baseline: margin + ascent,
-        text: fit(&header, grid.columns(width - 2 * margin).saturating_sub(14)),
+        text: fit(&header, grid.columns(width - 2 * margin).saturating_sub(29)),
         colour: colour(Tone::Heading),
     });
     if pending > 0 {
@@ -512,6 +523,13 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         draws.push(Draw::Text { x: width - margin - (grid.advance * 13.0) as i64, baseline: margin + ascent, text: "Working".to_owned(), colour: colour(Tone::Heading) });
         draws.push(Draw::Rect { rect: Rect { x: width - margin - size, y: margin, width: size, height: size }, colour: FOCUS_BORDER });
     }
+
+    draws.push(Draw::Text {
+        x: width - margin - (grid.advance * 27.0) as i64,
+        baseline: margin + ascent,
+        text: "Open [O]".to_owned(),
+        colour: colour(Tone::Heading),
+    });
 
     let Layout {
         footer_top,
@@ -658,6 +676,7 @@ struct Surface {
 /// What a pointer position is over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Hit {
+    Open,
     /// A list's frame, title or the blank part of a list.
     Panel(Pane),
     /// A list row. The index may be past the last item.
@@ -676,6 +695,10 @@ enum Gesture {
 
 fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
     let grid = surface.grid;
+    let open_x = surface.width - grid.margin - (grid.advance * 27.0) as i64;
+    if x >= open_x && x < open_x + (grid.advance * 8.0) as i64 && y >= grid.margin && y < grid.margin + grid.row.max(2 * grid.margin) {
+        return Hit::Open;
+    }
     let panels = layout(surface.width, surface.height, grid);
     let snapshot = workspace.snapshot();
     let lists = [
@@ -713,7 +736,7 @@ const fn pane_of(hit: Hit) -> Option<Pane> {
     match hit {
         Hit::Panel(pane) | Hit::Row(pane, _) => Some(pane),
         Hit::Main(_) => Some(Pane::Main),
-        Hit::Nothing => None,
+        Hit::Nothing | Hit::Open => None,
     }
 }
 
@@ -777,6 +800,7 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
     if let Some(prompt) = workspace.prompt() {
         let title = match prompt.kind() {
             PromptKind::Commit => "Commit message",
+            PromptKind::OpenRepository => "Open repository path (trust is required before Git runs)",
             PromptKind::NewBranch => "New branch name",
         };
         let mut lines: Vec<Line> = format!("{}_", prompt.text())
@@ -915,6 +939,7 @@ fn hints(workspace: &Workspace) -> String {
     if let Some(prompt) = workspace.prompt() {
         return match prompt.kind() {
             PromptKind::Commit => "Ctrl+Enter commit   Enter new line   Esc save draft".to_owned(),
+            PromptKind::OpenRepository => "Enter open   Esc cancel   Existing repository trust is checked".to_owned(),
             PromptKind::NewBranch => "Enter create   Esc cancel".to_owned(),
         };
     }
@@ -978,6 +1003,7 @@ fn key_of(event: &NormalizedKeyEvent) -> Option<Key> {
             if control {
                 return match text.as_str() {
                     "c" | "C" => Some(Key::CtrlC),
+                    "o" | "O" => Some(Key::CtrlO),
                     "d" | "D" => Some(Key::HalfPageDown),
                     "u" | "U" => Some(Key::HalfPageUp),
                     _ => None,
@@ -1003,6 +1029,26 @@ mod tests {
     use crate::model::{BranchRow, CommitRow, FileRow, MainView};
 
     const GRID: Grid = Grid { row: 20, ascent: 15, advance: 8.0, margin: 10, gap: 6 };
+
+    #[test]
+    fn open_repository_cannot_retarget_queued_work() {
+        struct UnusedBackend;
+        impl Backend for UnusedBackend { fn run(&mut self, _: Job) -> Reply { panic!("must not launch") } }
+        let mut window = StatusWindow::new(snapshot(1), Box::new(UnusedBackend));
+        window.pending = 1;
+        window.queued.push_back(Job::Reload);
+        window.workspace.request_open();
+        window.workspace.key(Key::Text("other repository".into()));
+        let effect = window.workspace.key(Key::Enter);
+        window.dispatch(effect);
+        assert_eq!(window.queued, VecDeque::from([Job::Reload]));
+        assert_eq!(window.pending, 1);
+        assert_eq!(window.workspace.prompt().unwrap().text(), "other repository");
+        assert_eq!(window.workspace.key(Key::Enter), Effect::Send(Job::OpenRepository(NativePath::new("other repository"))));
+        let surface = Surface { width: 1040, height: 680, grid: GRID };
+        let x = surface.width - GRID.margin - (GRID.advance * 27.0) as i64;
+        assert_eq!(hit_test(&window.workspace, surface, x + 4, GRID.margin + 4), Hit::Open);
+    }
 
     fn snapshot(files: usize) -> Snapshot {
         Snapshot {

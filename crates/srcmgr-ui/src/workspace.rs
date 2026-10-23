@@ -42,6 +42,7 @@ pub enum Key {
     CtrlEnter,
     Escape,
     CtrlC,
+    CtrlO,
     Tab,
     BackTab,
     Space,
@@ -61,6 +62,7 @@ pub enum Effect {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PromptKind {
+    OpenRepository,
     Commit,
     NewBranch,
 }
@@ -92,6 +94,12 @@ impl Prompt {
             return (Effect::Nothing, true);
         }
         match (self.kind, key) {
+            (PromptKind::OpenRepository, Key::Escape | Key::CtrlC) => (Effect::Nothing, false),
+            (PromptKind::OpenRepository, Key::Enter) => {
+                if self.text.is_empty() { return (Effect::Nothing, true); }
+                self.submitted = Some(PromptAction::OpenRepository);
+                (Effect::Send(Job::OpenRepository(NativePath::new(self.text.clone()))), true)
+            }
             (PromptKind::Commit, Key::Escape | Key::CtrlC) => {
                 self.submitted = Some(PromptAction::SaveDraft);
                 (Effect::Send(Job::SaveDraft(self.text.clone())), true)
@@ -335,6 +343,7 @@ impl Workspace {
             return Effect::Nothing;
         }
         match key {
+            Key::Char('O') | Key::CtrlO => self.request_open(),
             Key::Char('q') | Key::CtrlC => Effect::Quit,
             Key::Char('?') => {
                 self.help = true;
@@ -443,6 +452,15 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::RepositoryOpened(snapshot) => {
+                if !self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(PromptAction::OpenRepository)) {
+                    return Effect::Nothing;
+                }
+                let generation = self.generation;
+                *self = Self::new(snapshot);
+                self.generation = generation;
+                self.open()
+            }
             Reply::NoChange => Effect::Nothing,
             Reply::MainFailed { generation, text } => {
                 if generation == self.generation {
@@ -562,6 +580,14 @@ impl Workspace {
         if self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(action)) {
             self.prompt = None;
         }
+    }
+
+    pub fn request_open(&mut self) -> Effect {
+        if !self.modal() {
+            self.notice = None;
+            self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: String::new(), submitted: None });
+        }
+        Effect::Nothing
     }
 
     /// A left click on a list. Focuses the list and selects the row; a row past
@@ -1026,6 +1052,29 @@ mod tests {
             Effect::Send(job) => job,
             other => panic!("expected a job, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn open_repository_keeps_input_on_refusal_and_rejects_old_detail_after_switch() {
+        let mut workspace = Workspace::new(snapshot(Some("original durable draft")));
+        let _ = workspace.open();
+        let old_generation = workspace.generation;
+        workspace.key(Key::CtrlO);
+        workspace.key(Key::Text("D:/other repo".to_owned()));
+        assert_eq!(sent(workspace.key(Key::Enter)), Job::OpenRepository(NativePath::new("D:/other repo")));
+        workspace.reply(Reply::PromptFailed { action: PromptAction::OpenRepository, text: "not trusted".into() });
+        assert_eq!(workspace.prompt().unwrap().text(), "D:/other repo");
+        assert_eq!(workspace.snapshot().draft.as_deref(), Some("original durable draft"));
+        assert_eq!(sent(workspace.key(Key::Enter)), Job::OpenRepository(NativePath::new("D:/other repo")));
+        let mut other = snapshot(Some("other durable draft"));
+        other.files = vec![file("other.txt", false, true)];
+        other.title = "other repository".into();
+        assert!(matches!(workspace.reply(Reply::RepositoryOpened(other)), Effect::Send(Job::Main { .. })));
+        workspace.reply(Reply::Main { generation: old_generation, view: MainView::text("old repository detail") });
+        assert_eq!(workspace.snapshot().title, "other repository");
+        assert_eq!(workspace.snapshot().draft.as_deref(), Some("other durable draft"));
+        assert!(workspace.main().lines.iter().all(|line| !line.text.contains("old repository detail")));
+        assert!(workspace.prompt().is_none());
     }
 
     fn approve(workspace: &mut Workspace) -> Job {

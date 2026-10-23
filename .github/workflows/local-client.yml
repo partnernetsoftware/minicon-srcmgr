@@ -1,0 +1,48 @@
+name: Local client contracts
+
+on:
+  push:
+    paths:
+      - 'crates/srcmgr-ui/**'
+      - 'crates/srcmgr-cli/**'
+      - 'crates/srcmgr-domain/**'
+      - 'crates/srcmgr-state/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.github/workflows/local-client.yml'
+  pull_request:
+    paths:
+      - 'crates/srcmgr-ui/**'
+      - 'crates/srcmgr-cli/**'
+      - 'crates/srcmgr-domain/**'
+      - 'crates/srcmgr-state/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.github/workflows/local-client.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-contracts:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pinned toolchain
+        run: rustup show active-toolchain
+      - name: Shared input and workspace model regressions
+        run: cargo test --locked -p srcmgr-ui --lib
+      - name: Repository entry against actual Git state
+        shell: pwsh
+        run: |
+          $env:SRCMGR_TEST_GIT = (Get-Command git.exe).Source
+          & $env:SRCMGR_TEST_GIT --version
+          cargo test --locked -p srcmgr-cli --bin minicon-srcmgr open_repository
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Affected client static checks
+        run: cargo clippy --locked -p srcmgr-cli -p srcmgr-ui --all-targets -- -D warnings
