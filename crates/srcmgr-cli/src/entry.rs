@@ -10,6 +10,11 @@ use srcmgr_ui::{Backend, Job, PromptAction, RecentRow, Reply, TrustReview};
 use crate::window_backend::WindowBackend;
 use crate::{Options, canonical_worktree, git_dir_of, open_profile_store, trust_store};
 
+fn recent_row(entry: RecentRepository) -> RecentRow {
+    let label = entry.native_path().map_or_else(|_| format!("{} location; unavailable on this platform", entry.path.tag()), |path| path.display_label());
+    RecentRow { backend: entry.backend, path: entry.path, label }
+}
+
 struct PendingTrust {
     ticket: String,
     worktree: PathBuf,
@@ -39,7 +44,17 @@ struct PendingNavigation {
     expires: Instant,
 }
 
+struct PendingLocate {
+    ticket: String,
+    source: RecentRepository,
+    target: PathBuf,
+    git_directory: PathBuf,
+    fingerprint: String,
+    expires: Instant,
+}
+
 pub struct ApplicationBackend {
+    locate: Option<PendingLocate>,
     tools: crate::tools::Tools,
     navigation: Option<PendingNavigation>,
     options: Options,
@@ -52,6 +67,7 @@ pub struct ApplicationBackend {
 impl ApplicationBackend {
     pub fn welcome(options: Options) -> Self {
         Self {
+            locate: None,
             tools: Default::default(),
             navigation: None,
             options,
@@ -69,24 +85,42 @@ impl ApplicationBackend {
         Ok(Reply::Welcome(
             entries
                 .into_iter()
-                .map(|entry| {
-                    let label = entry.native_path().map_or_else(
-                        |_| {
-                            format!(
-                                "{} location; unavailable on this platform",
-                                entry.path.tag()
-                            )
-                        },
-                        |path| path.display_label(),
-                    );
-                    RecentRow {
-                        backend: entry.backend,
-                        path: entry.path,
-                        label,
-                    }
-                })
+                .map(recent_row)
                 .collect(),
         ))
+    }
+
+    fn prepare_locate(&mut self, source: RecentRepository, target: NativePath) -> Result<Reply, String> {
+        if source.backend != "git" { return Err("This backend is unavailable; the recent entry was preserved".into()); }
+        if !open_profile_store(&self.options)?.recent_repositories().map_err(|e| e.to_string())?.contains(&source) { return Err("Recent entry changed; reload the list before locating again".into()); }
+        let input = std::path::Path::new(target.as_os_str());
+        if !input.is_absolute() { return Err("Enter an absolute local repository path".into()); }
+        // Filesystem metadata only. Neither reviewing nor saving a bookmark
+        // starts Git, grants trust or publishes a new active worker target.
+        let target = canonical_worktree(input)?;
+        let git_directory = git_dir_of(&target)?;
+        let digest = fingerprint(&git_directory, &target).map_err(|e| e.to_string())?;
+        let random = minicon_platform::entropy::secure_random_array::<16>().map_err(|_| "Cannot prepare location review")?;
+        let ticket: String = random.iter().map(|b| format!("{b:02x}")).collect();
+        let old = source.native_path().map_or_else(|_| format!("{} location; unavailable on this platform", source.path.tag()), |p| p.display_label());
+        let lines = vec![format!("Previous recent location: {old}"), format!("New location: {}", NativePath::new(target.as_os_str()).display_label()), "Replace only this navigation record. An existing bookmark for the new location is deduplicated.".into(), "No files, Git metadata, drafts, saved views or trust grants are moved, merged or deleted.".into(), "This review does not prove that the two locations are the same repository. Old-path drafts remain retained separately.".into(), "Save returns to Recent repositories. Open explicitly afterward to check current Git state and review trust for the new location.".into(), "Changed or expired reviews require a new review. Enter does not approve; Cancel preserves the old record.".into()];
+        self.locate = Some(PendingLocate { ticket: ticket.clone(), source, target, git_directory, fingerprint: digest, expires: Instant::now()+Duration::from_secs(60) });
+        Ok(Reply::LocateReview { ticket, lines })
+    }
+
+    fn save_located(&mut self, ticket: &str) -> Result<Reply, String> {
+        let pending = self.locate.take().ok_or("Location review is missing or consumed; review again")?;
+        if pending.ticket != ticket || Instant::now() >= pending.expires { return Err("Location review expired or changed; review again".into()); }
+        let canonical = canonical_worktree(&pending.target)?;
+        let git_directory = git_dir_of(&canonical)?;
+        if canonical != pending.target || git_directory != pending.git_directory || fingerprint(&git_directory, &canonical).map_err(|e| e.to_string())? != pending.fingerprint { return Err("Repository metadata changed; review the location again".into()); }
+        let mut store = open_profile_store(&self.options)?;
+        let entries = store.relocate_repository(&pending.source, &canonical).map_err(|e| format!("Recent entry changed or could not be saved; reload and review again: {e}"))?;
+        let target = NativePath::new(canonical.into_os_string()).encoded();
+        // Return the known metadata publication directly. A later read must
+        // not turn an already saved location into an apparent failed write.
+        let entries = entries.into_iter().map(recent_row).collect();
+        Ok(Reply::RecentLocated { entries, target, detail: "Location saved. Open explicitly to review trust and load the repository. Old-path drafts, saved views and trust remain separate; files were not moved.".into() })
     }
 
     fn open(&mut self, path: NativePath) -> Result<Reply, String> {
@@ -292,7 +326,11 @@ impl ApplicationBackend {
 
 impl Backend for ApplicationBackend {
     fn run(&mut self, job: Job) -> Reply {
+        if !matches!(&job, Job::SaveLocated(_) | Job::CancelLocate) { self.locate = None; }
         match job {
+            Job::PrepareLocate { backend, source, target } => self.prepare_locate(RecentRepository { backend, path: source }, target).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::LocateRepository, text }),
+            Job::SaveLocated(ticket) => self.save_located(&ticket).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::LocateRepository, text }),
+            Job::CancelLocate => { self.locate = None; Reply::NoChange }
             Job::LoadToolSettings(kind) => self.tools.load(&self.options, kind).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::ExternalTool, text }),
             Job::SaveToolSettings { kind, definition } => self.tools.save(&self.options, self.active.as_ref().map(|a| a.worktree.as_path()), kind, definition).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::ExternalTool, text }),
             Job::PrepareTool { kind, file } => self.active.as_ref().ok_or_else(|| "Open a repository before tool handoff".into()).and_then(|a| self.tools.prepare(&self.options, &a.worktree, kind, file)).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::ExternalTool, text }),
@@ -391,6 +429,83 @@ mod tests {
         let approved = review(&mut app, repo);
         assert!(matches!(app.run(Job::GrantRepositoryTrust(approved.ticket)), Reply::RepositoryOpened(_)));
         app
+    }
+
+    #[test]
+    fn entry_locate_repairs_only_the_reviewed_bookmark_and_requires_separate_open_trust() {
+        let root = Scratch::new("locate-recent");
+        let old = repository(&root.0,"old");
+        let stable = repository(&root.0,"stable");
+        let _ = trusted_app(&root.0,&old);
+        let mut app = trusted_app(&root.0,&stable);
+        let options = app.options.clone();
+        let old_native = NativePath::new(std::fs::canonicalize(&old).unwrap().into_os_string());
+        let old_key = crate::repository_key(&old).unwrap();
+        let source = open_profile_store(&options).unwrap().recent_repositories().unwrap().into_iter().find(|e| e.path == old_native.encoded()).unwrap();
+        let moved = root.0.join("moved 中文");
+        let canonical_root = std::fs::canonicalize(&root.0).unwrap();
+        assert!(std::fs::canonicalize(&old).unwrap().starts_with(&canonical_root));
+        assert_eq!(moved.parent(),Some(root.0.as_path())); assert!(!moved.exists());
+        std::fs::rename(&old,&moved).unwrap();
+        let target = NativePath::new(std::fs::canonicalize(&moved).unwrap().into_os_string());
+        let new_key = crate::repository_key(&moved).unwrap();
+        {
+            let mut store = open_profile_store(&options).unwrap();
+            store.put_draft("git",&old_key,"old retained draft").unwrap();
+            store.put_draft("git",&new_key,"independent new draft").unwrap();
+            store.put_navigation(&old_native,"old view retained").unwrap();
+        }
+        let (trust_path,_) = trust_store(&options).unwrap();
+        let trust_before = std::fs::read(&trust_path).unwrap();
+        let data = |repo: &std::path::Path| [std::fs::read(repo.join(".git/HEAD")).unwrap(),std::fs::read(repo.join(".git/index")).unwrap(),std::fs::read(repo.join("a.txt")).unwrap(),std::fs::read(repo.join("u.txt")).unwrap()];
+        let before = [data(&stable),data(&moved)];
+        let recents = || open_profile_store(&options).unwrap().get_setting("workspace.recents.v1").unwrap();
+        let original_recents = recents();
+        // Missing Git is a discriminating prerequisite: metadata review/save
+        // must still work, and must never retarget the active backend.
+        app.options.git = Some(root.0.join("not-installed-git"));
+        let prepare = |app: &mut ApplicationBackend| {
+            let Reply::LocateReview { ticket,.. } = app.run(Job::PrepareLocate { backend: source.backend.clone(), source: source.path.clone(), target: target.clone() }) else { panic!("metadata-only review unavailable") }; ticket
+        };
+        let cancelled = prepare(&mut app); app.run(Job::CancelLocate);
+        assert!(matches!(app.run(Job::SaveLocated(cancelled)),Reply::PromptFailed {..}));
+        assert_eq!(recents(),original_recents);
+        let expired = prepare(&mut app); app.locate.as_mut().unwrap().expires = Instant::now()-Duration::from_secs(1);
+        assert!(matches!(app.run(Job::SaveLocated(expired)),Reply::PromptFailed {..})); assert_eq!(recents(),original_recents);
+        let changed = prepare(&mut app);
+        let config_path = moved.join(".git/config"); let config = std::fs::read(&config_path).unwrap();
+        let mut modified = config.clone(); modified.extend_from_slice(b"\n# external edit\n"); std::fs::write(&config_path,modified).unwrap();
+        let refusal = app.run(Job::SaveLocated(changed));
+        assert_eq!(recents(),original_recents,"changed repository metadata must not publish a new bookmark");
+        assert!(matches!(refusal,Reply::PromptFailed {..})); std::fs::write(&config_path,config).unwrap();
+        let stale = prepare(&mut app); open_profile_store(&options).unwrap().forget_repository(&source).unwrap();
+        let removed = recents(); let refusal = app.run(Job::SaveLocated(stale)); assert_eq!(recents(),removed); assert!(matches!(refusal,Reply::PromptFailed {..}));
+        open_profile_store(&options).unwrap().remember_repository("git",std::path::Path::new(old_native.as_os_str())).unwrap();
+        let locked = prepare(&mut app);
+        {
+            let store = open_profile_store(&options).unwrap();
+            assert!(matches!(app.run(Job::SaveLocated(locked)),Reply::PromptFailed {..}));
+            assert!(store.recent_repositories().unwrap().contains(&source));
+        }
+        let ticket = prepare(&mut app);
+        let Reply::RecentLocated { entries,target: returned,.. } = app.run(Job::SaveLocated(ticket.clone())) else { panic!("location was not saved") };
+        assert_eq!(returned,target.encoded()); assert!(entries.iter().any(|e| e.path==returned)); assert!(!entries.iter().any(|e| e.path==source.path));
+        assert_eq!(app.active.as_ref().unwrap().worktree,std::fs::canonicalize(&stable).unwrap());
+        assert_eq!(std::fs::read(&trust_path).unwrap(),trust_before);
+        assert_eq!([data(&stable),data(&moved)],before);
+        assert!(matches!(app.run(Job::SaveLocated(ticket)),Reply::PromptFailed {..}));
+        let Reply::TrustReview(review) = app.run(Job::OpenRepository(target.clone())) else { panic!("new location must not inherit old trust") };
+        app.run(Job::CancelEntry);
+        assert_eq!(std::fs::read(&trust_path).unwrap(),trust_before);
+        assert!(matches!(app.run(Job::GrantRepositoryTrust(review.ticket)),Reply::PromptFailed {..}));
+        app.options.git = options.git.clone();
+        let Reply::TrustReview(review) = app.run(Job::OpenRepository(target.clone())) else { panic!() };
+        let Reply::RepositoryOpened(snapshot) = app.run(Job::GrantRepositoryTrust(review.ticket)) else { panic!() };
+        assert_eq!(snapshot.draft.as_deref(),Some("independent new draft"));
+        let store = open_profile_store(&options).unwrap();
+        assert_eq!(store.get_draft("git",&old_key).unwrap().as_deref(),Some("old retained draft"));
+        assert_eq!(store.navigation(&old_native).unwrap().as_deref(),Some("old view retained"));
+        assert_eq!([data(&stable),data(&moved)],before);
     }
 
     #[test]

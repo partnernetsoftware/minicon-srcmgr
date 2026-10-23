@@ -89,6 +89,23 @@ impl ProfileStore {
         self.write_recents(&entries)
     }
 
+    /// Replace one explicitly reviewed bookmark, preserving unrelated entries
+    /// and all drafts/trust/navigation. The caller validates the native target;
+    /// storage itself performs no filesystem probe or repository operation.
+    pub fn relocate_repository(&mut self, expected: &RecentRepository, target: &Path) -> Result<Vec<RecentRepository>, StoreError> {
+        let mut entries = self.recent_repositories()?;
+        if !entries.contains(expected) { return Err(StoreError::InvalidMetadata); }
+        let replacement = RecentRepository { backend: expected.backend.clone(), path: NativePath::new(target.as_os_str()).encoded() };
+        if replacement == *expected { return Ok(entries); }
+        // An already-bookmarked destination is one record, not a merge of
+        // repository state. Keep the source's position after deduplication.
+        entries.retain(|entry| entry == expected || *entry != replacement);
+        let position = entries.iter().position(|entry| entry == expected).ok_or(StoreError::InvalidMetadata)?;
+        entries[position] = replacement;
+        self.write_recents(&entries)?;
+        Ok(entries)
+    }
+
     fn write_recents(&mut self, entries: &[RecentRepository]) -> Result<(), StoreError> {
         let mut value = String::new();
         for entry in entries {

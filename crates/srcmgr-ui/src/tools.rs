@@ -3,7 +3,7 @@ use minicon_core::composer::{self, ComposerState, Move};
 use srcmgr_domain::{ExternalTool, NativePath, ToolKind};
 use crate::{Effect, Job, Key};
 
-fn context_id() -> u64 { use std::sync::atomic::{AtomicU64, Ordering}; static NEXT: AtomicU64 = AtomicU64::new(1 << 63); NEXT.fetch_add(1, Ordering::Relaxed) }
+pub(crate) fn context_id() -> u64 { use std::sync::atomic::{AtomicU64, Ordering}; static NEXT: AtomicU64 = AtomicU64::new(1 << 63); NEXT.fetch_add(1, Ordering::Relaxed) }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolWork { Load, Save, Review, Launch }

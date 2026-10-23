@@ -242,6 +242,7 @@ pub struct FilterEditor {
 enum TabAction { Select(NativePath), Close, Quit }
 
 pub struct Workspace {
+    locate: Option<crate::LocateForm>,
     tools: Option<crate::ToolForm>,
     navigation_issue: Option<crate::NavigationIssue>,
     filters: [crate::filter::FilterIndex; 3],
@@ -298,6 +299,7 @@ impl Workspace {
     pub fn new(snapshot: Snapshot) -> Self {
         let tabs = snapshot.repository.as_ref().map(|path| RepositoryTab { path: path.clone(), head: snapshot.head.clone() }).into_iter().collect();
         let mut workspace = Self {
+            locate: None,
             tools: None,
             navigation_issue: None,
             filters: std::array::from_fn(|_| Default::default()), filter_anchors: [None, None, None], filter_editor: None, next_position: None,
@@ -340,7 +342,7 @@ impl Workspace {
     /// Requests the main-panel content for the first list. Call once after `new`.
     pub fn open(&mut self) -> Effect {
         if self.is_welcome() {
-            self.main = MainView::text("Open a repository by path, or select a recent location.\nRecent locations are not trusted automatically.\nNo repository commands run while browsing this screen.\n\nCtrl+O: Open path\nEnter: Open selected recent location\nd: Remove selected recent record only\nr: Reload recent records");
+            self.main = MainView::text("Open a repository by path, or select a recent location.\nRecent locations are not trusted automatically.\nNo repository commands run while browsing this screen.\n\nCtrl+O: Open path\nEnter: Open selected recent location\nL: Locate selected recent location\nd: Remove selected recent record only\nr: Reload recent records");
             return Effect::Send(Job::LoadWelcome);
         }
         if let Some(navigation) = self.snapshot.navigation.take() { return self.restore_navigation(navigation); }
@@ -365,7 +367,39 @@ impl Workspace {
     pub fn filter_query(&self, pane: Pane) -> &str { Self::filter_slot(pane).map_or("", |i| self.filters[i].query.as_str()) }
     pub fn visible_rows(&self, pane: Pane) -> &[usize] { Self::filter_slot(pane).map_or(&[], |i| self.filters[i].rows.as_slice()) }
     pub fn filter_editor(&self) -> Option<&FilterEditor> { self.filter_editor.as_ref() }
-    pub fn clipboard_context(&self) -> Option<u64> { self.tools.as_ref().filter(|f| f.working.is_none() && f.review.is_none()).map(|f| f.id).or_else(|| self.filter_editor.as_ref().map(|e| e.id)).or_else(|| self.composer.as_ref().map(|c| c.id)) }
+    pub fn clipboard_context(&self) -> Option<u64> { self.locate.as_ref().filter(|f| f.working.is_none() && f.review.is_none()).map(|f| f.id).or_else(|| self.tools.as_ref().filter(|f| f.working.is_none() && f.review.is_none()).map(|f| f.id)).or_else(|| self.filter_editor.as_ref().map(|e| e.id)).or_else(|| self.composer.as_ref().map(|c| c.id)) }
+
+    pub fn locate_form(&self) -> Option<&crate::LocateForm> { self.locate.as_ref() }
+    pub fn request_locate(&mut self) -> Effect {
+        let from_open = self.prompt.as_ref().filter(|p| p.kind == PromptKind::OpenRepository && !p.pending()).map(|p| p.text.clone());
+        if !self.is_welcome() || (self.modal() && (from_open.is_none() || self.trust.is_some() || self.navigation_issue.is_some())) { return Effect::Nothing; }
+        let Some(source) = self.snapshot.recents.get(self.files).cloned() else { return Effect::Nothing; };
+        if source.backend != "git" { self.notice = Some("This backend is unavailable; its recent record was preserved".into()); return Effect::Nothing; }
+        let mut form = crate::LocateForm::new(source);
+        if let Some(text) = from_open { form.editor.text = text; form.editor.caret = form.editor.text.len(); composer::select_all(&mut form.editor); }
+        self.prompt = None; self.notice = None; self.trust_scroll = 0; self.locate = Some(form);
+        Effect::Nothing
+    }
+    pub fn submit_locate(&mut self) -> Effect { self.locate.as_mut().map_or(Effect::Nothing, crate::LocateForm::submit) }
+    pub fn approve_locate(&mut self) -> Effect { self.locate.as_mut().map_or(Effect::Nothing, crate::LocateForm::approve) }
+    pub fn cancel_locate(&mut self) -> Effect {
+        let Some(form) = self.locate.as_mut() else { return Effect::Nothing; };
+        if form.working == Some(crate::LocateWork::Save) || !form.editor.preedit.is_empty() { return Effect::Nothing; }
+        if form.review.take().is_some() { form.detail = "Location review cancelled; the recent record was preserved.".into(); self.trust_scroll = 0; }
+        else { self.locate = None; }
+        Effect::Send(Job::CancelLocate)
+    }
+    pub fn click_locate_caret(&mut self, column: usize, columns: usize) -> Effect {
+        if let Some(form) = self.locate.as_mut() && form.working.is_none() && form.review.is_none() && form.editor.preedit.is_empty() {
+            let start = composer::visible_window(&form.editor.text, "", form.editor.caret, 1, columns).text;
+            form.editor.caret = composer::caret_at_cell(&form.editor.text, start, column); form.editor.anchor = None; form.editor.select_all = false;
+        }
+        Effect::Nothing
+    }
+    pub fn forget_recent(&mut self) -> Effect {
+        if !self.is_welcome() || self.modal() { return Effect::Nothing; }
+        self.snapshot.recents.get(self.files).map_or(Effect::Nothing, |entry| Effect::Send(Job::ForgetRecent { backend: entry.backend.clone(), path: entry.path.clone() }))
+    }
 
     pub fn tool_form(&self) -> Option<&crate::ToolForm> { self.tools.as_ref() }
     pub fn request_tools(&mut self) -> Effect {
@@ -707,6 +741,7 @@ impl Workspace {
     }
 
     pub fn ime_preedit(&mut self, text: String) {
+        if let Some(form) = self.locate.as_mut() { if form.working.is_none() && form.review.is_none() { form.editor.preedit = text.chars().take(4096).collect(); } return; }
         if let Some(form) = self.tools.as_mut() { if form.working.is_none() && form.review.is_none() { form.editor_mut().preedit = text.chars().take(4096).collect(); } return; }
         if let Some(form) = self.filter_editor.as_mut() { form.editor.preedit = text.chars().take(4096).collect(); return; }
         if let Some(form) = self.composer.as_mut() && (form.focus == CommitFocus::Message || text.is_empty()) {
@@ -715,6 +750,7 @@ impl Workspace {
     }
 
     pub fn ime_commit(&mut self, text: String) -> Effect {
+        if let Some(form) = self.locate.as_mut() { form.editor.preedit.clear(); return form.edit(Key::Text(text)); }
         if let Some(form) = self.tools.as_mut() { form.editor_mut().preedit.clear(); return form.edit_key(Key::Text(text)); }
         if let Some(form) = self.filter_editor.as_mut() { form.editor.preedit.clear(); return self.filter_key(Key::Text(text)); }
         if let Some(form) = self.composer.as_mut() {
@@ -834,6 +870,12 @@ impl Workspace {
     }
 
     pub fn complete_clipboard(&mut self, id: u64, text: Option<String>, cut: Option<String>) -> Effect {
+        if let Some(form) = self.locate.as_mut() {
+            if form.id != id || form.working.is_some() || form.review.is_some() { return Effect::Nothing; }
+            if let Some(text) = text { return form.edit(Key::Pasted(text)); }
+            if let Some(cut) = cut && composer::selection_text(&form.editor) == Some(cut.as_str()) { composer::cut(&mut form.editor); }
+            return Effect::Nothing;
+        }
         if let Some(form) = self.tools.as_mut() {
             if form.id != id || form.working.is_some() || form.review.is_some() { return Effect::Nothing; }
             if let Some(text) = text { return form.edit_key(Key::Pasted(text)); }
@@ -1087,7 +1129,7 @@ impl Workspace {
         if !self.is_welcome() || index >= self.snapshot.recents.len() { return Effect::Nothing; }
         self.files = index;
         let entry = &self.snapshot.recents[index];
-        self.main = MainView::text(&format!("Recent location ({})\n{}\n\nNot checked or trusted by listing it.\nPress Enter to open.\nPress d to remove this navigation record only.", entry.backend, entry.label));
+        self.main = MainView::text(&format!("Recent location ({})\n{}\n\nNot checked or trusted by listing it.\nOpen: inspect this location through the ordinary trust gate.\nLocate: replace this bookmark's path after review.\nRemove: remove this navigation record only; keep files/drafts/trust.", entry.backend, entry.label));
         Effect::Nothing
     }
 
@@ -1213,7 +1255,7 @@ impl Workspace {
     /// waits until it closes.
     #[must_use]
     pub const fn modal(&self) -> bool {
-        self.tools.is_some() || self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some() || self.navigation_issue.is_some()
+        self.locate.is_some() || self.tools.is_some() || self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some() || self.navigation_issue.is_some()
     }
 
     /// Tells the workspace how many main-panel lines are visible, so the cursor
@@ -1224,6 +1266,12 @@ impl Workspace {
     }
 
     pub fn key(&mut self, key: Key) -> Effect {
+        if let Some(form) = self.locate.as_mut() {
+            if !form.editor.preedit.is_empty() { return form.edit(key); }
+            if key == Key::Escape { return self.cancel_locate(); }
+            if form.review.is_some() { return match key { Key::Char('y') => form.approve(), Key::Char('n') => self.cancel_locate(), Key::Up => self.scroll_trust(-1), Key::Down => self.scroll_trust(1), Key::PageUp => self.scroll_trust(-(PAGE_LINES as isize)), Key::PageDown => self.scroll_trust(PAGE_LINES as isize), _ => Effect::Nothing }; }
+            return form.edit(key);
+        }
         if let Some(form) = self.tools.as_mut() {
             if form.composed() { return form.edit_key(key); }
             if matches!(key, Key::Escape) { return self.close_tool(); }
@@ -1290,6 +1338,7 @@ impl Workspace {
         if self.is_welcome() {
             return match key {
                 Key::Char('T') => self.request_tools(),
+                Key::Char('L') => self.request_locate(),
                 Key::Char('G') => self.request_git_settings(),
                 Key::Char('N') => self.request_create(),
                 Key::Char('O') | Key::CtrlO => self.request_open(),
@@ -1300,7 +1349,7 @@ impl Workspace {
                 Key::Down | Key::Char('j') => self.select_recent((self.files + 1).min(self.snapshot.recents.len().saturating_sub(1))),
                 Key::Home => self.select_recent(0),
                 Key::End => self.select_recent(self.snapshot.recents.len().saturating_sub(1)),
-                Key::Char('d') => self.snapshot.recents.get(self.files).map_or(Effect::Nothing, |entry| Effect::Send(Job::ForgetRecent { backend: entry.backend.clone(), path: entry.path.clone() })),
+                Key::Char('d') => self.forget_recent(),
                 _ => Effect::Nothing,
             };
         }
@@ -1416,6 +1465,19 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::LocateReview { ticket, lines } => {
+                if let Some(form) = self.locate.as_mut() && form.working == Some(crate::LocateWork::Review) { form.working = None; form.review = Some((ticket, lines)); self.trust_scroll = 0; }
+                Effect::Nothing
+            }
+            Reply::RecentLocated { entries, target, detail } => {
+                if self.locate.as_ref().is_some_and(|form| form.working == Some(crate::LocateWork::Save)) {
+                    self.locate = None;
+                    self.files = entries.iter().position(|e| e.backend == "git" && e.path == target).unwrap_or(0);
+                    self.snapshot.recents = entries;
+                    self.select_recent(self.files); self.notice = Some(detail);
+                }
+                Effect::Nothing
+            }
             Reply::ToolSettings { kind, definition, detail } => {
                 if let Some(form) = self.tools.as_mut() && form.kind == kind && matches!(form.working, Some(crate::ToolWork::Load | crate::ToolWork::Save)) { form.load(definition, detail); }
                 Effect::Nothing
@@ -1663,6 +1725,10 @@ impl Workspace {
                 Effect::Nothing
             }
             Reply::PromptFailed { action, text } => {
+                if action == PromptAction::LocateRepository {
+                    if let Some(form) = self.locate.as_mut() { form.working = None; form.review = None; form.detail = text; }
+                    return Effect::Nothing;
+                }
                 if action == PromptAction::ExternalTool {
                     if let Some(form) = self.tools.as_mut() { form.working = None; form.review = None; form.detail = text; }
                     return Effect::Nothing;

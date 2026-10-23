@@ -45,6 +45,7 @@ const SELECTION_DIM: u32 = 0x0033_3740;
 const MUTED_TEXT: u32 = 0x0080_8080;
 
 const HELP_LINES: &[&str] = &[
+    "Welcome: L Locate selected recent path; d Remove bookmark only",
     "T  Tools: optional editor / terminal settings and reviewed launch",
     "/            filter loaded Files, Branches or Commits; Esc clears",
     "Ctrl+Tab     next repository; Ctrl+Shift+Tab previous",
@@ -154,6 +155,11 @@ impl StatusWindow {
     }
 
     fn sync_title(&mut self, window: &PixelWindow) {
+        if let Some(form) = self.workspace.locate_form() {
+            let title = format!("MiniCon SrcMgr - Locate recent | {}", if form.working.is_some() { "Working" } else if form.review.is_some() { "Review" } else { "Editing" });
+            if self.native_title != title { window.set_title(&title); self.native_title = title; }
+            return;
+        }
         if let Some(form) = self.workspace.tool_form() {
             let title = format!("MiniCon SrcMgr - Tools | {} | {}", form.kind.name(), if form.working.is_some() { "Working" } else if form.review.is_some() { "Launch review" } else { "Ready" });
             if self.native_title != title { window.set_title(&title); self.native_title = title; }
@@ -183,6 +189,9 @@ impl StatusWindow {
             if self.native_title != title { window.set_title(title); self.native_title = title.into(); }
         } else if let Some(review) = self.workspace.trust_review() {
             let title = format!("MiniCon SrcMgr - Trust review | {}", review.worktree.display_label());
+            if self.native_title != title { window.set_title(&title); self.native_title = title; }
+        } else if let Some(prompt) = self.workspace.prompt() && prompt.kind() == PromptKind::OpenRepository {
+            let title = format!("MiniCon SrcMgr - Open repository | {}", if prompt.pending() { "Working" } else { "Ready" });
             if self.native_title != title { window.set_title(&title); self.native_title = title; }
         } else if let Some((kind, id, ready)) = self.workspace.history_context() {
             let path = self.workspace.snapshot().repository.as_ref().map(|p| p.display_label()).unwrap_or_default();
@@ -257,6 +266,21 @@ impl StatusWindow {
         let scale = window.scale_factor()?;
         let px = (x * scale).round() as i64;
         let py = (y * scale).round() as i64;
+        if self.workspace.locate_form().is_some() {
+            let main = layout(surface.width, surface.height, surface.grid).main;
+            let (allow, cancel) = trust_buttons(main, surface.grid);
+            let effect = match gesture {
+                Gesture::Click if contains(allow, px, py) => if self.workspace.locate_form().unwrap().review.is_some() { self.workspace.approve_locate() } else { self.workspace.submit_locate() },
+                Gesture::Click if contains(cancel, px, py) => self.workspace.cancel_locate(),
+                Gesture::Click if contains(filter_field(main, surface.grid), px, py) => {
+                    let inner = inner_of(filter_field(main, surface.grid), surface.grid);
+                    self.workspace.click_locate_caret(((px-inner.x).max(0) as f32 / surface.grid.advance) as usize, inner.cols)
+                }
+                Gesture::Wheel(delta) => self.workspace.scroll_trust(wheel_lines(delta, surface.grid.row, scale)),
+                _ => Effect::Nothing,
+            };
+            let directive = self.dispatch(effect); self.sync_title(window); window.request_redraw(); return Ok(directive);
+        }
         if self.workspace.tool_form().is_some() {
             let main = layout(surface.width, surface.height, surface.grid).main;
             let geometry = tool_geometry(main, surface.grid);
@@ -430,6 +454,19 @@ impl StatusWindow {
             window.request_redraw();
             return Ok(directive);
         }
+        if self.workspace.prompt().is_some_and(|prompt| prompt.kind() == PromptKind::OpenRepository) {
+            let main = layout(surface.width, surface.height, surface.grid).main;
+            let has_recent = self.workspace.is_welcome() && !self.workspace.snapshot().recents.is_empty();
+            let controls = recent_controls(main, surface.grid);
+            let (open, back) = trust_buttons(main, surface.grid);
+            let effect = match gesture {
+                Gesture::Click if contains(if has_recent { controls[0] } else { open }, px, py) => self.workspace.key(Key::Enter),
+                Gesture::Click if has_recent && contains(controls[1], px, py) => self.workspace.request_locate(),
+                Gesture::Click if contains(if has_recent { controls[2] } else { back }, px, py) => self.workspace.key(Key::Escape),
+                _ => Effect::Nothing,
+            };
+            let directive = self.dispatch(effect); self.sync_title(window); window.request_redraw(); return Ok(directive);
+        }
         if self.workspace.modal() {
             return Ok(PixelWindowDirective::Continue);
         }
@@ -438,6 +475,8 @@ impl StatusWindow {
         let effect = match (gesture, hit) {
             (Gesture::Click, Hit::Recent(index)) => self.workspace.select_recent(index),
             (Gesture::Click, Hit::RecentOpen) => self.workspace.open_recent(),
+            (Gesture::Click, Hit::RecentLocate) => self.workspace.request_locate(),
+            (Gesture::Click, Hit::RecentRemove) => self.workspace.forget_recent(),
             (Gesture::Click, Hit::Open) => self.workspace.request_open(),
             (Gesture::Click, Hit::Create) => self.workspace.request_create(),
             (Gesture::Click, Hit::GitSettings) => self.workspace.request_git_settings(),
@@ -498,7 +537,7 @@ impl StatusWindow {
             Effect::Quit if self.pending != 0 || !self.queued.is_empty() => { let _ = self.workspace.reply(Reply::Notice("Wait for current repository work before closing".into())); PixelWindowDirective::Continue }
             Effect::Quit => PixelWindowDirective::Exit,
             Effect::Send(job) => {
-                if matches!(job, Job::SaveToolSettings { .. } | Job::PrepareTool { .. } | Job::LaunchTool(_) | Job::ResetNavigation(_) | Job::EnterRepository { .. } | Job::LoadIdentity | Job::SaveIdentity { .. } | Job::ConfigureGit(_) | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_)) && (self.pending != 0 || !self.queued.is_empty()) {
+                if matches!(job, Job::PrepareLocate { .. } | Job::SaveLocated(_) | Job::SaveToolSettings { .. } | Job::PrepareTool { .. } | Job::LaunchTool(_) | Job::ResetNavigation(_) | Job::EnterRepository { .. } | Job::LoadIdentity | Job::SaveIdentity { .. } | Job::ConfigureGit(_) | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_)) && (self.pending != 0 || !self.queued.is_empty()) {
                     let _ = self.workspace.reply(job_failure(&job, "Wait for current repository work to finish, then retry entry"));
                     return PixelWindowDirective::Continue;
                 }
@@ -506,7 +545,7 @@ impl StatusWindow {
                     || (matches!(job, Job::CommitDiff { .. }) && self.queued.back().is_some_and(|last| matches!(last, Job::CommitDiff { .. })))
                     || (matches!(job, Job::CancelPrepared) && self.queued.back() == Some(&Job::CancelPrepared)) {
                     *self.queued.back_mut().unwrap() = job;
-                } else if self.queued.len() < 16 || matches!(job, Job::CancelPrepared | Job::CancelEntry) {
+                } else if self.queued.len() < 16 || matches!(job, Job::CancelLocate | Job::CancelPrepared | Job::CancelEntry) {
                     self.queued.push_back(job);
                 } else {
                     let reply = job_failure(&job, "Work queue is full; wait for the current work, then retry");
@@ -571,6 +610,7 @@ impl StatusWindow {
 fn job_failure(job: &Job, message: &str) -> Reply {
     let text = message.to_owned();
     match job {
+        Job::PrepareLocate { .. } | Job::SaveLocated(_) => Reply::PromptFailed { action: PromptAction::LocateRepository, text },
         Job::LoadToolSettings(_) | Job::SaveToolSettings { .. } | Job::PrepareTool { .. } | Job::LaunchTool(_) => Reply::PromptFailed { action: PromptAction::ExternalTool, text },
         Job::LoadIdentity | Job::SaveIdentity { .. } => Reply::PromptFailed { action: PromptAction::IdentitySettings, text },
         Job::LoadGitSettings | Job::ConfigureGit(_) => Reply::PromptFailed { action: PromptAction::GitSettings, text },
@@ -741,7 +781,7 @@ impl PixelWindowApplication for StatusWindow {
             _ => Ok(PixelWindowDirective::Continue),
         } })();
         self.service_clipboard(window);
-        let text_focus = self.workspace.tool_form().is_some_and(|f| f.working.is_none() && f.review.is_none()) || self.workspace.filter_editor().is_some() || self.workspace.prompt().is_some_and(|prompt| !prompt.pending() && (prompt.kind() != PromptKind::Commit || self.workspace.commit_composer().is_some_and(|form| form.focus == CommitFocus::Message)))
+        let text_focus = self.workspace.locate_form().is_some_and(|f| f.working.is_none() && f.review.is_none()) || self.workspace.tool_form().is_some_and(|f| f.working.is_none() && f.review.is_none()) || self.workspace.filter_editor().is_some() || self.workspace.prompt().is_some_and(|prompt| !prompt.pending() && (prompt.kind() != PromptKind::Commit || self.workspace.commit_composer().is_some_and(|form| form.focus == CommitFocus::Message)))
             || self.workspace.create_form().is_some_and(|form| !form.submitted && form.review.is_none())
             || self.workspace.identity_form().is_some_and(|form| !form.submitted);
         if text_focus != self.ime_allowed { window.set_ime_allowed(text_focus); self.ime_allowed = text_focus; }
@@ -772,6 +812,13 @@ impl PixelWindowApplication for StatusWindow {
         };
         let width = frame.width();
         let height = frame.height();
+        if !self.ime_position_failed && let Some(form) = self.workspace.locate_form() && form.working.is_none() && form.review.is_none() {
+            let input = inner_of(filter_field(layout(i64::from(width), i64::from(height), grid).main, grid), grid);
+            let visible = composer::visible_window(&form.editor.text, &form.editor.preedit, form.editor.caret, 1, input.cols);
+            let cell = composer::cells(&form.editor.text[visible.text..form.editor.caret]) + composer::cells(&form.editor.preedit);
+            let area = minicon_platform::window_host::LogicalRect::new((input.x + cell as i64 * grid.advance.round() as i64) as f64/scale, input.top as f64/scale, f64::from(grid.advance)/scale, grid.row as f64/scale);
+            if let Err(error) = window.set_ime_cursor_area(area) { self.ime_position_failed = true; let _ = self.workspace.reply(Reply::Notice(format!("IME caret positioning is unavailable: {error}"))); }
+        }
         if !self.ime_position_failed && let Some(form) = self.workspace.tool_form() && form.working.is_none() && form.review.is_none() {
             let geometry = tool_geometry(layout(i64::from(width), i64::from(height), grid).main, grid);
             let input = inner_of(if form.argument_focus { geometry.arguments } else { geometry.executable }, grid);
@@ -830,6 +877,14 @@ impl PixelWindowApplication for StatusWindow {
             let geometry = tool_geometry(main, grid);
             let inner = inner_of(if form.review.is_some() { trust_content(main, grid).0 } else { geometry.info }, grid);
             let text = form.review.as_ref().map_or_else(|| tool_info(form), |(_, lines)| lines.join("\n"));
+            let count = wrapped_lines(&text, inner.cols).len();
+            self.workspace.set_trust_scroll_limit(count.saturating_sub(inner.rows.max(0) as usize));
+        }
+        if let Some(form) = self.workspace.locate_form() {
+            let main = layout(i64::from(width), i64::from(height), grid).main;
+            let body = if form.review.is_some() { trust_content(main, grid).0 } else { locate_info(main, grid) };
+            let inner = inner_of(body, grid);
+            let text = form.review.as_ref().map_or_else(|| locate_text(form), |(_, lines)| lines.join("\n"));
             let count = wrapped_lines(&text, inner.cols).len();
             self.workspace.set_trust_scroll_limit(count.saturating_sub(inner.rows.max(0) as usize));
         }
@@ -971,11 +1026,10 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         list_panel(&mut draws, recents, grid, Panel { focused: !workspace.modal(), title: "Recent repositories", empty: "No recent repositories" }, &rows, workspace.selected(Pane::Files));
         main_panel(&mut draws, panels.main, grid, workspace);
         if !workspace.modal() && !snapshot.recents.is_empty() {
-            let (button, _) = trust_buttons(panels.main, grid);
-            button_draw(&mut draws, button, grid, "Open selected", FOCUS_BORDER);
+            for (button, label) in recent_controls(panels.main, grid).into_iter().zip(["Open selected", "Locate [L]", "Remove [d]"]) { button_draw(&mut draws, button, grid, label, if label == "Open selected" { FOCUS_BORDER } else { BORDER }); }
         }
         draws.push(Draw::Text { x: margin, baseline: panels.footer_top + ascent, text: fit(workspace.notice().unwrap_or(&snapshot.head), grid.columns(width - 2 * margin)), colour: colour(Tone::Changed) });
-        draws.push(Draw::Text { x: margin, baseline: panels.footer_top + row + ascent, text: if workspace.create_form().is_some() { "Tab Switch field   Enter Review   y Create after review   Esc Back/cancel".into() } else if workspace.modal() { hints(workspace) } else { "Ctrl+O Open   N Create   G Git settings   Enter Open selected   d Remove   q Quit".into() }, colour: MUTED_TEXT });
+        draws.push(Draw::Text { x: margin, baseline: panels.footer_top + row + ascent, text: if workspace.create_form().is_some() { "Tab Switch field   Enter Review   y Create after review   Esc Back/cancel".into() } else if workspace.modal() { hints(workspace) } else { "Ctrl+O Open   N Create   G Git settings   Enter Open selected   L Locate   d Remove   q Quit".into() }, colour: MUTED_TEXT });
         return draws;
     }
 
@@ -1162,6 +1216,8 @@ enum Hit {
     Create,
     Recent(usize),
     RecentOpen,
+    RecentLocate,
+    RecentRemove,
     Open,
     /// A list's frame, title or the blank part of a list.
     Panel(Pane),
@@ -1225,8 +1281,12 @@ fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
     if workspace.is_welcome() {
         let recents = Rect { x: grid.margin, y: panels.main.y, width: panels.files.width, height: panels.main.height };
         let inner = inner_of(recents, grid);
-        let (open, _) = trust_buttons(panels.main, grid);
-        if contains(open, x, y) && !workspace.snapshot().recents.is_empty() { return Hit::RecentOpen; }
+        let [open, locate, remove] = recent_controls(panels.main, grid);
+        if !workspace.snapshot().recents.is_empty() {
+            if contains(open, x, y) { return Hit::RecentOpen; }
+            if contains(locate, x, y) { return Hit::RecentLocate; }
+            if contains(remove, x, y) { return Hit::RecentRemove; }
+        }
         if contains(recents, x, y) && y >= inner.top && y < inner.top + inner.rows * grid.row {
             let offset = window_start(workspace.selected(Pane::Files), workspace.snapshot().recents.len(), inner.rows);
             return Hit::Recent(offset + ((y - inner.top) / grid.row) as usize);
@@ -1276,7 +1336,7 @@ const fn pane_of(hit: Hit) -> Option<Pane> {
         Hit::Panel(pane) | Hit::Row(pane, _) => Some(pane),
         Hit::Main(_) => Some(Pane::Main),
         Hit::Recent(_) => Some(Pane::Files),
-        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::Tools | Hit::RecentOpen | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository | Hit::Filter(_) | Hit::ClearFilter(_) | Hit::Back => None,
+        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::Tools | Hit::RecentOpen | Hit::RecentLocate | Hit::RecentRemove | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository | Hit::Filter(_) | Hit::ClearFilter(_) | Hit::Back => None,
     }
 }
 
@@ -1459,6 +1519,21 @@ fn tool_scene(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
 }
 
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
+    if let Some(form) = workspace.locate_form() {
+        let (allow, cancel) = trust_buttons(rect, grid);
+        if let Some((_, lines)) = &form.review {
+            let body = trust_content(rect, grid).0;
+            text_panel(draws, body, grid, true, "Review recent location", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        } else {
+            frame(draws, rect, grid, true, "Locate recent repository");
+            tool_field(draws, filter_field(rect, grid), grid, &form.editor, form.working.is_none(), "New local path (32 KiB, one line)");
+            let body = locate_info(rect, grid);
+            text_panel(draws, body, grid, false, "Record and effect", &wrapped_lines(&locate_text(form), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        }
+        button_draw(draws, allow, grid, if form.working.is_some() { "Working..." } else if form.review.is_some() { "Save location" } else { "Review location" }, if form.working.is_some() { MUTED_TEXT } else { BORDER });
+        button_draw(draws, cancel, grid, if form.review.is_some() { "Back" } else { "Cancel" }, if form.working == Some(crate::LocateWork::Save) { MUTED_TEXT } else { FOCUS_BORDER });
+        return;
+    }
     if let Some(form) = workspace.tool_form() { tool_scene(draws, rect, grid, workspace, form); return; }
     if let Some(issue) = workspace.navigation_issue() {
         let (body, _) = trust_content(rect, grid);
@@ -1520,6 +1595,19 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         return;
     }
     if let Some(prompt) = workspace.prompt() {
+        if prompt.kind() == PromptKind::OpenRepository {
+            let body = trust_content(rect, grid).0;
+            frame(draws, body, grid, true, "Open repository");
+            let (field, _) = create_fields(body, grid);
+            text_panel(draws, field, grid, !prompt.pending(), "Repository path", &[Line { tone: Tone::Text, text: field_tail(prompt.text(), inner_of(field, grid).cols, !prompt.pending()) }], 0, None);
+            let info = Rect { y: field.y + field.height + grid.gap, height: (body.y+body.height-field.y-field.height-grid.gap).max(0), ..field };
+            let text = format!("{}\n\nOpen checks current repository identity and trust before activation. Existing files and drafts are preserved. Locate selected recent changes only its bookmark; it does not move files or copy old drafts/trust.", workspace.notice().unwrap_or("Enter a local repository path, then Open. Back returns without opening."));
+            text_panel(draws, info, grid, false, if prompt.pending() { "Opening; wait for the result" } else { "Status and next step" }, &wrapped_lines(&text, inner_of(info, grid).cols), 0, None);
+            if workspace.is_welcome() && !workspace.snapshot().recents.is_empty() {
+                for (button,label) in recent_controls(rect,grid).into_iter().zip(["Open", "Locate recent", "Back"]) { button_draw(draws,button,grid,label,if label=="Back" {FOCUS_BORDER} else {BORDER}); }
+            } else { let (open,back)=trust_buttons(rect,grid); button_draw(draws,open,grid,"Open",BORDER); button_draw(draws,back,grid,"Back",FOCUS_BORDER); }
+            return;
+        }
         if prompt.kind() == PromptKind::GitSettings {
             let (body, _) = trust_content(rect, grid);
             frame(draws, body, grid, true, "Application Git settings");
@@ -1591,6 +1679,22 @@ fn trust_buttons(rect: Rect, grid: Grid) -> (Rect, Rect) {
     let width = ((grid.advance * 17.0) as i64 + 2 * grid.gap).min((rect.width - 3 * grid.gap).max(0) / 2);
     let first = Rect { x: rect.x + grid.gap, y: rect.y + rect.height - height - grid.gap, width, height };
     (first, Rect { x: first.x + width + grid.gap, ..first })
+}
+
+fn recent_controls(rect: Rect, grid: Grid) -> [Rect; 3] {
+    let (_, last) = trust_buttons(rect, grid);
+    let width = (rect.width - 4 * grid.gap).max(0) / 3;
+    std::array::from_fn(|index| Rect { x: rect.x + grid.gap + index as i64*(width+grid.gap), y: last.y, width, height: last.height })
+}
+
+fn locate_info(rect: Rect, grid: Grid) -> Rect {
+    let field = filter_field(rect,grid);
+    let (button,_) = trust_buttons(rect,grid);
+    Rect { x: field.x, y: field.y+field.height+grid.gap, width: field.width, height: (button.y-field.y-field.height-2*grid.gap).max(0) }
+}
+
+fn locate_text(form: &crate::LocateForm) -> String {
+    format!("Previous recent location ({})\n{}\n\n{}\n\nCtrl+A/C/V edits this field. Enter or Review location prepares a fresh review. Cancel preserves the old record.", form.source.backend, form.source.label, form.detail)
 }
 
 fn create_fields(rect: Rect, grid: Grid) -> (Rect, Rect) {
@@ -1730,6 +1834,7 @@ fn window_start(selected: usize, length: usize, rows: i64) -> usize {
 
 /// Keys the window shows for the current state, most useful first.
 fn hints(workspace: &Workspace) -> String {
+    if let Some(form) = workspace.locate_form() { return if form.working == Some(crate::LocateWork::Save) { "Saving location; wait for the actual result" } else if form.review.is_some() { "y Save location   n/Esc Back   Enter does not approve   Page keys Scroll" } else { "Enter Review location   Ctrl+A/C/V Edit   Esc Cancel" }.into(); }
     if let Some(form) = workspace.tool_form() { return if form.working.is_some() { "Working; wait for the actual result. A submitted launch cannot be cancelled." } else if form.review.is_some() { "y Launch   n/Esc Cancel   Enter does not approve   Page keys Scroll" } else { "Ctrl+S Save   Ctrl+Enter Review launch   Tab Field   Esc Close" }.into(); }
     if workspace.navigation_issue().is_some() { return "y Archive view and open   n/Esc Cancel   Enter does not approve".into(); }
     if workspace.filter_editor().is_some() { return "Enter Apply   Esc Restore   Tab Change pane   Up/Down Preview   Ctrl+A/C/V Edit".into(); }
@@ -1847,6 +1952,29 @@ mod tests {
 
     use super::*;
     use crate::model::{BranchRow, CommitRow, FileRow, MainView};
+
+    #[test]
+    fn recent_pointer_controls_bind_the_selected_record_and_locate_respects_busy_work() {
+        struct Unused;
+        impl Backend for Unused { fn run(&mut self,_:Job)->Reply { panic!("must not launch") } }
+        let mut window=StatusWindow::new(Snapshot::welcome(),Box::new(Unused));
+        let row=crate::RecentRow { backend:"git".into(),path:NativePath::new("missing").encoded(),label:"missing".into() };
+        window.workspace.reply(Reply::Welcome(vec![row.clone()]));
+        let surface=Surface { width:1040,height:680,grid:GRID };
+        let controls=recent_controls(layout(surface.width,surface.height,GRID).main,GRID);
+        for (rect,expected) in controls.into_iter().zip([Hit::RecentOpen,Hit::RecentLocate,Hit::RecentRemove]) {
+            assert_eq!(hit_test(&window.workspace,surface,rect.x+rect.width/2,rect.y+rect.height/2),expected);
+        }
+        window.workspace.request_locate();
+        window.workspace.key(Key::Text("new local directory".into()));
+        let effect=window.workspace.submit_locate();
+        window.pending=1;window.queued.push_back(Job::LoadWelcome);
+        window.dispatch(effect);
+        assert_eq!(window.pending,1); assert_eq!(window.queued,VecDeque::from([Job::LoadWelcome]));
+        assert!(window.workspace.locate_form().unwrap().working.is_none());
+        assert_eq!(window.workspace.snapshot().recents,vec![row]);
+        assert_eq!(window.workspace.locate_form().unwrap().editor.text,"new local directory");
+    }
 
     const GRID: Grid = Grid { row: 20, ascent: 15, advance: 8.0, margin: 10, gap: 6 };
 

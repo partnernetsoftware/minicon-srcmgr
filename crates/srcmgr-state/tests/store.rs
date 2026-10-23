@@ -12,6 +12,42 @@ use srcmgr_state::{ProfileStore, SCHEMA_VERSION, StoreError};
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn relocating_a_recent_preserves_unrelated_records_and_refuses_a_stale_source() {
+    use srcmgr_domain::NativePath;
+    let profile = Profile::new("relocate-recent");
+    let old = profile.root.join("missing old 中文");
+    let new = profile.root.join("new 中文");
+    let other = profile.root.join("other");
+    let mut store = ProfileStore::open(&profile.root).unwrap();
+    // The storage API needs no existing worktree: source and target are just
+    // lossless bookmark metadata, with validation owned by the caller.
+    for path in [&old, &new, &other] { store.remember_repository("git", path).unwrap(); }
+    store.remember_repository("svn", &new).unwrap();
+    let original = store.recent_repositories().unwrap();
+    let source = original.iter().find(|e| e.path == NativePath::new(old.as_os_str()).encoded()).unwrap().clone();
+    store.put_draft("git", "old", "old draft").unwrap(); store.put_draft("git", "new", "new draft").unwrap();
+    store.put_navigation(&NativePath::new(old.as_os_str()), "retained old view").unwrap();
+    let updated = store.relocate_repository(&source, &new).unwrap();
+    assert_eq!(updated.len(),3);
+    let observed = store.recent_repositories().unwrap();
+    assert_eq!(&observed[..2], &original[..2], "unrelated SVN and Git records must retain their order and contents");
+    assert_eq!(updated[2].path, NativePath::new(new.as_os_str()).encoded());
+    assert_eq!(updated[2].backend,"git");
+    let before = store.get_setting("workspace.recents.v1").unwrap();
+    assert!(store.relocate_repository(&source,&other).is_err());
+    assert_eq!(store.get_setting("workspace.recents.v1").unwrap(),before);
+    let too_large = PathBuf::from("x".repeat(70_000));
+    assert!(store.relocate_repository(&updated[2],&too_large).is_err());
+    assert_eq!(store.get_setting("workspace.recents.v1").unwrap(),before);
+    drop(store);
+    let store = ProfileStore::open(&profile.root).unwrap();
+    assert_eq!(store.recent_repositories().unwrap(),updated);
+    assert_eq!(store.get_draft("git","old").unwrap().as_deref(),Some("old draft"));
+    assert_eq!(store.get_draft("git","new").unwrap().as_deref(),Some("new draft"));
+    assert_eq!(store.navigation(&NativePath::new(old.as_os_str())).unwrap().as_deref(),Some("retained old view"));
+}
+
+#[test]
 fn external_tools_are_independent_bounded_native_preferences_and_preserve_drafts() {
     use srcmgr_domain::{ExternalTool, NativePath, ToolKind};
     let profile = Profile::new("external-tools");

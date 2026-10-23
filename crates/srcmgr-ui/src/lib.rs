@@ -4,6 +4,8 @@
 
 mod model;
 mod tools;
+mod locate;
+pub use locate::{LocateForm, LocateWork};
 pub use tools::{ToolForm, ToolWork};
 mod filter;
 mod navigation;
