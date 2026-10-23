@@ -12,6 +12,30 @@ use srcmgr_state::{ProfileStore, SCHEMA_VERSION, StoreError};
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn external_tools_are_independent_bounded_native_preferences_and_preserve_drafts() {
+    use srcmgr_domain::{ExternalTool, NativePath, ToolKind};
+    let profile = Profile::new("external-tools");
+    let definition = ExternalTool { executable: NativePath::new("tool 中文"), arguments: vec!["".into(), "  literal \";&$()  ".into(), "{file}".into(), "{repo}".into()] };
+    {
+        let mut store = ProfileStore::open(&profile.root).unwrap();
+        store.put_draft("git", "repo", "keep draft").unwrap();
+        store.set_external_tool(ToolKind::Editor, Some(&definition)).unwrap();
+        store.set_external_tool(ToolKind::Terminal, Some(&ExternalTool { arguments: Vec::new(), ..definition.clone() })).unwrap();
+    }
+    let mut store = ProfileStore::open(&profile.root).unwrap();
+    assert_eq!(store.external_tool(ToolKind::Editor).unwrap(), Some(definition.clone()));
+    assert_eq!(store.external_tool(ToolKind::Terminal).unwrap().unwrap().arguments, Vec::<String>::new());
+    assert!(store.set_external_tool(ToolKind::Editor, Some(&ExternalTool { arguments: vec!["not a file placeholder".into()], ..definition.clone() })).is_err());
+    assert_eq!(store.external_tool(ToolKind::Editor).unwrap(), Some(definition));
+    store.put_setting(ToolKind::Terminal.setting(), &"x".repeat(180_001)).unwrap();
+    assert!(store.external_tool(ToolKind::Terminal).is_err());
+    assert_eq!(store.get_setting(ToolKind::Terminal.setting()).unwrap().unwrap().len(), 180_001);
+    store.set_external_tool(ToolKind::Editor, None).unwrap();
+    assert!(store.external_tool(ToolKind::Editor).unwrap().is_none());
+    assert_eq!(store.get_draft("git", "repo").unwrap().as_deref(), Some("keep draft"));
+}
+
+#[test]
 fn navigation_archive_preserves_exact_data_and_refuses_stale_or_colliding_moves() {
     use srcmgr_domain::NativePath;
     let profile = Profile::new("navigation-archive");

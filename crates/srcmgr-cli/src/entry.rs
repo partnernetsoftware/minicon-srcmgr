@@ -40,6 +40,7 @@ struct PendingNavigation {
 }
 
 pub struct ApplicationBackend {
+    tools: crate::tools::Tools,
     navigation: Option<PendingNavigation>,
     options: Options,
     active: Option<WindowBackend>,
@@ -51,6 +52,7 @@ pub struct ApplicationBackend {
 impl ApplicationBackend {
     pub fn welcome(options: Options) -> Self {
         Self {
+            tools: Default::default(),
             navigation: None,
             options,
             active: None,
@@ -92,6 +94,7 @@ impl ApplicationBackend {
     }
 
     fn open_mode(&mut self, path: NativePath, force_review: bool) -> Result<Reply, String> {
+        self.tools.cancel();
         self.navigation = None;
         self.identity = None;
         self.create = None;
@@ -290,6 +293,11 @@ impl ApplicationBackend {
 impl Backend for ApplicationBackend {
     fn run(&mut self, job: Job) -> Reply {
         match job {
+            Job::LoadToolSettings(kind) => self.tools.load(&self.options, kind).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::ExternalTool, text }),
+            Job::SaveToolSettings { kind, definition } => self.tools.save(&self.options, self.active.as_ref().map(|a| a.worktree.as_path()), kind, definition).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::ExternalTool, text }),
+            Job::PrepareTool { kind, file } => self.active.as_ref().ok_or_else(|| "Open a repository before tool handoff".into()).and_then(|a| self.tools.prepare(&self.options, &a.worktree, kind, file)).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::ExternalTool, text }),
+            Job::LaunchTool(ticket) => self.active.as_ref().ok_or_else(|| "Open a repository before tool handoff".into()).and_then(|a| self.tools.launch(&self.options, &a.worktree, &ticket)).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::ExternalTool, text }),
+            Job::CancelTool => { self.tools.cancel(); Reply::NoChange }
             Job::ResetNavigation(ticket) => self.reset_navigation(&ticket).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::OpenRepository, text }),
             Job::EnterRepository { path, current } => (|| {
                 if let Some((source, navigation)) = current {
@@ -301,6 +309,7 @@ impl Backend for ApplicationBackend {
                 else {
                     let Reply::Welcome(recents) = self.recent()? else { return Err("Recent list unavailable".into()); };
                     self.active = None;
+                    self.tools.cancel();
                     self.navigation = None;
                     self.trust = None;
                     self.create = None;

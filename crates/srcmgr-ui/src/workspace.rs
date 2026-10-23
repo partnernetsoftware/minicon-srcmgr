@@ -242,6 +242,7 @@ pub struct FilterEditor {
 enum TabAction { Select(NativePath), Close, Quit }
 
 pub struct Workspace {
+    tools: Option<crate::ToolForm>,
     navigation_issue: Option<crate::NavigationIssue>,
     filters: [crate::filter::FilterIndex; 3],
     filter_anchors: [Option<FilterAnchor>; 3],
@@ -297,6 +298,7 @@ impl Workspace {
     pub fn new(snapshot: Snapshot) -> Self {
         let tabs = snapshot.repository.as_ref().map(|path| RepositoryTab { path: path.clone(), head: snapshot.head.clone() }).into_iter().collect();
         let mut workspace = Self {
+            tools: None,
             navigation_issue: None,
             filters: std::array::from_fn(|_| Default::default()), filter_anchors: [None, None, None], filter_editor: None, next_position: None,
             tabs, closing_tab: false, tab_entry: false, tab_action: None, last_request: None, restore_position: None,
@@ -363,7 +365,50 @@ impl Workspace {
     pub fn filter_query(&self, pane: Pane) -> &str { Self::filter_slot(pane).map_or("", |i| self.filters[i].query.as_str()) }
     pub fn visible_rows(&self, pane: Pane) -> &[usize] { Self::filter_slot(pane).map_or(&[], |i| self.filters[i].rows.as_slice()) }
     pub fn filter_editor(&self) -> Option<&FilterEditor> { self.filter_editor.as_ref() }
-    pub fn clipboard_context(&self) -> Option<u64> { self.filter_editor.as_ref().map(|e| e.id).or_else(|| self.composer.as_ref().map(|c| c.id)) }
+    pub fn clipboard_context(&self) -> Option<u64> { self.tools.as_ref().filter(|f| f.working.is_none() && f.review.is_none()).map(|f| f.id).or_else(|| self.filter_editor.as_ref().map(|e| e.id)).or_else(|| self.composer.as_ref().map(|c| c.id)) }
+
+    pub fn tool_form(&self) -> Option<&crate::ToolForm> { self.tools.as_ref() }
+    pub fn request_tools(&mut self) -> Effect {
+        if self.modal() { return Effect::Nothing; }
+        let file = if !self.stash_mode && (self.focus == Pane::Files || self.source == Pane::Files) { self.snapshot.files.get(self.files).map(|f| f.path.clone()) } else { None };
+        self.tools = Some(crate::ToolForm::new(srcmgr_domain::ToolKind::Editor, file));
+        self.notice = None;
+        Effect::Send(Job::LoadToolSettings(srcmgr_domain::ToolKind::Editor))
+    }
+    pub fn select_tool_kind(&mut self, kind: srcmgr_domain::ToolKind) -> Effect {
+        let Some(form) = self.tools.as_mut() else { return Effect::Nothing; };
+        if form.kind == kind || form.working.is_some() || form.review.is_some() || form.composed() { return Effect::Nothing; }
+        if form.definition().ok() != Some(form.original_definition().cloned()) { form.detail = "Save or clear changed settings before switching tools; Close discards unsaved edits.".into(); return Effect::Nothing; }
+        let target = form.target.clone();
+        self.tools = Some(crate::ToolForm::new(kind, target));
+        Effect::Send(Job::LoadToolSettings(kind))
+    }
+    pub fn focus_tool_field(&mut self, arguments: bool) -> Effect {
+        if let Some(form) = self.tools.as_mut() && form.working.is_none() && form.review.is_none() && !form.composed() { form.focus(arguments); }
+        Effect::Nothing
+    }
+    pub fn click_tool_caret(&mut self, arguments: bool, row: usize, column: usize, rows: usize, columns: usize) -> Effect {
+        self.focus_tool_field(arguments);
+        if let Some(form) = self.tools.as_mut() && form.working.is_none() && form.review.is_none() && !form.composed() {
+            let editor = form.editor_mut();
+            let visible = composer::visible_line_window(&editor.text, editor.caret, rows);
+            let range = composer::line_range(&editor.text, visible.first_line + row);
+            let line = &editor.text[range.clone()];
+            let start = if row == visible.caret_row { composer::visible_window(line, &editor.preedit, editor.caret.saturating_sub(range.start).min(line.len()), 1, columns).text } else { 0 };
+            editor.caret = range.start + composer::caret_at_cell(line, start, column);
+            editor.anchor = None; editor.select_all = false;
+        }
+        Effect::Nothing
+    }
+    pub fn save_tool(&mut self, clear: bool) -> Effect { self.tools.as_mut().map_or(Effect::Nothing, |f| f.save(clear)) }
+    pub fn prepare_tool(&mut self) -> Effect { self.tools.as_mut().map_or(Effect::Nothing, crate::ToolForm::prepare) }
+    pub fn approve_tool(&mut self) -> Effect { self.tools.as_mut().map_or(Effect::Nothing, crate::ToolForm::approve) }
+    pub fn close_tool(&mut self) -> Effect {
+        let Some(form) = self.tools.as_mut() else { return Effect::Nothing; };
+        if matches!(form.working, Some(crate::ToolWork::Save | crate::ToolWork::Launch)) || form.composed() { return Effect::Nothing; }
+        if form.review.take().is_some() { form.detail = "Launch cancelled; no program was started.".into(); } else { self.tools = None; }
+        Effect::Send(Job::CancelTool)
+    }
 
     fn load_filter_rows(&mut self) {
         self.filters[0].load(self.snapshot.files.iter().map(|f| f.path.display_label()), std::iter::empty());
@@ -662,6 +707,7 @@ impl Workspace {
     }
 
     pub fn ime_preedit(&mut self, text: String) {
+        if let Some(form) = self.tools.as_mut() { if form.working.is_none() && form.review.is_none() { form.editor_mut().preedit = text.chars().take(4096).collect(); } return; }
         if let Some(form) = self.filter_editor.as_mut() { form.editor.preedit = text.chars().take(4096).collect(); return; }
         if let Some(form) = self.composer.as_mut() && (form.focus == CommitFocus::Message || text.is_empty()) {
             form.editor.preedit = text.chars().take(4096).collect();
@@ -669,6 +715,7 @@ impl Workspace {
     }
 
     pub fn ime_commit(&mut self, text: String) -> Effect {
+        if let Some(form) = self.tools.as_mut() { form.editor_mut().preedit.clear(); return form.edit_key(Key::Text(text)); }
         if let Some(form) = self.filter_editor.as_mut() { form.editor.preedit.clear(); return self.filter_key(Key::Text(text)); }
         if let Some(form) = self.composer.as_mut() {
             form.editor.preedit.clear();
@@ -787,6 +834,12 @@ impl Workspace {
     }
 
     pub fn complete_clipboard(&mut self, id: u64, text: Option<String>, cut: Option<String>) -> Effect {
+        if let Some(form) = self.tools.as_mut() {
+            if form.id != id || form.working.is_some() || form.review.is_some() { return Effect::Nothing; }
+            if let Some(text) = text { return form.edit_key(Key::Pasted(text)); }
+            if let Some(cut) = cut && composer::selection_text(form.editor()) == Some(cut.as_str()) { composer::cut(form.editor_mut()); }
+            return Effect::Nothing;
+        }
         if let Some(form) = self.filter_editor.as_mut() {
             if form.id != id { return Effect::Nothing; }
             if let Some(text) = text { return self.filter_key(Key::Pasted(text)); }
@@ -1160,7 +1213,7 @@ impl Workspace {
     /// waits until it closes.
     #[must_use]
     pub const fn modal(&self) -> bool {
-        self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some() || self.navigation_issue.is_some()
+        self.tools.is_some() || self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some() || self.navigation_issue.is_some()
     }
 
     /// Tells the workspace how many main-panel lines are visible, so the cursor
@@ -1171,6 +1224,12 @@ impl Workspace {
     }
 
     pub fn key(&mut self, key: Key) -> Effect {
+        if let Some(form) = self.tools.as_mut() {
+            if form.composed() { return form.edit_key(key); }
+            if matches!(key, Key::Escape) { return self.close_tool(); }
+            if form.review.is_some() { return match key { Key::Char('y') => form.approve(), Key::Char('n') => self.close_tool(), Key::Up => self.scroll_trust(-1), Key::Down => self.scroll_trust(1), Key::PageUp => self.scroll_trust(-(PAGE_LINES as isize)), Key::PageDown => self.scroll_trust(PAGE_LINES as isize), _ => Effect::Nothing }; }
+            return form.edit_key(key);
+        }
         match key {
             Key::CloseRepository => return self.close_repository(),
             Key::NextRepository | Key::PreviousRepository => {
@@ -1230,6 +1289,7 @@ impl Workspace {
         }
         if self.is_welcome() {
             return match key {
+                Key::Char('T') => self.request_tools(),
                 Key::Char('G') => self.request_git_settings(),
                 Key::Char('N') => self.request_create(),
                 Key::Char('O') | Key::CtrlO => self.request_open(),
@@ -1245,6 +1305,7 @@ impl Workspace {
             };
         }
         match key {
+            Key::Char('T') => self.request_tools(),
             Key::Char('/') => self.request_filter(self.focus),
             Key::Char('I') => self.request_identity(),
             Key::Char('G') => self.request_git_settings(),
@@ -1355,6 +1416,18 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::ToolSettings { kind, definition, detail } => {
+                if let Some(form) = self.tools.as_mut() && form.kind == kind && matches!(form.working, Some(crate::ToolWork::Load | crate::ToolWork::Save)) { form.load(definition, detail); }
+                Effect::Nothing
+            }
+            Reply::ToolReview { ticket, lines } => {
+                if let Some(form) = self.tools.as_mut() && form.working == Some(crate::ToolWork::Review) { form.working = None; form.review = Some((ticket, lines)); self.trust_scroll = 0; }
+                Effect::Nothing
+            }
+            Reply::ToolLaunched(detail) => {
+                if self.tools.as_ref().is_some_and(|f| f.working == Some(crate::ToolWork::Launch)) { self.tools = None; self.notice = Some(detail); }
+                Effect::Nothing
+            }
             Reply::NavigationIssue(issue) => {
                 if self.prompt.as_ref().is_some_and(|p| p.submitted == Some(PromptAction::OpenRepository)) { self.navigation_issue = Some(issue); self.notice = None; }
                 Effect::Nothing
@@ -1590,6 +1663,10 @@ impl Workspace {
                 Effect::Nothing
             }
             Reply::PromptFailed { action, text } => {
+                if action == PromptAction::ExternalTool {
+                    if let Some(form) = self.tools.as_mut() { form.working = None; form.review = None; form.detail = text; }
+                    return Effect::Nothing;
+                }
                 if action == PromptAction::Commit && let Some(form) = self.composer.as_mut() {
                     if let Some(review) = form.review.as_mut() { review.blocked = Some("Submission was refused; Refresh review before retrying".into()); }
                     self.generation += 1;

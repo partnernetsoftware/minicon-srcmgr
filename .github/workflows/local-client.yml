@@ -43,10 +43,13 @@ jobs:
         shell: pwsh
         run: |
           $env:SRCMGR_TEST_GIT = (Get-Command git.exe).Source
+          $env:GIT_CONFIG_COUNT = '0'
           & $env:SRCMGR_TEST_GIT --version
           cargo test --locked -p srcmgr-cli --bin minicon-srcmgr open_repository
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p srcmgr-cli --bin minicon-srcmgr entry::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p srcmgr-cli --bin minicon-srcmgr tools::tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Reviewed commits against actual index, refs and durable drafts
         shell: pwsh

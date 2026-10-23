@@ -10,6 +10,8 @@ mod capability;
 mod path;
 mod plan;
 mod snapshot;
+mod tool;
+pub use tool::{ExternalTool, ToolKind};
 
 pub use backend::{BackendKind, RepositoryId, RevisionToken};
 pub use capability::{Capability, CapabilityState, VcsBackend};

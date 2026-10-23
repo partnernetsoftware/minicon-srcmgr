@@ -24,6 +24,7 @@ use srcmgr_state::{TrustStore, default_root, fingerprint};
 mod window_backend;
 mod confirmation;
 mod entry;
+mod tools;
 
 const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] status <worktree> [--json]

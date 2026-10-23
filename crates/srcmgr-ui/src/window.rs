@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Instant;
+use srcmgr_domain::NativePath;
 use minicon_core::composer::{self, Move};
 
 use minicon_platform::contract::font::RasterGlyph;
@@ -44,6 +45,7 @@ const SELECTION_DIM: u32 = 0x0033_3740;
 const MUTED_TEXT: u32 = 0x0080_8080;
 
 const HELP_LINES: &[&str] = &[
+    "T  Tools: optional editor / terminal settings and reviewed launch",
     "/            filter loaded Files, Branches or Commits; Esc clears",
     "Ctrl+Tab     next repository; Ctrl+Shift+Tab previous",
     "Ctrl+W       close active repository after saving context",
@@ -152,6 +154,11 @@ impl StatusWindow {
     }
 
     fn sync_title(&mut self, window: &PixelWindow) {
+        if let Some(form) = self.workspace.tool_form() {
+            let title = format!("MiniCon SrcMgr - Tools | {} | {}", form.kind.name(), if form.working.is_some() { "Working" } else if form.review.is_some() { "Launch review" } else { "Ready" });
+            if self.native_title != title { window.set_title(&title); self.native_title = title; }
+            return;
+        }
         if let Some(issue) = self.workspace.navigation_issue() {
             let title = format!("MiniCon SrcMgr - Saved view recovery | {} | {}", if issue.submitted { "Working" } else { "Ready" }, issue.path.display_label());
             if self.native_title != title { window.set_title(&title); self.native_title = title; }
@@ -250,6 +257,28 @@ impl StatusWindow {
         let scale = window.scale_factor()?;
         let px = (x * scale).round() as i64;
         let py = (y * scale).round() as i64;
+        if self.workspace.tool_form().is_some() {
+            let main = layout(surface.width, surface.height, surface.grid).main;
+            let geometry = tool_geometry(main, surface.grid);
+            let review = self.workspace.tool_form().unwrap().review.is_some();
+            let effect = match gesture {
+                Gesture::Click if contains(geometry.buttons[3], px, py) => self.workspace.close_tool(),
+                Gesture::Click if review && contains(geometry.buttons[0], px, py) => self.workspace.approve_tool(),
+                Gesture::Click if !review && contains(geometry.buttons[0], px, py) => self.workspace.save_tool(false),
+                Gesture::Click if !review && contains(geometry.buttons[1], px, py) => self.workspace.prepare_tool(),
+                Gesture::Click if !review && contains(geometry.buttons[2], px, py) => self.workspace.save_tool(true),
+                Gesture::Click if !review && contains(geometry.modes[0], px, py) => self.workspace.select_tool_kind(srcmgr_domain::ToolKind::Editor),
+                Gesture::Click if !review && contains(geometry.modes[1], px, py) => self.workspace.select_tool_kind(srcmgr_domain::ToolKind::Terminal),
+                Gesture::Click if !review && (contains(geometry.executable, px, py) || contains(geometry.arguments, px, py)) => {
+                    let args = contains(geometry.arguments, px, py);
+                    let input = inner_of(if args { geometry.arguments } else { geometry.executable }, surface.grid);
+                    self.workspace.click_tool_caret(args, ((py-input.top).max(0)/surface.grid.row) as usize, ((px-input.x).max(0) as f32/surface.grid.advance) as usize, input.rows.max(1) as usize, input.cols)
+                }
+                Gesture::Wheel(delta) => self.workspace.scroll_trust(wheel_lines(delta, surface.grid.row, scale)),
+                _ => Effect::Nothing,
+            };
+            let directive = self.dispatch(effect); self.sync_title(window); window.request_redraw(); return Ok(directive);
+        }
         if matches!(gesture, Gesture::Click) && let Some(hit) = tab_hit(&self.workspace, surface, px, py) {
             let effect = match hit { Hit::Repository(index) => self.workspace.select_repository(index), Hit::CloseRepository => self.workspace.close_repository(), Hit::NextRepository => self.workspace.key(Key::NextRepository), Hit::PreviousRepository => self.workspace.key(Key::PreviousRepository), _ => Effect::Nothing };
             let directive = self.dispatch(effect);
@@ -412,6 +441,7 @@ impl StatusWindow {
             (Gesture::Click, Hit::Open) => self.workspace.request_open(),
             (Gesture::Click, Hit::Create) => self.workspace.request_create(),
             (Gesture::Click, Hit::GitSettings) => self.workspace.request_git_settings(),
+            (Gesture::Click, Hit::Tools) => self.workspace.request_tools(),
             (Gesture::Click, Hit::IdentitySettings) => self.workspace.request_identity(),
             (Gesture::Click, Hit::Commit) => self.workspace.request_commit(),
             (Gesture::Click, Hit::Back) => self.workspace.key(Key::Escape),
@@ -468,7 +498,7 @@ impl StatusWindow {
             Effect::Quit if self.pending != 0 || !self.queued.is_empty() => { let _ = self.workspace.reply(Reply::Notice("Wait for current repository work before closing".into())); PixelWindowDirective::Continue }
             Effect::Quit => PixelWindowDirective::Exit,
             Effect::Send(job) => {
-                if matches!(job, Job::ResetNavigation(_) | Job::EnterRepository { .. } | Job::LoadIdentity | Job::SaveIdentity { .. } | Job::ConfigureGit(_) | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_)) && (self.pending != 0 || !self.queued.is_empty()) {
+                if matches!(job, Job::SaveToolSettings { .. } | Job::PrepareTool { .. } | Job::LaunchTool(_) | Job::ResetNavigation(_) | Job::EnterRepository { .. } | Job::LoadIdentity | Job::SaveIdentity { .. } | Job::ConfigureGit(_) | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_)) && (self.pending != 0 || !self.queued.is_empty()) {
                     let _ = self.workspace.reply(job_failure(&job, "Wait for current repository work to finish, then retry entry"));
                     return PixelWindowDirective::Continue;
                 }
@@ -541,6 +571,7 @@ impl StatusWindow {
 fn job_failure(job: &Job, message: &str) -> Reply {
     let text = message.to_owned();
     match job {
+        Job::LoadToolSettings(_) | Job::SaveToolSettings { .. } | Job::PrepareTool { .. } | Job::LaunchTool(_) => Reply::PromptFailed { action: PromptAction::ExternalTool, text },
         Job::LoadIdentity | Job::SaveIdentity { .. } => Reply::PromptFailed { action: PromptAction::IdentitySettings, text },
         Job::LoadGitSettings | Job::ConfigureGit(_) => Reply::PromptFailed { action: PromptAction::GitSettings, text },
         Job::PrepareCreate { .. } | Job::ExecuteCreate(_) => Reply::PromptFailed { action: PromptAction::CreateRepository, text },
@@ -710,7 +741,7 @@ impl PixelWindowApplication for StatusWindow {
             _ => Ok(PixelWindowDirective::Continue),
         } })();
         self.service_clipboard(window);
-        let text_focus = self.workspace.filter_editor().is_some() || self.workspace.prompt().is_some_and(|prompt| !prompt.pending() && (prompt.kind() != PromptKind::Commit || self.workspace.commit_composer().is_some_and(|form| form.focus == CommitFocus::Message)))
+        let text_focus = self.workspace.tool_form().is_some_and(|f| f.working.is_none() && f.review.is_none()) || self.workspace.filter_editor().is_some() || self.workspace.prompt().is_some_and(|prompt| !prompt.pending() && (prompt.kind() != PromptKind::Commit || self.workspace.commit_composer().is_some_and(|form| form.focus == CommitFocus::Message)))
             || self.workspace.create_form().is_some_and(|form| !form.submitted && form.review.is_none())
             || self.workspace.identity_form().is_some_and(|form| !form.submitted);
         if text_focus != self.ime_allowed { window.set_ime_allowed(text_focus); self.ime_allowed = text_focus; }
@@ -741,6 +772,19 @@ impl PixelWindowApplication for StatusWindow {
         };
         let width = frame.width();
         let height = frame.height();
+        if !self.ime_position_failed && let Some(form) = self.workspace.tool_form() && form.working.is_none() && form.review.is_none() {
+            let geometry = tool_geometry(layout(i64::from(width), i64::from(height), grid).main, grid);
+            let input = inner_of(if form.argument_focus { geometry.arguments } else { geometry.executable }, grid);
+            let editor = form.editor();
+            let visible = composer::visible_line_window(&editor.text, editor.caret, input.rows.max(1) as usize);
+            let range = composer::line_range(&editor.text, visible.first_line + visible.caret_row);
+            let line = &editor.text[range.clone()];
+            let caret = editor.caret.saturating_sub(range.start).min(line.len());
+            let horizontal = composer::visible_window(line, &editor.preedit, caret, 1, input.cols).text;
+            let cell = composer::cells(&line[horizontal..caret]) + composer::cells(&editor.preedit);
+            let area = minicon_platform::window_host::LogicalRect::new((input.x + cell as i64 * grid.advance.round() as i64) as f64/scale, (input.top + visible.caret_row as i64 * grid.row) as f64/scale, f64::from(grid.advance)/scale, grid.row as f64/scale);
+            if let Err(error) = window.set_ime_cursor_area(area) { self.ime_position_failed = true; let _ = self.workspace.reply(Reply::Notice(format!("IME caret positioning is unavailable: {error}"))); }
+        }
         if !self.ime_position_failed && let Some(form) = self.workspace.commit_composer() && form.focus == CommitFocus::Message {
             let geometry = commit_geometry(i64::from(width), i64::from(height), grid);
             let input = inner_of(geometry.message, grid);
@@ -779,6 +823,14 @@ impl PixelWindowApplication for StatusWindow {
             let info = identity_info(main, grid);
             let inner = inner_of(info, grid);
             let count = wrapped_lines(&form.detail, inner.cols).len();
+            self.workspace.set_trust_scroll_limit(count.saturating_sub(inner.rows.max(0) as usize));
+        }
+        if let Some(form) = self.workspace.tool_form() {
+            let main = layout(i64::from(width), i64::from(height), grid).main;
+            let geometry = tool_geometry(main, grid);
+            let inner = inner_of(if form.review.is_some() { trust_content(main, grid).0 } else { geometry.info }, grid);
+            let text = form.review.as_ref().map_or_else(|| tool_info(form), |(_, lines)| lines.join("\n"));
+            let count = wrapped_lines(&text, inner.cols).len();
             self.workspace.set_trust_scroll_limit(count.saturating_sub(inner.rows.max(0) as usize));
         }
         self.surface = Some(Surface { width: i64::from(width), height: i64::from(height), grid });
@@ -870,12 +922,12 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
     draws.push(Draw::Text {
         x: margin,
         baseline: margin + ascent,
-        text: fit(&header, grid.columns(width - 2 * margin).saturating_sub(55)),
+        text: fit(&header, grid.columns(width - 2 * margin).saturating_sub(65)),
         colour: colour(Tone::Heading),
     });
     if pending > 0 {
         let size = (row / 2).max(2);
-        draws.push(Draw::Text { x: width - margin - (grid.advance * 51.0) as i64, baseline: margin + ascent, text: "Working".to_owned(), colour: colour(Tone::Heading) });
+        draws.push(Draw::Text { x: width - margin - (grid.advance * 63.0) as i64, baseline: margin + ascent, text: "Working".to_owned(), colour: colour(Tone::Heading) });
         draws.push(Draw::Rect { rect: Rect { x: width - margin - size, y: margin, width: size, height: size }, colour: FOCUS_BORDER });
     }
 
@@ -892,6 +944,7 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         draws.push(Draw::Text { x: width - margin - (grid.advance * 17.0) as i64, baseline: margin + ascent, text: "Identity".into(), colour: colour(Tone::Heading) });
     }
     draws.push(Draw::Text { x: width - margin - (grid.advance * 6.0) as i64, baseline: margin + ascent, text: "Git".into(), colour: colour(Tone::Heading) });
+    draws.push(Draw::Text { x: width - margin - (grid.advance * 51.0) as i64, baseline: margin + ascent, text: "Tools [T]".into(), colour: colour(Tone::Heading) });
     for (index, rect) in tab_rectangles(workspace, width, grid) {
         let tab = &workspace.tabs()[index];
         let active = workspace.snapshot().repository.as_ref() == Some(&tab.path);
@@ -1095,6 +1148,7 @@ struct Surface {
 /// What a pointer position is over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Hit {
+    Tools,
     Back,
     Filter(Pane),
     ClearFilter(Pane),
@@ -1155,6 +1209,8 @@ fn tab_hit(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Option<Hi
 
 fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
     let grid = surface.grid;
+    let tools_x = surface.width - grid.margin - (grid.advance * 51.0) as i64;
+    if x >= tools_x && x < tools_x + (grid.advance * 10.0) as i64 && y >= grid.margin && y < grid.margin + grid.row.max(2 * grid.margin) { return Hit::Tools; }
     let commit_x = surface.width - grid.margin - (grid.advance * 39.0) as i64;
     if !workspace.is_welcome() && x >= commit_x && x < commit_x + (grid.advance * 10.0) as i64 && y >= grid.margin && y < grid.margin + grid.row.max(2 * grid.margin) { return Hit::Commit; }
     let git_x = surface.width - grid.margin - (grid.advance * 6.0) as i64;
@@ -1220,7 +1276,7 @@ const fn pane_of(hit: Hit) -> Option<Pane> {
         Hit::Panel(pane) | Hit::Row(pane, _) => Some(pane),
         Hit::Main(_) => Some(Pane::Main),
         Hit::Recent(_) => Some(Pane::Files),
-        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::RecentOpen | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository | Hit::Filter(_) | Hit::ClearFilter(_) | Hit::Back => None,
+        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::Tools | Hit::RecentOpen | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository | Hit::Filter(_) | Hit::ClearFilter(_) | Hit::Back => None,
     }
 }
 
@@ -1346,7 +1402,64 @@ fn list_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, panel: Panel<'_>, r
 /// help is open, and otherwise the diff or detail of the source list.
 fn back_control(rect: Rect, grid: Grid) -> Rect { Rect { x: rect.x + rect.width - grid.gap - (grid.advance * 10.0) as i64, y: rect.y + edge(grid), width: (grid.advance * 10.0) as i64, height: grid.row + grid.gap / 2 } }
 
+struct ToolGeometry { modes: [Rect; 2], executable: Rect, arguments: Rect, info: Rect, buttons: [Rect; 4] }
+
+fn tool_geometry(rect: Rect, grid: Grid) -> ToolGeometry {
+    let (allow, cancel) = trust_buttons(rect, grid);
+    let slot = (rect.width - 3 * grid.gap) / 4;
+    let buttons = std::array::from_fn(|i| Rect { x: rect.x + i as i64 * (slot + grid.gap), width: slot, y: allow.y, height: cancel.height });
+    let mode = Rect { x: rect.x, y: rect.y, width: (rect.width - grid.gap) / 2, height: grid.row + 2 * grid.gap };
+    let executable = Rect { x: rect.x, y: mode.y + mode.height + grid.gap, width: rect.width, height: 3 * grid.row + 2 * grid.gap };
+    let arguments = Rect { y: executable.y + executable.height + grid.gap, height: 5 * grid.row + 2 * grid.gap, ..executable };
+    let info = Rect { y: arguments.y + arguments.height + grid.gap, height: (allow.y - arguments.y - arguments.height - 2 * grid.gap).max(0), ..executable };
+    ToolGeometry { modes: [mode, Rect { x: mode.x + mode.width + grid.gap, ..mode }], executable, arguments, info, buttons }
+}
+
+fn tool_info(form: &crate::ToolForm) -> String {
+    let target = if form.kind == srcmgr_domain::ToolKind::Editor { form.target.as_ref().map_or_else(|| "No working-tree file selected".into(), NativePath::display_label) } else { "Active repository directory".into() };
+    format!("Target: {target}\n\n{}\n\nArguments: one per line; do not add shell quotes. A whole {{file}} or {{repo}} line inserts that path as one argument. Empty terminal arguments use the repository as working directory.\nCtrl+S saves; Ctrl+Enter reviews saved settings. Enter adds an argument line. Tab changes fields; Esc closes.", form.detail)
+}
+
+fn tool_field(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, editor: &composer::ComposerState, focused: bool, title: &str) {
+    let input = frame(draws, rect, grid, focused, title);
+    let visible = composer::visible_line_window(&editor.text, editor.caret, input.rows.max(1) as usize);
+    for row in 0..input.rows.max(0) as usize {
+        let range = composer::line_range(&editor.text, visible.first_line + row);
+        let line = &editor.text[range.clone()];
+        let caret = editor.caret.saturating_sub(range.start).min(line.len());
+        let start = if focused && row == visible.caret_row { composer::visible_window(line, &editor.preedit, caret, 1, input.cols).text } else { 0 };
+        if let Some((a,b)) = composer::selection_bounds(editor) {
+            let a = a.max(range.start + start).min(range.end); let b = b.max(a).min(range.end);
+            let before = composer::cells(&editor.text[range.start+start..a]);
+            let cells = composer::cells(&editor.text[a..b]).min(input.cols.saturating_sub(before));
+            draws.push(Draw::Rect { rect: Rect { x: input.x + before as i64 * grid.advance.round() as i64, y: input.top + row as i64 * grid.row, width: cells as i64 * grid.advance.round() as i64, height: grid.row }, colour: SELECTION });
+        }
+        let mut text = line[start..].to_owned();
+        if focused && row == visible.caret_row { text.insert_str(caret-start, &format!("{}|", editor.preedit)); }
+        draws.push(Draw::Text { x: input.x, baseline: input.top + row as i64 * grid.row + grid.ascent, text: fit(&text, input.cols), colour: colour(Tone::Text) });
+    }
+}
+
+fn tool_scene(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace, form: &crate::ToolForm) {
+    let geometry = tool_geometry(rect, grid);
+    if let Some((_, lines)) = &form.review {
+        let body = trust_content(rect, grid).0;
+        text_panel(draws, body, grid, true, "Review external tool launch", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        button_draw(draws, geometry.buttons[0], grid, if form.working.is_some() { "Starting..." } else { "Launch [y]" }, BORDER);
+        button_draw(draws, geometry.buttons[3], grid, "Cancel", FOCUS_BORDER);
+        return;
+    }
+    for (index, kind) in [srcmgr_domain::ToolKind::Editor, srcmgr_domain::ToolKind::Terminal].into_iter().enumerate() { button_draw(draws, geometry.modes[index], grid, kind.name(), if form.kind == kind { FOCUS_BORDER } else { BORDER }); }
+    let editable = form.working.is_none();
+    tool_field(draws, geometry.executable, grid, &form.executable, editable && !form.argument_focus, "Tool executable (absolute path)");
+    tool_field(draws, geometry.arguments, grid, &form.arguments, editable && form.argument_focus, "Arguments (one per line)");
+    let info = tool_info(form);
+    text_panel(draws, geometry.info, grid, false, if editable { "Settings / destination" } else { "Working; fields are read-only" }, &wrapped_lines(&info, inner_of(geometry.info, grid).cols), workspace.trust_scroll(), None);
+    for (index, label) in ["Save", "Review launch", "Clear saved", "Close"].into_iter().enumerate() { button_draw(draws, geometry.buttons[index], grid, label, if index == 3 { FOCUS_BORDER } else if editable { BORDER } else { MUTED_TEXT }); }
+}
+
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
+    if let Some(form) = workspace.tool_form() { tool_scene(draws, rect, grid, workspace, form); return; }
     if let Some(issue) = workspace.navigation_issue() {
         let (body, _) = trust_content(rect, grid);
         let text = format!("Repository: {}\n\n{}\n\nArchive the reviewed saved view and open with the default layout.\nThe archive is retained in this profile; no automatic deletion.\nDrafts, repository trust, source files, index and refs are preserved.\n\nChanged or expired records require a fresh review.\nIf entry later fails, the archive remains available.\nAutomatic recovery review is limited to 1 MiB.\n\ny: Archive view and open   n/Esc: Cancel\nEnter does not approve this change.", issue.path.display_label(), issue.reason);
@@ -1617,6 +1730,7 @@ fn window_start(selected: usize, length: usize, rows: i64) -> usize {
 
 /// Keys the window shows for the current state, most useful first.
 fn hints(workspace: &Workspace) -> String {
+    if let Some(form) = workspace.tool_form() { return if form.working.is_some() { "Working; wait for the actual result. A submitted launch cannot be cancelled." } else if form.review.is_some() { "y Launch   n/Esc Cancel   Enter does not approve   Page keys Scroll" } else { "Ctrl+S Save   Ctrl+Enter Review launch   Tab Field   Esc Close" }.into(); }
     if workspace.navigation_issue().is_some() { return "y Archive view and open   n/Esc Cancel   Enter does not approve".into(); }
     if workspace.filter_editor().is_some() { return "Enter Apply   Esc Restore   Tab Change pane   Up/Down Preview   Ctrl+A/C/V Edit".into(); }
     if let Some(form) = workspace.identity_form() { return if form.submitted { "Working; fields are read-only until completion. Esc cancels a read, not a submitted save." } else { "Tab Switch field   Enter Save local/reload   Page/Up/Down Scroll sources   Esc Cancel" }.into(); }

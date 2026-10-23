@@ -18,7 +18,7 @@ minicon-core.workspace = true
 srcmgr-state.workspace = true
 srcmgr-ui.workspace = true
 sha2.workspace = true
-minicon-platform = { workspace = true, features = ["entropy", "filesystem"] }
+minicon-platform = { workspace = true, features = ["entropy", "filesystem", "process-spawn"] }
 
 [lints]
 workspace = true

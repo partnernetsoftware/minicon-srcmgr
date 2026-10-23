@@ -225,6 +225,11 @@ pub enum MainRequest {
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Job {
+    LoadToolSettings(srcmgr_domain::ToolKind),
+    SaveToolSettings { kind: srcmgr_domain::ToolKind, definition: Option<srcmgr_domain::ExternalTool> },
+    PrepareTool { kind: srcmgr_domain::ToolKind, file: Option<NativePath> },
+    LaunchTool(String),
+    CancelTool,
     ResetNavigation(String),
     EnterRepository { path: Option<NativePath>, current: Option<(NativePath, Box<crate::Navigation>)> },
     LoadCommitReview { generation: u64 },
@@ -302,6 +307,9 @@ pub enum Job {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reply {
+    ToolSettings { kind: srcmgr_domain::ToolKind, definition: Option<srcmgr_domain::ExternalTool>, detail: String },
+    ToolReview { ticket: String, lines: Vec<String> },
+    ToolLaunched(String),
     NavigationIssue(NavigationIssue),
     NavigationReset { archive: String, detail: String, next: Box<Reply> },
     RepositoryClosed(Vec<RecentRow>),
@@ -352,6 +360,7 @@ pub struct CommitReview {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PromptAction {
+    ExternalTool,
     IdentitySettings,
     GitSettings,
     CreateRepository,

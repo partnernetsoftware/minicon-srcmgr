@@ -10,6 +10,7 @@ mod store;
 mod trust;
 mod recent;
 mod preferences;
+mod tools;
 
 pub use profile::{default_root, write_atomic};
 pub use store::{ProfileStore, SCHEMA_VERSION, StoreError};

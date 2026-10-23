@@ -3,6 +3,8 @@
 //! the [`Backend`] trait on a worker thread.
 
 mod model;
+mod tools;
+pub use tools::{ToolForm, ToolWork};
 mod filter;
 mod navigation;
 pub use navigation::{Navigation, NavigationSelection, NavigationFrame};
