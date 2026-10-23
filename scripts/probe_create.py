@@ -205,6 +205,7 @@ def main():
             key(hwnd, 0x20)  # Deliberately stage only the selected keep.bin.
             wait_entry(lambda: sp.check_output(oracle + ["ls-files", "-z"], env=environment) == b"keep.bin\0", "named file did not reach index")
             key(hwnd, 0x43)
+            title("MiniCon SrcMgr - Commit | Review ready", exact=True)
             key(hwnd, "Native identity qualification")
             key(hwnd, 0x0D, ctrl=True)
             def committed():

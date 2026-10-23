@@ -477,6 +477,7 @@ dependencies = [
 name = "srcmgr-ui"
 version = "0.0.6"
 dependencies = [
+ "minicon-core",
  "minicon-platform",
  "minicon-ui-core",
  "srcmgr-domain",

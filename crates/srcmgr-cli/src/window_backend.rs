@@ -16,6 +16,7 @@ pub struct WindowBackend {
     pub options: Options,
     pub worktree: PathBuf,
     pub prepared: Option<crate::confirmation::Prepared>,
+    pub(crate) commit_review: Option<(String, srcmgr_git::StagedReview)>,
 }
 
 impl Backend for WindowBackend {
@@ -69,9 +70,16 @@ impl Backend for WindowBackend {
                 }
             }
             action if crate::confirmation::is_risky(&action) => Err("a fresh target-bound confirmation is required".to_owned()),
-            action @ (Job::Commit(_) | Job::CreateBranch(_) | Job::SaveDraft(_)) => {
+            Job::LoadCommitReview { generation } => self.load_commit_review().map(|review| Reply::CommitReview { generation, review }).or_else(|text| Ok(Reply::MainFailed { generation, text })),
+            Job::CommitDiff { ticket, generation, index } => {
+                Ok(match self.commit_diff(&ticket, index) {
+                    Ok(view) => Reply::CommitDiff { generation, view },
+                    Err(text) => Reply::MainFailed { generation, text },
+                })
+            }
+            action @ (Job::Commit { .. } | Job::CreateBranch(_) | Job::SaveDraft(_)) => {
                 let kind = match &action {
-                    Job::Commit(_) => PromptAction::Commit,
+                    Job::Commit { .. } => PromptAction::Commit,
                     Job::CreateBranch(_) => PromptAction::CreateBranch,
                     _ => PromptAction::SaveDraft,
                 };
@@ -88,7 +96,7 @@ impl WindowBackend {
         let worktree = crate::canonical_worktree(path)?;
         let mut selected = options.clone();
         if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
-        let candidate = Self { options: selected, worktree, prepared: None };
+        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None };
         let mut snapshot = candidate.snapshot()?;
         if let Err(error) = open_profile_store(options)?.remember_repository(BACKEND_GIT, &candidate.worktree) {
             snapshot.stage_result = Some(format!("Recent list not updated: {error}; repository data was not changed"));
@@ -143,7 +151,17 @@ impl WindowBackend {
                 Reply::Full(snapshot)
             }
             Job::Prepare { .. } | Job::ExecutePrepared(_) | Job::CancelPrepared => return Err("nested confirmation is not allowed".to_owned()),
-            Job::Reload => Reply::Full(self.snapshot()?),
+            Job::LoadCommitReview { .. } | Job::CommitDiff { .. } => return Err("commit review must use its isolated worker path".into()),
+            Job::Reload => {
+                let mut snapshot = self.snapshot()?;
+                let key = repository_key(&self.worktree)?;
+                let mut store = open_profile_store(&self.options)?;
+                if let Some(before) = store.git_commit_intent(&key).map_err(|e| e.to_string())? {
+                    store.finish_git_commit(&key).map_err(|e| e.to_string())?;
+                    snapshot.stage_result = Some(format!("Previous commit attempt reconciled. Previous HEAD: {}. Current state is displayed; inspect history/index before another explicit commit. Saved draft was retained.", before.as_deref().unwrap_or("unborn")));
+                }
+                Reply::Full(snapshot)
+            }
             Job::Main { generation, request } => Reply::Main { generation, view: self.main(request)? },
             Job::SetFile { path, stage } => {
                 self.set_file(&path, stage)?;
@@ -227,11 +245,14 @@ impl WindowBackend {
                     },
                 }
             }
-            Job::Commit(message) => {
-                let (id, warning) = self.commit(&message)?;
+            Job::Commit { ticket, message } => {
+                let (id, warning) = match self.commit(&ticket, &message)? {
+                    srcmgr_git::ReviewedCommit::Observed { oid, warning } => (oid, warning),
+                    srcmgr_git::ReviewedCommit::Unknown(reason) => return Ok(Reply::PromptCompleted { action: PromptAction::Commit, text: format!("{reason}\nThe submitted draft and pending attempt are durable. Use repository Refresh to inspect current HEAD/index before retrying; no automatic retry was requested.") }),
+                };
                 match self.snapshot() {
                     Ok(mut snapshot) => {
-                        snapshot.stage_result = warning.map(|error| format!("Commit created; saved draft cleanup unavailable: {error}; the saved draft may remain"));
+                        snapshot.stage_result = Some(format!("Observed commit OID: {id}{}", warning.map_or_else(String::new, |warning| format!("; {warning}"))));
                         Reply::Committed(snapshot)
                     }
                     Err(error) => Reply::PromptCompleted {
@@ -328,21 +349,67 @@ impl WindowBackend {
     /// Commits the index with `message`. The draft is cleared only after Git
     /// accepts the commit; a refused commit keeps both the index and the draft.
     /// A subsequent cleanup failure is a warning attached to the created OID.
-    fn commit(&self, message: &str) -> Result<(String, Option<String>), String> {
+    fn load_commit_review(&mut self) -> Result<srcmgr_ui::CommitReview, String> {
+        self.commit_review = None;
+        let key = repository_key(&self.worktree)?;
+        if open_profile_store(&self.options)?.git_commit_intent(&key).map_err(|e| e.to_string())?.is_some() { return Err("Previous commit attempt needs reconciliation. Refresh repository state before opening another commit review; the draft is preserved.".into()); }
+        let session = open_trusted(&self.options, &self.worktree)?;
+        let review = srcmgr_git::StagedReview::read(&session.installation, &session.identity).map_err(|e| e.to_string())?;
+        let bytes = minicon_platform::entropy::secure_random_array::<16>().map_err(|e| format!("Cannot prepare commit review: {e:?}"))?;
+        let ticket: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let mode = if review.binding.merge_parents.is_empty() { "ordinary commit".into() } else { format!("merge commit: {} parents", 1 + review.binding.merge_parents.len()) };
+        let head = format!("{mode} | HEAD {} | {}", review.binding.head.as_deref().map_or("unborn", crate::short), review.binding.reference.as_deref().unwrap_or("detached HEAD"));
+        let reply = srcmgr_ui::CommitReview { ticket: ticket.clone(), head: NativePath::new(head).display_label(), blocked: review.blocked.clone(), files: review.files.iter().map(|file| srcmgr_ui::StagedRow { path: file.path.clone(), change: file.change.clone(), added: file.added, deleted: file.deleted }).collect() };
+        self.commit_review = Some((ticket, review));
+        Ok(reply)
+    }
+
+    fn commit_diff(&self, ticket: &str, index: usize) -> Result<MainView, String> {
+        let (current, review) = self.commit_review.as_ref().ok_or("Commit review is unavailable; refresh it")?;
+        if current != ticket { return Err("Commit review changed; select again".into()); }
+        let session = open_trusted(&self.options, &self.worktree)?;
+        let text = review.diff(&session.installation, &session.identity, index).map_err(|e| e.to_string())?;
+        let mut lines = vec![srcmgr_ui::Line { tone: srcmgr_ui::Tone::Heading, text: format!("Staged path: {}", review.files[index].path.display_label()) }];
+        lines.extend(srcmgr_ui::diff_lines(&text));
+        let view = MainView { lines, ..MainView::default() };
+        Ok(view)
+    }
+
+    fn commit(&mut self, ticket: &str, message: &str) -> Result<srcmgr_git::ReviewedCommit, String> {
         if message.trim().is_empty() {
             return Err("the commit message is empty".to_owned());
         }
         let key = repository_key(&self.worktree)?;
         let session = open_trusted(&self.options, &self.worktree)?;
-        let status = srcmgr_git::read_status(&session.installation, &session.identity, Generation(1))
-            .map_err(|e| e.to_string())?;
-        if !status.entries.iter().any(|entry| entry.staged != ChangeKind::Unmodified) {
-            return Err("nothing is staged to commit".to_owned());
+        let (current, review) = self.commit_review.take().ok_or("Load the complete staged-index review before committing")?;
+        if current != ticket { return Err("Commit review changed; refresh before submitting".into()); }
+        let mut store = open_profile_store(&self.options)?;
+        if let Some(reason) = &review.blocked {
+            store.put_draft(BACKEND_GIT, &key, message).map_err(|e| e.to_string())?;
+            return Err(format!("{reason}; submitted message was saved"));
         }
-        let id = srcmgr_git::commit(&session.installation, &session.identity, message).map_err(|e| e.to_string())?;
-        let cleanup = open_profile_store(&self.options)
-            .and_then(|mut store| store.delete_draft(BACKEND_GIT, &key).map_err(|e| e.to_string()));
-        Ok((id.token().to_owned(), cleanup.err()))
+        store.begin_git_commit(&key, message, review.binding.head.as_deref()).map_err(|e| e.to_string())?;
+        let result = review.commit(&session.installation, &session.identity, message);
+        drop(store);
+        match result {
+            Ok(srcmgr_git::ReviewedCommit::Observed { oid, warning }) => {
+                let cleanup = (|| {
+                    let mut store = open_profile_store(&self.options)?;
+                    store.finish_git_commit(&key).map_err(|e| e.to_string())?;
+                    if warning.is_none() { store.delete_draft(BACKEND_GIT, &key).map_err(|e| e.to_string())?; }
+                    Ok::<(), String>(())
+                })();
+                let mut notes: Vec<String> = warning.into_iter().collect();
+                if !notes.is_empty() { notes.push("Submitted draft retained for inspection".into()); }
+                if let Err(error) = cleanup { notes.push(format!("Saved draft/attempt cleanup unavailable: {error}; draft may remain")); }
+                Ok(srcmgr_git::ReviewedCommit::Observed { oid, warning: (!notes.is_empty()).then(|| notes.join("; ")) })
+            }
+            Ok(result @ srcmgr_git::ReviewedCommit::Unknown(_)) => Ok(result),
+            Err(error) => {
+                let cleanup = open_profile_store(&self.options).and_then(|mut store| store.finish_git_commit(&key).map_err(|e| e.to_string()));
+                Err(format!("{error}; submitted message was saved. Hooks may have changed index/worktree; refresh review before retrying{}", cleanup.err().map_or_else(String::new, |error| format!(". Attempt reconciliation remains pending: {error}"))))
+            }
+        }
     }
 
     /// Replaces the saved draft. Blank text clears it.
@@ -469,7 +536,209 @@ pub(crate) mod tests {
             options,
             worktree: repo.to_path_buf(),
             prepared: None,
+            commit_review: None,
         }
+    }
+
+    #[test]
+    fn commit_review_covers_full_index_binary_and_native_paths_and_refuses_widening() {
+        let scratch = Scratch::new("commit-review-complete");
+        let repo = repository(&scratch.0, "repo");
+        fs::write(repo.join("hidden.bin"), [0, 255, 1]).unwrap();
+        fs::write(repo.join("--hidden 中文.txt"), b"extra staged content\n").unwrap();
+        fixture_git(&repo, &["add", "--", "a.txt", "hidden.bin", "--hidden 中文.txt"]);
+        fs::write(repo.join("a.txt"), b"unstaged content must survive\n").unwrap();
+        let backend = backend(&scratch.0, &repo, true);
+        let session = crate::open_trusted(&backend.options, &repo).unwrap();
+        let review = srcmgr_git::StagedReview::read(&session.installation, &session.identity).unwrap();
+        assert_eq!(review.files.len(), 3);
+        assert!(review.blocked.is_none());
+        assert!(review.files.iter().any(|file| file.path.as_os_str() == "hidden.bin" && file.added.is_none() && file.deleted.is_none()));
+        let selected = review.files.iter().position(|file| file.path.as_os_str() == "--hidden 中文.txt").unwrap();
+        assert!(review.diff(&session.installation, &session.identity, selected).unwrap().contains("extra staged content"));
+        let before = git_text(&repo, &["rev-parse", "HEAD"]);
+        fixture_git(&repo, &["add", "--", "u.txt"]);
+        assert!(matches!(review.commit(&session.installation, &session.identity, "must refuse"), Err(srcmgr_git::GitError::StaleCommitReview)));
+        assert_eq!(git_text(&repo, &["rev-parse", "HEAD"]), before);
+        let fresh = srcmgr_git::StagedReview::read(&session.installation, &session.identity).unwrap();
+        assert_eq!(fresh.files.len(), 4);
+        let srcmgr_git::ReviewedCommit::Observed { oid, warning } = fresh.commit(&session.installation, &session.identity, "complete index review").unwrap() else { panic!("commit result must be observed"); };
+        assert!(warning.is_none(), "{warning:?}");
+        assert_eq!(git_text(&repo, &["rev-parse", "HEAD"]), oid);
+        assert_eq!(git_text(&repo, &["show", "HEAD:a.txt"]), "two");
+        assert_eq!(fs::read(repo.join("a.txt")).unwrap(), b"unstaged content must survive\n");
+    }
+
+    #[test]
+    fn commit_review_handles_unborn_head_empty_index_and_hook_tree_changes() {
+        let scratch = Scratch::new("commit-review-root-hook");
+        let repo = scratch.0.join("repo");
+        fs::create_dir(&repo).unwrap();
+        fixture_git(&repo, &["init", "-q", "-b", "main"]);
+        fixture_git(&repo, &["config", "user.name", "Fixture"]);
+        fixture_git(&repo, &["config", "user.email", "fixture@example.invalid"]);
+        let backend = backend(&scratch.0, &repo, true);
+        let session = crate::open_trusted(&backend.options, &repo).unwrap();
+        let empty = srcmgr_git::StagedReview::read(&session.installation, &session.identity).unwrap();
+        assert!(empty.blocked.as_deref().unwrap().contains("Nothing"));
+        fs::write(repo.join("first.txt"), b"first\n").unwrap();
+        fixture_git(&repo, &["add", "first.txt"]);
+        let root = srcmgr_git::StagedReview::read(&session.installation, &session.identity).unwrap();
+        assert!(root.binding.head.is_none());
+        let srcmgr_git::ReviewedCommit::Observed { warning, .. } = root.commit(&session.installation, &session.identity, "root").unwrap() else { panic!("root commit must be observed"); };
+        assert!(warning.is_none(), "{warning:?}");
+        fs::write(repo.join("first.txt"), b"second\n").unwrap();
+        fixture_git(&repo, &["add", "first.txt"]);
+        let hook = repo.join(".git/hooks/pre-commit");
+        fs::write(&hook, "#!/bin/sh\nprintf 'hook addition\\n' > hook-added.txt\ngit add -- hook-added.txt\n").unwrap();
+        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap(); }
+        let changed = srcmgr_git::StagedReview::read(&session.installation, &session.identity).unwrap();
+        let srcmgr_git::ReviewedCommit::Observed { oid, warning } = changed.commit(&session.installation, &session.identity, "hook changed index").unwrap() else { panic!("hook commit must remain acknowledged"); };
+        assert!(warning.as_deref().unwrap().contains("differs from the reviewed index"));
+        assert_eq!(git_text(&repo, &["rev-parse", "HEAD"]), oid);
+        assert_eq!(git_text(&repo, &["show", "HEAD:hook-added.txt"]), "hook addition");
+    }
+
+    #[test]
+    fn commit_review_binds_merge_parents_and_refuses_unresolved_index_entries() {
+        let scratch = Scratch::new("commit-review-merge");
+        let repo = repository(&scratch.0, "repo");
+        fixture_git(&repo, &["reset", "--hard", "HEAD"]);
+        fixture_git(&repo, &["checkout", "-b", "side"]);
+        fs::write(repo.join("side.txt"), b"side\n").unwrap();
+        fixture_git(&repo, &["add", "side.txt"]);
+        fixture_git(&repo, &["commit", "-qm", "side"]);
+        let side = git_text(&repo, &["rev-parse", "HEAD"]);
+        fixture_git(&repo, &["checkout", "-"]);
+        fs::write(repo.join("main.txt"), b"main\n").unwrap();
+        fixture_git(&repo, &["add", "main.txt"]);
+        fixture_git(&repo, &["commit", "-qm", "main"]);
+        let before = git_text(&repo, &["rev-parse", "HEAD"]);
+        fixture_git(&repo, &["merge", "--no-commit", "--no-ff", "side"]);
+        let active = backend(&scratch.0, &repo, true);
+        let session = crate::open_trusted(&active.options, &repo).unwrap();
+        let review = srcmgr_git::StagedReview::read(&session.installation, &session.identity).unwrap();
+        assert_eq!(review.binding.merge_parents, vec![side.clone()]);
+        fs::write(repo.join(".git/MERGE_HEAD"), format!("{before}\n")).unwrap();
+        assert!(matches!(review.commit(&session.installation, &session.identity, "stale merge"), Err(srcmgr_git::GitError::StaleCommitReview)));
+        assert_eq!(git_text(&repo, &["rev-parse", "HEAD"]), before);
+        fs::write(repo.join(".git/MERGE_HEAD"), format!("{side}\n")).unwrap();
+        let fresh = srcmgr_git::StagedReview::read(&session.installation, &session.identity).unwrap();
+        let srcmgr_git::ReviewedCommit::Observed { oid, warning } = fresh.commit(&session.installation, &session.identity, "reviewed merge").unwrap() else { panic!("merge result must be observed"); };
+        assert!(warning.is_none(), "{warning:?}");
+        assert_eq!(git_text(&repo, &["rev-list", "--parents", "-n", "1", "HEAD"]), format!("{oid} {before} {side}"));
+        // A real conflicting merge must be inspectable but never committable.
+        fixture_git(&repo, &["checkout", "-b", "conflict-side"]);
+        fs::write(repo.join("a.txt"), b"side conflict\n").unwrap();
+        fixture_git(&repo, &["commit", "-qam", "conflict side"]);
+        fixture_git(&repo, &["checkout", "-"]);
+        fs::write(repo.join("a.txt"), b"main conflict\n").unwrap();
+        fixture_git(&repo, &["commit", "-qam", "conflict main"]);
+        let head = git_text(&repo, &["rev-parse", "HEAD"]);
+        let result = Command::new(git_executable()).current_dir(&repo).args(["merge", "--no-commit", "conflict-side"]).output().unwrap();
+        assert!(!result.status.success());
+        let conflicted = srcmgr_git::StagedReview::read(&session.installation, &session.identity).unwrap();
+        assert!(conflicted.blocked.as_deref().is_some_and(|text| text.contains("conflicts")));
+        assert!(conflicted.commit(&session.installation, &session.identity, "must refuse").is_err());
+        assert_eq!(git_text(&repo, &["rev-parse", "HEAD"]), head);
+        assert!(!git_text(&repo, &["ls-files", "-u"]).is_empty());
+    }
+
+    fn review_commit(backend: &mut WindowBackend, message: &str) -> Reply {
+        match backend.run(Job::LoadCommitReview { generation: 1 }) {
+            Reply::CommitReview { review, .. } => backend.run(Job::Commit { ticket: review.ticket, message: message.into() }),
+            other => other,
+        }
+    }
+
+    #[test]
+    fn commit_review_worker_refuses_changed_scope_and_preserves_the_submitted_draft() {
+        let scratch = Scratch::new("commit-review-worker-stale");
+        let repo = repository(&scratch.0, "repo");
+        let mut backend = backend(&scratch.0, &repo, true);
+        fixture_git(&repo, &["add", "a.txt"]);
+        let Reply::CommitReview { review, .. } = backend.run(Job::LoadCommitReview { generation: 4 }) else { panic!("full review required"); };
+        assert_eq!(review.files.len(), 1);
+        let before = git_text(&repo, &["rev-parse", "HEAD"]);
+        fixture_git(&repo, &["add", "u.txt"]);
+        assert!(matches!(backend.run(Job::Commit { ticket: review.ticket, message: "preserve this message".into() }), Reply::PromptFailed { action: srcmgr_ui::PromptAction::Commit, .. }));
+        assert_eq!(git_text(&repo, &["rev-parse", "HEAD"]), before);
+        let store = crate::open_profile_store(&backend.options).unwrap();
+        let key = crate::repository_key(&repo).unwrap();
+        assert_eq!(store.get_draft("git", &key).unwrap().as_deref(), Some("preserve this message"));
+        assert!(store.git_commit_intent(&key).unwrap().is_none());
+    }
+
+    #[test]
+    fn commit_review_interrupted_attempt_requires_refresh_before_another_submission() {
+        let scratch = Scratch::new("commit-review-interrupted");
+        let repo = repository(&scratch.0, "repo");
+        let mut backend = backend(&scratch.0, &repo, true);
+        let before = git_text(&repo, &["rev-parse", "HEAD"]);
+        let key = crate::repository_key(&repo).unwrap();
+        {
+            let mut store = crate::open_profile_store(&backend.options).unwrap();
+            store.begin_git_commit(&key, "interrupted draft", Some(&before)).unwrap();
+        }
+        assert!(!matches!(backend.run(Job::LoadCommitReview { generation: 1 }), Reply::CommitReview { .. }));
+        let snapshot = full(backend.run(Job::Reload));
+        assert_eq!(snapshot.draft.as_deref(), Some("interrupted draft"));
+        assert!(snapshot.stage_result.unwrap().contains("reconciled"));
+        assert_eq!(git_text(&repo, &["rev-parse", "HEAD"]), before);
+        assert!(matches!(backend.run(Job::LoadCommitReview { generation: 2 }), Reply::CommitReview { .. }));
+    }
+
+    #[test]
+    fn commit_review_nonzero_hook_after_ref_write_is_observed_without_losing_the_message() {
+        let scratch = Scratch::new("commit-review-side-effect");
+        let repo = repository(&scratch.0, "repo");
+        fixture_git(&repo, &["add", "a.txt"]);
+        let hook = repo.join(".git/hooks/pre-commit");
+        fs::write(&hook, "#!/bin/sh\nparent=$(git rev-parse HEAD) || exit 3\ntree=$(git rev-parse 'HEAD^{tree}') || exit 4\noid=$(printf 'hook side-effect\\n' | git commit-tree \"$tree\" -p \"$parent\") || exit 5\ngit update-ref HEAD \"$oid\" \"$parent\" || exit 6\nexit 1\n").unwrap();
+        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap(); }
+        let mut backend = backend(&scratch.0, &repo, true);
+        let before = git_text(&repo, &["rev-parse", "HEAD"]);
+        let snapshot = full(review_commit(&mut backend, "original submitted message"));
+        let observed = git_text(&repo, &["rev-parse", "HEAD"]);
+        assert_ne!(observed, before);
+        let notice = snapshot.stage_result.unwrap();
+        assert!(notice.contains(&observed));
+        assert!(notice.contains("Git reported an error, but HEAD changed"));
+        assert!(notice.contains("differs from the reviewed index"));
+        assert_eq!(snapshot.draft.as_deref(), Some("original submitted message"));
+        assert_eq!(git_text(&repo, &["diff", "--cached", "--name-only"]), "a.txt");
+    }
+
+    #[test]
+    fn commit_review_cli_uses_saved_git_without_recursively_locking_the_profile() {
+        let scratch = Scratch::new("commit-review-cli-preference");
+        let repo = repository(&scratch.0, "repo");
+        let backend = backend(&scratch.0, &repo, true);
+        let executable = fs::canonicalize(git_executable()).unwrap();
+        crate::open_profile_store(&backend.options).unwrap().set_git_executable(Some(&NativePath::new(executable.into_os_string()))).unwrap();
+        fixture_git(&repo, &["add", "a.txt"]);
+        let options = Options { git: None, positional: vec!["commit".into(), repo.as_os_str().to_owned()], message: Some("saved Git commit".into()), ..backend.options.clone() };
+        crate::commit_command(&options).unwrap();
+        assert_eq!(git_text(&repo, &["log", "-1", "--format=%s"]), "saved Git commit");
+        let store = crate::open_profile_store(&options).unwrap();
+        let key = crate::repository_key(&repo).unwrap();
+        assert!(store.git_commit_intent(&key).unwrap().is_none());
+        assert!(store.get_draft("git", &key).unwrap().is_none());
+    }
+
+    #[test]
+    fn commit_review_refuses_discovery_redirected_to_an_unapproved_worktree() {
+        let scratch = Scratch::new("commit-review-redirect");
+        let repo = repository(&scratch.0, "repo");
+        let outside = scratch.0.join("other-files");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("a.txt"), b"must not enter selected index\n").unwrap();
+        fixture_git(&repo, &["config", "core.worktree", outside.to_str().unwrap()]);
+        let mut backend = backend(&scratch.0, &repo, true);
+        let before = fs::read(repo.join(".git/index")).unwrap();
+        assert!(matches!(backend.run(Job::SetFile { path: NativePath::new("a.txt"), stage: true }), Reply::Notice(text) if text.contains("unapproved")));
+        assert_eq!(fs::read(repo.join(".git/index")).unwrap(), before);
+        assert_eq!(fs::read(outside.join("a.txt")).unwrap(), b"must not enter selected index\n");
     }
 
     fn lock_profile_after_git_hook(root: &Path, repo: &Path, name: &str) -> PathBuf {
@@ -797,13 +1066,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_refused_commit_keeps_the_draft_and_a_saved_draft_survives_a_reload() {
+    fn commit_review_refusal_keeps_the_draft_and_a_saved_draft_survives_a_reload() {
         let scratch = Scratch::new("draft");
         let repo = repository(&scratch.0, "repo");
         let mut backend = backend(&scratch.0, &repo, true);
         assert_eq!(backend.run(Job::SaveDraft("first line\nsecond".to_owned())), Reply::DraftSaved(Some("first line\nsecond".to_owned())));
-        let text = notice(backend.run(Job::Commit("first line\nsecond".to_owned())));
-        assert_eq!(text, "nothing is staged to commit");
+        let text = notice(review_commit(&mut backend, "first line\nsecond"));
+        assert!(text.to_ascii_lowercase().starts_with("nothing is staged to commit"));
+        assert!(text.contains("message was saved"));
         let reloaded = full(backend.run(Job::Reload));
         assert_eq!(reloaded.draft.as_deref(), Some("first line\nsecond"));
     }
@@ -1015,7 +1285,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_successful_commit_clears_the_draft_and_adds_a_commit() {
+    fn commit_review_success_clears_the_draft_and_adds_a_commit() {
         let scratch = Scratch::new("commit");
         let repo = repository(&scratch.0, "repo");
         let mut backend = backend(&scratch.0, &repo, true);
@@ -1024,14 +1294,14 @@ pub(crate) mod tests {
             path: NativePath::new("a.txt"),
             stage: true,
         });
-        let snapshot = full(backend.run(Job::Commit("second commit".to_owned())));
+        let snapshot = full(review_commit(&mut backend, "second commit"));
         assert!(snapshot.draft.is_none());
         assert_eq!(snapshot.commits.len(), 2);
         assert_eq!(snapshot.commits[0].subject, "second commit");
     }
 
     #[test]
-    fn a_created_commit_is_acknowledged_when_post_commit_profile_storage_is_locked() {
+    fn commit_review_created_commit_is_acknowledged_when_post_commit_profile_storage_is_locked() {
         let scratch = Scratch::new("commit-created-profile-lock");
         let repo = repository(&scratch.0, "repo");
         let lock = lock_profile_after_git_hook(&scratch.0, &repo, "post-commit");
@@ -1039,7 +1309,7 @@ pub(crate) mod tests {
         backend.run(Job::SaveDraft("already created".into()));
         full(backend.run(Job::SetFile { path: NativePath::new("a.txt"), stage: true }));
         let before = git_text(&repo, &["rev-parse", "HEAD"]);
-        let reply = backend.run(Job::Commit("already created".into()));
+        let reply = review_commit(&mut backend, "already created");
         let created = git_text(&repo, &["rev-parse", "HEAD"]);
         assert_ne!(created, before, "Git actually created the commit");
         assert_eq!(git_text(&repo, &["log", "-1", "--format=%s"]), "already created");

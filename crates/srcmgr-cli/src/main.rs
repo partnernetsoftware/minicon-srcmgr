@@ -17,7 +17,7 @@ use srcmgr_domain::{
     VcsBackend,
 };
 use srcmgr_git::{
-    GitBackend, GitInstallation, RepositoryIdentity, commit, locate, read_status, stage, unstage,
+    GitBackend, GitInstallation, RepositoryIdentity, locate, read_status, stage, unstage,
 };
 use srcmgr_state::{TrustStore, default_root, fingerprint};
 
@@ -371,8 +371,8 @@ fn open_trusted(options: &Options, worktree: &Path) -> Result<Session, String> {
         return Err(format!("status is unavailable: {reason}"));
     }
     let identity = locate(&installation, &worktree).map_err(|error| error.to_string())?;
-    if identity.common_dir != git_dir {
-        return Err("the repository identity changed after the trust check; nothing was run".to_owned());
+    if identity.common_dir != git_dir || identity.worktree_root != worktree {
+        return Err("discovery resolved an unapproved repository/worktree location; no mutation was requested".to_owned());
     }
     Ok(Session { installation, identity })
 }
@@ -471,35 +471,44 @@ fn change_paths(options: &Options, change: Change) -> Result<(), String> {
 /// the saved draft for this repository. A successful commit clears the draft.
 /// A refused commit leaves the draft in place.
 fn commit_command(options: &Options) -> Result<(), String> {
+    // Resolve the passive preference before taking the writer used for the
+    // draft/journal; installed-Git lookup must not recursively open it.
+    let mut selected = options.clone();
+    selected.git = Some(selected_git(options)?);
+    let options = &selected;
     let worktree = worktree_argument(options, 1)?;
     let key = repository_key(worktree)?;
     let mut store = open_profile_store(options)?;
     let message = match &options.message {
-        Some(given) => given
-            .to_str()
-            .ok_or("the commit message must be valid UTF-8")?
-            .to_owned(),
-        None => store
-            .get_draft(BACKEND_GIT, &key)
-            .map_err(|error| error.to_string())?
-            .ok_or("commit needs -m <message> or a saved draft")?,
+        Some(given) => given.to_str().ok_or("the commit message must be valid UTF-8")?.to_owned(),
+        None => store.get_draft(BACKEND_GIT, &key).map_err(|e| e.to_string())?.ok_or("commit needs -m <message> or a saved draft")?,
     };
-    if message.trim().is_empty() {
-        return Err("the commit message is empty".to_owned());
-    }
+    if message.trim().is_empty() { return Err("the commit message is empty".into()); }
     let session = open_trusted(options, worktree)?;
-    let snapshot = read_status(&session.installation, &session.identity, Generation(1))
-        .map_err(|error| error.to_string())?;
-    if !snapshot.entries.iter().any(|entry| entry.staged != ChangeKind::Unmodified) {
-        return Err("nothing is staged to commit".to_owned());
+    let review = srcmgr_git::StagedReview::read(&session.installation, &session.identity).map_err(|e| e.to_string())?;
+    if let Some(reason) = &review.blocked { return Err(reason.clone()); }
+    store.begin_git_commit(&key, &message, review.binding.head.as_deref()).map_err(|e| e.to_string())?;
+    let result = review.commit(&session.installation, &session.identity, &message);
+    drop(store);
+    match result {
+        Ok(srcmgr_git::ReviewedCommit::Observed { oid, warning }) => {
+            println!("committed {}", short(&oid));
+            if let Some(warning) = &warning { eprintln!("Observed commit warning: {warning}; submitted draft retained"); }
+            let cleanup = (|| {
+                let mut store = open_profile_store(options)?;
+                store.finish_git_commit(&key).map_err(|e| e.to_string())?;
+                if warning.is_none() { store.delete_draft(BACKEND_GIT, &key).map_err(|e| e.to_string())?; }
+                Ok::<(), String>(())
+            })();
+            if let Err(error) = cleanup { eprintln!("Commit {oid} was observed; draft/attempt cleanup unavailable: {error}. Do not resubmit."); }
+            Ok(())
+        }
+        Ok(srcmgr_git::ReviewedCommit::Unknown(reason)) => Err(format!("{reason} Submitted draft and pending attempt were saved. Open the GUI and Refresh before retrying.")),
+        Err(error) => {
+            let cleanup = open_profile_store(options).and_then(|mut store| store.finish_git_commit(&key).map_err(|e| e.to_string()));
+            Err(format!("{error}; submitted draft retained; hooks may have changed index/worktree{}", cleanup.err().map_or_else(String::new, |error| format!("; reconciliation pending: {error}"))))
+        }
     }
-    let revision = commit(&session.installation, &session.identity, &message)
-        .map_err(|error| error.to_string())?;
-    store
-        .delete_draft(BACKEND_GIT, &key)
-        .map_err(|error| error.to_string())?;
-    println!("committed {}", short(revision.token()));
-    Ok(())
 }
 
 const BACKEND_GIT: &str = "git";

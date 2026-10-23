@@ -12,6 +12,39 @@ use srcmgr_state::{ProfileStore, SCHEMA_VERSION, StoreError};
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn commit_intent_atomically_preserves_submitted_draft_and_blocks_replay_after_restart() {
+    let profile = Profile::new("commit-intent");
+    let before = "1234567890abcdef1234567890abcdef12345678";
+    {
+        let mut store = ProfileStore::open(&profile.root).unwrap();
+        store.begin_git_commit("repo", "subject\nbody 中文", Some(before)).unwrap();
+        assert!(matches!(store.begin_git_commit("repo", "must not replace", None), Err(StoreError::CommitPending)));
+    }
+    let mut store = ProfileStore::open(&profile.root).unwrap();
+    assert_eq!(store.git_commit_intent("repo").unwrap(), Some(Some(before.into())));
+    assert_eq!(store.get_draft("git", "repo").unwrap().as_deref(), Some("subject\nbody 中文"));
+    assert!(store.git_commit_intent("another repo").unwrap().is_none());
+    store.finish_git_commit("repo").unwrap();
+    assert!(store.git_commit_intent("repo").unwrap().is_none());
+    assert_eq!(store.get_draft("git", "repo").unwrap().as_deref(), Some("subject\nbody 中文"));
+    store.begin_git_commit("repo", "first commit", None).unwrap();
+    assert_eq!(store.git_commit_intent("repo").unwrap(), Some(None));
+}
+
+#[test]
+fn profile_release_preserves_a_foreign_lock_instead_of_removing_its_contents() {
+    let profile = Profile::new("foreign-lock");
+    let store = ProfileStore::open(&profile.root).unwrap();
+    let lock = profile.root.join("profile.lock");
+    fs::write(&lock, b"external writer replaced this lock").unwrap();
+    drop(store);
+    assert_eq!(fs::read(&lock).unwrap(), b"external writer replaced this lock");
+    assert!(matches!(ProfileStore::open(&profile.root), Err(StoreError::Locked)));
+    fs::remove_file(lock).unwrap();
+    assert!(ProfileStore::open(&profile.root).is_ok());
+}
+
+#[test]
 fn git_preference_survives_restart_in_native_units_and_clear_preserves_other_state() {
     use srcmgr_domain::NativePath;
     let profile = Profile::new("git-preference-native");

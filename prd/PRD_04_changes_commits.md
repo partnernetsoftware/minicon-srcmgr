@@ -42,6 +42,8 @@ Hooks/signers may run only under trust and may modify files/index even when they
 
 Successful commit reports the actual OID, refreshes history/status and clears only the draft that produced that commit. Amend previews the old OID, changed message/tree and history rewrite risk; warn when the commit is reachable from known remote-tracking refs, without claiming the absence of such reachability means it was never published. Amend remains off by default and does not persist as a hidden sticky mode. Signing enablement and verification are distinct states.
 
+Bind an ordinary review to HEAD, its symbolic destination, all merge parents when present, and the complete index-to-HEAD raw delta. A changed merge parent or destination invalidates submission just as a changed staged path does. Unresolved index entries block submission. Keep diff reading literal-path and read-only, with freshness checks around the read; a failed or superseded read cannot authorize the selected path. After launch, compare the observed tree delta, parents and destination against the review. An observed write with a mismatch or unavailable comparison is an acknowledged OID with a warning and retained draft; an unreadable outcome requires reconciliation before another attempt.
+
 ## Filtered change lists
 
 For the proposed quick-filter slice, a visible result authorizes no action by itself: selected file/hunk/line actions still bind the actual raw path, content, repository and fresh index state under the existing guards. Filtering neither stages files nor narrows a pre-existing whole-index operation. Zero results or a hidden/removed selection provides no selected-file action target; stale details cannot remain actionable.

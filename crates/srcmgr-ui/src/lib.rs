@@ -16,4 +16,5 @@ pub use model::StashRow;
 pub use model::{CommittedFile, CommittedFiles};
 pub use model::PromptAction;
 pub use model::{RecentRow, TrustReview};
+pub use model::{CommitReview, StagedRow};
 pub use workspace::{Effect, Key, Pane, Prompt, PromptKind, Workspace};

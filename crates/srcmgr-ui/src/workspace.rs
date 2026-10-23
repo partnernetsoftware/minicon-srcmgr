@@ -8,6 +8,8 @@
 //! full list and the deliberate differences.
 
 use srcmgr_domain::NativePath;
+use minicon_core::composer::{self, ComposerState, Move};
+use std::time::{Duration, Instant};
 use crate::model::{Job, Line, MainRequest, MainView, PromptAction, Reply, Snapshot, Tone};
 
 /// Lines moved by PgUp and PgDn.
@@ -28,6 +30,14 @@ pub enum Pane {
 /// A key after the window has normalised the platform event.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Key {
+    EditMove { movement: Move, extend: bool },
+    SelectAll,
+    Cut,
+    Paste,
+    Pasted(String),
+    Delete,
+    Save,
+    RefreshReview,
     Up,
     Down,
     Left,
@@ -55,6 +65,8 @@ pub enum Key {
 /// What the window must do after a key or reply.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Effect {
+    Copy { text: String, cut: bool },
+    Paste,
     Nothing,
     Send(Job),
     Quit,
@@ -98,6 +110,30 @@ pub struct IdentityForm {
     keep_input: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommitFocus { Message, Index, Diff }
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct CommitComposer {
+    pub editor: ComposerState,
+    pub review: Option<crate::model::CommitReview>,
+    pub selected: usize,
+    pub focus: CommitFocus,
+    pub diff: MainView,
+    pub diff_scroll: usize,
+    pub diff_column: usize,
+    pub diff_ready: bool,
+    pub diff_generation: u64,
+    pub review_generation: u64,
+    pub id: u64,
+    pub save_error: Option<String>,
+    saved: String,
+    in_flight: Option<String>,
+    dirty_since: Option<Instant>,
+    closing: bool,
+    quit: bool,
+}
+
 impl Prompt {
     pub fn pending(&self) -> bool { self.submitted.is_some() }
     #[must_use]
@@ -134,8 +170,7 @@ impl Prompt {
             }
             (PromptKind::NewBranch, Key::Escape | Key::CtrlC) => (Effect::Nothing, false),
             (PromptKind::Commit, Key::CtrlEnter) => {
-                self.submitted = Some(PromptAction::Commit);
-                (Effect::Send(Job::Commit(self.text.clone())), true)
+                (Effect::Nothing, true) // requires the workspace's full-index review
             }
             (PromptKind::Commit, Key::Enter) => {
                 self.text.push('\n');
@@ -216,6 +251,7 @@ pub struct Workspace {
     create: Option<CreateForm>,
     git_detail: String,
     identity: Option<IdentityForm>,
+    composer: Option<CommitComposer>,
 }
 
 impl Workspace {
@@ -249,6 +285,7 @@ impl Workspace {
             create: None,
             git_detail: String::new(),
             identity: None,
+            composer: None,
         }
     }
 
@@ -264,6 +301,227 @@ impl Workspace {
     pub fn is_welcome(&self) -> bool { self.snapshot.repository.is_none() }
     pub fn create_form(&self) -> Option<&CreateForm> { self.create.as_ref() }
     pub fn git_detail(&self) -> &str { &self.git_detail }
+    pub fn commit_composer(&self) -> Option<&CommitComposer> { self.composer.as_ref() }
+    pub fn draft_status(&self) -> &str {
+        let Some(form) = &self.composer else { return ""; };
+        if form.save_error.is_some() { "Draft save failed: Ctrl+S retries; Ctrl+A/C copies" }
+        else if form.in_flight.is_some() { "Saving draft..." }
+        else if form.editor.text == form.saved { "Draft saved" }
+        else { "Draft unsaved" }
+    }
+
+    pub fn ime_preedit(&mut self, text: String) {
+        if let Some(form) = self.composer.as_mut() && (form.focus == CommitFocus::Message || text.is_empty()) {
+            form.editor.preedit = text.chars().take(4096).collect();
+        }
+    }
+
+    pub fn ime_commit(&mut self, text: String) -> Effect {
+        if let Some(form) = self.composer.as_mut() {
+            form.editor.preedit.clear();
+            let focus = form.focus;
+            form.focus = CommitFocus::Message;
+            let effect = self.commit_key(Key::Text(text));
+            if let Some(form) = self.composer.as_mut() { form.focus = focus; }
+            return effect;
+        }
+        self.key(Key::Text(text))
+    }
+
+    pub fn click_commit_caret(&mut self, line: usize, column: usize, rows: usize, columns: usize) -> Effect {
+        let Some(form) = self.composer.as_mut() else { return Effect::Nothing; };
+        if self.prompt.as_ref().is_some_and(Prompt::pending) { return Effect::Nothing; }
+        let window = composer::visible_line_window(&form.editor.text, form.editor.caret, rows);
+        let range = composer::line_range(&form.editor.text, window.first_line + line);
+        let text = &form.editor.text[range.clone()];
+        let horizontal = if line == window.caret_row { composer::visible_window(text, &form.editor.preedit, form.editor.caret.saturating_sub(range.start).min(text.len()), 1, columns).text } else { 0 };
+        form.editor.caret = range.start + composer::caret_at_cell(text, horizontal, column);
+        form.editor.anchor = None;
+        form.editor.select_all = false;
+        form.focus = CommitFocus::Message;
+        Effect::Nothing
+    }
+
+    pub fn request_commit(&mut self) -> Effect {
+        if self.modal() || self.is_welcome() { return Effect::Nothing; }
+        let text = self.snapshot.draft.clone().unwrap_or_default();
+        self.generation += 1;
+        let mut editor = ComposerState::default();
+        editor.text = text.clone();
+        editor.caret = text.len();
+        editor.focused = true;
+        self.composer = Some(CommitComposer { editor, review: None, selected: 0, focus: CommitFocus::Message, diff: MainView::note("Select a staged path to review its Diff"), diff_scroll: 0, diff_column: 0, diff_ready: false, diff_generation: self.generation, review_generation: self.generation, id: self.generation, saved: text.clone(), in_flight: None, dirty_since: None, save_error: None, closing: false, quit: false });
+        self.prompt = Some(Prompt { kind: PromptKind::Commit, text, submitted: None });
+        self.notice = Some("Loading complete staged-index review...".into());
+        Effect::Send(Job::LoadCommitReview { generation: self.generation })
+    }
+
+    fn sync_commit_text(&mut self) {
+        let form = self.composer.as_mut().unwrap();
+        self.prompt.as_mut().unwrap().text.clone_from(&form.editor.text);
+        if form.editor.text != form.saved && form.dirty_since.is_none() { form.dirty_since = Some(Instant::now()); }
+        if form.editor.text == form.saved { form.dirty_since = None; }
+    }
+
+    pub fn draft_deadline(&self) -> Option<Instant> {
+        let form = self.composer.as_ref()?;
+        if form.in_flight.is_some() || form.save_error.is_some() || self.prompt.as_ref().is_some_and(Prompt::pending) { return None; }
+        form.dirty_since.map(|since| since + Duration::from_millis(500))
+    }
+
+    pub fn checkpoint_draft(&mut self) -> Effect {
+        let Some(form) = self.composer.as_mut() else { return Effect::Nothing; };
+        if form.in_flight.is_some() { return Effect::Nothing; }
+        form.save_error = None;
+        form.in_flight = Some(form.editor.text.clone());
+        Effect::Send(Job::SaveDraft(form.editor.text.clone()))
+    }
+
+    pub fn close_commit(&mut self, quit: bool) -> Effect {
+        let Some(form) = self.composer.as_mut() else { return if quit { Effect::Quit } else { Effect::Nothing }; };
+        if self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(PromptAction::Commit)) {
+            self.notice = Some("Commit is running; wait for its observed result before closing".into());
+            return Effect::Nothing;
+        }
+        form.closing = true;
+        form.quit |= quit;
+        if form.in_flight.is_none() && form.editor.text == form.saved && form.save_error.is_none() {
+            let quit = form.quit;
+            self.composer = None;
+            self.prompt = None;
+            return if quit { Effect::Quit } else { Effect::Nothing };
+        }
+        self.prompt.as_mut().unwrap().submitted = Some(PromptAction::SaveDraft);
+        self.checkpoint_draft()
+    }
+
+    pub fn refresh_commit_review(&mut self) -> Effect {
+        if self.prompt.as_ref().is_some_and(Prompt::pending) { return Effect::Nothing; }
+        let Some(form) = self.composer.as_mut() else { return Effect::Nothing; };
+        self.generation += 1;
+        form.review = None;
+        form.diff_ready = false;
+        form.review_generation = self.generation;
+        form.diff_generation = self.generation;
+        form.diff = MainView::note("Loading a fresh complete staged review; message retained");
+        self.notice = Some("Loading complete staged-index review...".into());
+        Effect::Send(Job::LoadCommitReview { generation: self.generation })
+    }
+
+    pub fn select_staged(&mut self, index: usize) -> Effect {
+        if self.prompt.as_ref().is_some_and(Prompt::pending) { return Effect::Nothing; }
+        let Some(form) = self.composer.as_mut() else { return Effect::Nothing; };
+        let Some(review) = &form.review else { return Effect::Nothing; };
+        if index >= review.files.len() || review.blocked.is_some() { return Effect::Nothing; }
+        self.generation += 1;
+        form.selected = index;
+        form.diff_generation = self.generation;
+        form.diff_scroll = 0;
+        form.diff_column = 0;
+        form.diff_ready = false;
+        form.diff = MainView::note("Loading selected staged Diff...");
+        Effect::Send(Job::CommitDiff { ticket: review.ticket.clone(), generation: form.diff_generation, index })
+    }
+
+    pub fn focus_commit(&mut self, focus: CommitFocus) -> Effect {
+        if let Some(form) = self.composer.as_mut() { form.focus = focus; }
+        Effect::Nothing
+    }
+
+    pub fn scroll_commit_diff(&mut self, delta: isize) -> Effect {
+        if let Some(form) = self.composer.as_mut() { form.diff_scroll = form.diff_scroll.saturating_add_signed(delta).min(form.diff.lines.len().saturating_sub(1)); }
+        Effect::Nothing
+    }
+
+    pub fn complete_clipboard(&mut self, id: u64, text: Option<String>, cut: Option<String>) -> Effect {
+        let Some(form) = self.composer.as_mut() else { return Effect::Nothing; };
+        if form.id != id || self.prompt.as_ref().is_some_and(Prompt::pending) { return Effect::Nothing; }
+        if let Some(text) = text { return self.commit_key(Key::Pasted(text)); }
+        if let Some(cut) = cut && composer::selection_text(&form.editor) == Some(cut.as_str()) {
+            composer::cut(&mut form.editor);
+            self.sync_commit_text();
+        }
+        Effect::Nothing
+    }
+
+    fn commit_key(&mut self, key: Key) -> Effect {
+        if let Some(form) = self.composer.as_mut() && !form.editor.preedit.is_empty() {
+            if matches!(key, Key::Escape) { form.editor.preedit.clear(); }
+            else { self.notice = Some("Finish IME composition before using editor commands".into()); }
+            return Effect::Nothing;
+        }
+        if matches!(key, Key::Escape) { return self.close_commit(false); }
+        if let Some(form) = self.composer.as_mut() && form.save_error.is_some() {
+            if matches!(key, Key::Save) { return self.checkpoint_draft(); }
+            if matches!(key, Key::SelectAll) { composer::select_all(&mut form.editor); return Effect::Nothing; }
+            if matches!(key, Key::CtrlC) { return composer::selection_text(&form.editor).map_or(Effect::Nothing, |text| Effect::Copy { text: text.into(), cut: false }); }
+        }
+        if self.prompt.as_ref().is_some_and(Prompt::pending) { return Effect::Nothing; }
+        if matches!(key, Key::RefreshReview) { return self.refresh_commit_review(); }
+        if matches!(key, Key::Save) { return self.checkpoint_draft(); }
+        let form = self.composer.as_mut().unwrap();
+        if matches!(key, Key::CtrlEnter) {
+            let reason = if form.editor.text.trim().is_empty() { Some("Commit message is empty") } else if form.editor.text.len() > composer::PASTE_LIMIT_BYTES { Some("Message exceeds the 64 KiB editor limit; shorten it before submitting") } else if !form.editor.preedit.is_empty() { Some("Finish IME composition before committing") } else if let Some(review) = &form.review { review.blocked.as_deref().or(if form.diff_ready { None } else { Some("Wait for the selected staged Diff") }) } else { Some("Complete staged review is unavailable; Refresh it") };
+            if let Some(reason) = reason { self.notice = Some(reason.into()); return Effect::Nothing; }
+            let ticket = form.review.as_ref().unwrap().ticket.clone();
+            self.prompt.as_mut().unwrap().submitted = Some(PromptAction::Commit);
+            return Effect::Send(Job::Commit { ticket, message: form.editor.text.clone() });
+        }
+        if matches!(key, Key::Tab | Key::BackTab) {
+            form.focus = match (form.focus, matches!(key, Key::BackTab)) {
+                (CommitFocus::Message, false) | (CommitFocus::Diff, true) => CommitFocus::Index,
+                (CommitFocus::Index, false) | (CommitFocus::Message, true) => CommitFocus::Diff,
+                _ => CommitFocus::Message,
+            };
+            return Effect::Nothing;
+        }
+        if form.focus == CommitFocus::Index {
+            let length = form.review.as_ref().map_or(0, |review| review.files.len());
+            let selected = form.selected;
+            return match key {
+                Key::Up => self.select_staged(selected.saturating_sub(1)),
+                Key::Down => self.select_staged((selected + 1).min(length.saturating_sub(1))),
+                Key::Home => self.select_staged(0),
+                Key::End => self.select_staged(length.saturating_sub(1)),
+                Key::PageDown => self.select_staged((selected + PAGE_LINES).min(length.saturating_sub(1))),
+                Key::PageUp => self.select_staged(selected.saturating_sub(PAGE_LINES)),
+                Key::Enter => { form.focus = CommitFocus::Diff; Effect::Nothing }
+                _ => Effect::Nothing,
+            };
+        }
+        if form.focus == CommitFocus::Diff {
+            return match key {
+                Key::Left => { form.diff_column = form.diff_column.saturating_sub(8); Effect::Nothing }
+                Key::Right => { let limit = form.diff.lines.iter().map(|line| composer::cells(&line.text)).max().unwrap_or(0); form.diff_column = (form.diff_column + 8).min(limit.saturating_sub(1)); Effect::Nothing }
+                Key::Up => self.scroll_commit_diff(-1), Key::Down => self.scroll_commit_diff(1), Key::PageUp => self.scroll_commit_diff(-(PAGE_LINES as isize)), Key::PageDown => self.scroll_commit_diff(PAGE_LINES as isize), _ => Effect::Nothing,
+            };
+        }
+        match key {
+            Key::SelectAll => composer::select_all(&mut form.editor),
+            Key::CtrlC | Key::Cut => return composer::selection_text(&form.editor).map_or(Effect::Nothing, |text| Effect::Copy { text: text.into(), cut: matches!(key, Key::Cut) }),
+            Key::Paste => return Effect::Paste,
+            Key::Backspace => composer::backspace(&mut form.editor),
+            Key::Delete => composer::delete_forward(&mut form.editor),
+            Key::EditMove { movement, extend: true } => composer::extend_selection(&mut form.editor, movement),
+            Key::EditMove { movement, extend: false } => composer::move_caret(&mut form.editor, movement),
+            Key::Left => composer::move_caret(&mut form.editor, Move::Left), Key::Right => composer::move_caret(&mut form.editor, Move::Right),
+            Key::Up => composer::move_caret(&mut form.editor, Move::Up), Key::Down => composer::move_caret(&mut form.editor, Move::Down),
+            Key::Home => composer::move_caret(&mut form.editor, Move::LineStart), Key::End => composer::move_caret(&mut form.editor, Move::LineEnd),
+            key => {
+                let pasted = matches!(&key, Key::Pasted(_));
+                let addition = match key { Key::Enter => "\n".into(), Key::Space => " ".into(), Key::Char(ch) => ch.to_string(), Key::Text(text) | Key::Pasted(text) => text, _ => return Effect::Nothing };
+                let selected = composer::selection_bounds(&form.editor).map_or(0, |(start, end)| end - start);
+                if form.editor.text.len().saturating_sub(selected).saturating_add(addition.len()) > composer::PASTE_LIMIT_BYTES {
+                    self.notice = Some("Message limit is 64 KiB UTF-8; input was not inserted".into());
+                    return Effect::Nothing;
+                }
+                if pasted { composer::paste(&mut form.editor, &addition); }
+                else { composer::insert(&mut form.editor, &addition.replace("\r\n", "\n")); }
+            }
+        }
+        self.sync_commit_text();
+        Effect::Nothing
+    }
     pub fn identity_form(&self) -> Option<&IdentityForm> { self.identity.as_ref() }
     pub fn request_identity(&mut self) -> Effect {
         if self.modal() || self.is_welcome() { return Effect::Nothing; }
@@ -552,6 +810,7 @@ impl Workspace {
     }
 
     pub fn key(&mut self, key: Key) -> Effect {
+        if self.composer.is_some() { return self.commit_key(key); }
         if self.identity.is_some() { return self.identity_key(key); }
         if self.create.is_some() { return self.create_key(key); }
         if self.trust.is_some() {
@@ -693,15 +952,7 @@ impl Workspace {
             }
             Key::Space => self.act(),
             Key::Char('a') => self.act_all(),
-            Key::Char('c') => {
-                self.notice = None;
-                self.prompt = Some(Prompt {
-                    kind: PromptKind::Commit,
-                    text: self.snapshot.draft.clone().unwrap_or_default(),
-                    submitted: None,
-                });
-                Effect::Nothing
-            }
+            Key::Char('c') => self.request_commit(),
             Key::Char('n') if self.focus == Pane::Branches => {
                 self.prompt = Some(Prompt { kind: PromptKind::NewBranch, text: String::new(), submitted: None });
                 Effect::Nothing
@@ -725,6 +976,19 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::CommitReview { generation, review } => {
+                if let Some(form) = self.composer.as_mut() && form.review_generation == generation {
+                    form.selected = form.selected.min(review.files.len().saturating_sub(1));
+                    self.notice.clone_from(&review.blocked);
+                    form.review = Some(review);
+                    return self.select_staged(self.composer.as_ref().unwrap().selected);
+                }
+                Effect::Nothing
+            }
+            Reply::CommitDiff { generation, view } => {
+                if let Some(form) = self.composer.as_mut() && form.diff_generation == generation { form.diff = view; form.diff_scroll = 0; form.diff_ready = true; }
+                Effect::Nothing
+            }
             Reply::IdentitySettings { ticket, name, email, detail } => {
                 if let Some(form) = self.identity.as_mut() && form.submitted {
                     if !form.keep_input { form.name = name; form.email = email; }
@@ -811,6 +1075,13 @@ impl Workspace {
             }
             Reply::NoChange => Effect::Nothing,
             Reply::MainFailed { generation, text } => {
+                if let Some(form) = self.composer.as_mut() && form.diff_generation == generation {
+                    form.diff_ready = false;
+                    form.diff = MainView::note(&text);
+                    if let Some(review) = form.review.as_mut() { review.blocked = Some("Staged Diff is unavailable or stale; Refresh review before committing".into()); }
+                    self.notice = Some(text);
+                    return Effect::Nothing;
+                }
                 if generation == self.generation {
                     self.main = MainView::text(&text);
                     self.cursor = 0;
@@ -890,6 +1161,15 @@ impl Workspace {
                 Effect::Nothing
             }
             Reply::PromptFailed { action, text } => {
+                if action == PromptAction::Commit && let Some(form) = self.composer.as_mut() {
+                    if let Some(review) = form.review.as_mut() { review.blocked = Some("Submission was refused; Refresh review before retrying".into()); }
+                    self.generation += 1;
+                    form.diff_generation = self.generation;
+                }
+                if action == PromptAction::SaveDraft && let Some(form) = self.composer.as_mut() {
+                    form.in_flight = None;
+                    form.save_error = Some(text.clone());
+                }
                 if action == PromptAction::GitSettings { self.git_detail = "Selection was not saved or applied. Correct the path and retry, or close to keep the previous choice.".into(); }
                 if action == PromptAction::IdentitySettings && let Some(form) = self.identity.as_mut() {
                     form.submitted = false;
@@ -908,6 +1188,7 @@ impl Workspace {
                 Effect::Nothing
             }
             Reply::PromptCompleted { action, text } => {
+                if action == PromptAction::Commit && let Some(form) = &self.composer { self.snapshot.draft = Some(form.editor.text.clone()); }
                 self.close_prompt(action);
                 self.generation += 1;
                 self.main = MainView::text(&text);
@@ -927,6 +1208,19 @@ impl Workspace {
                 self.reply(Reply::Full(snapshot))
             }
             Reply::DraftSaved(draft) => {
+                if let Some(form) = self.composer.as_mut() {
+                    if let Some(requested) = form.in_flight.take() {
+                        let expected = if requested.trim().is_empty() { None } else { Some(requested.as_str()) };
+                        if draft.as_deref() != expected { form.save_error = Some("Draft acknowledgement did not match the submitted text; retry saving".into()); return Effect::Nothing; }
+                        form.saved = requested;
+                        form.save_error = None;
+                        self.snapshot.draft = draft;
+                        if form.editor.text == form.saved { form.dirty_since = None; }
+                        if form.closing { let quit = form.quit; return self.close_commit(quit); }
+                        return Effect::Nothing;
+                    }
+                    return Effect::Nothing;
+                }
                 self.close_prompt(PromptAction::SaveDraft);
                 self.snapshot.draft = draft;
                 self.notice = Some("Draft saved".to_owned());
@@ -938,6 +1232,7 @@ impl Workspace {
     fn close_prompt(&mut self, action: PromptAction) {
         if self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(action)) {
             self.prompt = None;
+            if matches!(action, PromptAction::Commit | PromptAction::SaveDraft) { self.composer = None; }
         }
     }
 
@@ -1373,6 +1668,79 @@ fn clamp_index(index: usize, length: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn commit_review_is_required_and_old_refresh_or_diff_replies_cannot_retarget_it() {
+        let mut workspace = Workspace::new(snapshot(None));
+        let Effect::Send(Job::LoadCommitReview { generation: first }) = workspace.request_commit() else { panic!("review must be requested"); };
+        workspace.key(Key::Text("message".into()));
+        assert_eq!(workspace.key(Key::CtrlEnter), Effect::Nothing);
+        let Effect::Send(Job::LoadCommitReview { generation: fresh }) = workspace.refresh_commit_review() else { panic!("refresh must be explicit"); };
+        workspace.reply(Reply::CommitReview { generation: first, review: crate::model::CommitReview { ticket: "obsolete".into(), head: "old".into(), files: vec![], blocked: None } });
+        assert!(workspace.commit_composer().unwrap().review.is_none());
+        assert!(fresh > first);
+        ready_commit(&mut workspace);
+        assert_eq!(workspace.prompt().unwrap().text(), "message");
+        let current = workspace.commit_composer().unwrap().diff_generation;
+        workspace.reply(Reply::CommitDiff { generation: current - 1, view: MainView::note("obsolete staged content") });
+        assert!(!workspace.commit_composer().unwrap().diff.lines.iter().any(|line| line.text.contains("obsolete staged content")));
+        assert!(matches!(workspace.key(Key::CtrlEnter), Effect::Send(Job::Commit { ticket, message }) if ticket == "test-review" && message == "message"));
+    }
+
+    #[test]
+    fn continuous_message_typing_schedules_a_checkpoint_and_close_waits_for_exact_ack() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.request_commit();
+        workspace.key(Key::Text("first".into()));
+        let deadline = workspace.draft_deadline().unwrap();
+        workspace.key(Key::Text(" text".into()));
+        assert_eq!(workspace.draft_deadline(), Some(deadline), "continuous typing must not postpone the checkpoint");
+        assert_eq!(workspace.checkpoint_draft(), Effect::Send(Job::SaveDraft("first text".into())));
+        workspace.key(Key::Text(" latest".into()));
+        assert_eq!(workspace.close_commit(true), Effect::Nothing);
+        assert_eq!(workspace.reply(Reply::DraftSaved(Some("first text".into()))), Effect::Send(Job::SaveDraft("first text latest".into())));
+        assert!(workspace.commit_composer().is_some(), "an old acknowledgement cannot close a newer edit");
+        assert_eq!(workspace.reply(Reply::DraftSaved(Some("first text latest".into()))), Effect::Quit);
+        assert!(workspace.commit_composer().is_none());
+        assert_eq!(workspace.snapshot.draft.as_deref(), Some("first text latest"));
+    }
+
+    #[test]
+    fn commit_editor_reuses_unicode_selection_and_keeps_failed_saves_copyable() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.request_commit();
+        workspace.key(Key::Text("hello 中文".into()));
+        workspace.key(Key::Home);
+        workspace.key(Key::Text("prefix ".into()));
+        assert_eq!(workspace.prompt().unwrap().text(), "prefix hello 中文");
+        workspace.key(Key::SelectAll);
+        assert!(matches!(workspace.key(Key::CtrlC), Effect::Copy { cut: false, text } if text == "prefix hello 中文"));
+        workspace.key(Key::Text("replacement".into()));
+        let id = workspace.commit_composer().unwrap().id;
+        workspace.complete_clipboard(id, None, Some("prefix hello 中文".into()));
+        assert_eq!(workspace.prompt().unwrap().text(), "replacement", "a late cut cannot delete a changed selection");
+        workspace.key(Key::Escape);
+        workspace.reply(Reply::PromptFailed { action: PromptAction::SaveDraft, text: "disk unavailable".into() });
+        assert!(workspace.draft_deadline().is_none(), "failed I/O is not retried in a timer loop");
+        workspace.key(Key::SelectAll);
+        assert!(matches!(workspace.key(Key::CtrlC), Effect::Copy { text, .. } if text == "replacement"));
+    }
+    #[test]
+    fn commit_ime_does_not_submit_or_route_literal_text_as_a_command() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.request_commit();
+        ready_commit(&mut workspace);
+        workspace.ime_preedit("中文".into());
+        assert_eq!(workspace.key(Key::CtrlEnter), Effect::Nothing);
+        assert_eq!(workspace.key(Key::Enter), Effect::Nothing);
+        assert_eq!(workspace.prompt().unwrap().text(), "");
+        workspace.ime_commit("c 中文\nsecond line".into());
+        assert_eq!(workspace.prompt().unwrap().text(), "c 中文\nsecond line");
+        assert!(workspace.commit_composer().unwrap().editor.preedit.is_empty());
+        let Effect::Send(Job::Commit { message, .. }) = workspace.key(Key::CtrlEnter) else { panic!("explicit submit after composition must work"); };
+        assert_eq!(message, "c 中文\nsecond line");
+        assert_eq!(workspace.key(Key::CtrlEnter), Effect::Nothing, "held submit cannot duplicate a write");
+    }
+
     #[test]
     fn identity_fields_preserve_refused_edits_and_require_explicit_save_after_reload() {
         let mut workspace = Workspace::new(snapshot(None));
@@ -1958,17 +2326,28 @@ mod tests {
         assert!(workspace.prompt().is_none());
     }
 
+    fn ready_commit(workspace: &mut Workspace) {
+        let generation = workspace.composer.as_ref().unwrap().review_generation;
+        workspace.reply(Reply::CommitReview { generation, review: crate::model::CommitReview { ticket: "test-review".into(), head: "main | 0123456789ab | ordinary".into(), files: vec![crate::model::StagedRow { path: NativePath::new("a.txt"), change: "M".into(), added: Some(1), deleted: Some(1) }], blocked: None } });
+        let generation = workspace.composer.as_ref().unwrap().diff_generation;
+        workspace.reply(Reply::CommitDiff { generation, view: MainView::note("reviewed staged content") });
+    }
+
     #[test]
     fn a_refused_commit_keeps_the_message_and_a_successful_one_closes_the_prompt() {
         let mut workspace = Workspace::new(snapshot(Some("draft text")));
         workspace.open();
         workspace.key(Key::Char('c'));
+        ready_commit(&mut workspace);
         assert_eq!(workspace.prompt().map(Prompt::text), Some("draft text"));
         workspace.key(Key::Char('!'));
-        assert_eq!(sent(workspace.key(Key::CtrlEnter)), Job::Commit("draft text!".to_owned()));
+        assert_eq!(sent(workspace.key(Key::CtrlEnter)), Job::Commit { ticket: "test-review".into(), message: "draft text!".into() });
         workspace.reply(Reply::PromptFailed { action: PromptAction::Commit, text: "nothing is staged to commit".to_owned() });
         assert_eq!(workspace.prompt().map(Prompt::text), Some("draft text!"));
-        assert_eq!(sent(workspace.key(Key::CtrlEnter)), Job::Commit("draft text!".to_owned()));
+        assert_eq!(workspace.key(Key::CtrlEnter), Effect::Nothing);
+        workspace.refresh_commit_review();
+        ready_commit(&mut workspace);
+        assert_eq!(sent(workspace.key(Key::CtrlEnter)), Job::Commit { ticket: "test-review".into(), message: "draft text!".into() });
         workspace.reply(Reply::Committed(snapshot(None)));
         assert!(workspace.prompt().is_none());
     }
@@ -1977,8 +2356,9 @@ mod tests {
     fn completed_write_with_unavailable_refresh_closes_only_its_own_prompt_and_reports_stale_state() {
         let mut workspace = Workspace::new(snapshot(None));
         workspace.key(Key::Char('c'));
+        ready_commit(&mut workspace);
         workspace.key(Key::Text("already created".into()));
-        assert_eq!(workspace.key(Key::CtrlEnter), Effect::Send(Job::Commit("already created".into())));
+        assert_eq!(workspace.key(Key::CtrlEnter), Effect::Send(Job::Commit { ticket: "test-review".into(), message: "already created".into() }));
         let old_generation = workspace.generation;
         workspace.reply(Reply::PromptCompleted { action: PromptAction::Commit, text: "Commit abc created.\nState refresh unavailable; displayed lists may be stale.\nDo not resubmit.".into() });
         assert!(workspace.prompt().is_none(), "a known completed write is acknowledged");
@@ -1986,6 +2366,7 @@ mod tests {
         workspace.reply(Reply::Main { generation: old_generation, view: MainView::note("obsolete preview") });
         assert!(!workspace.main().lines.iter().any(|line| line.text == "obsolete preview"), "an older preview must not erase the reconciliation guidance");
         workspace.key(Key::Char('c'));
+        ready_commit(&mut workspace);
         workspace.key(Key::Text("keep unrelated draft".into()));
         workspace.key(Key::Escape);
         workspace.reply(Reply::PromptCompleted { action: PromptAction::CreateBranch, text: "Branch created; refresh unavailable".into() });
@@ -1997,6 +2378,7 @@ mod tests {
         let mut workspace = Workspace::new(snapshot(None));
         workspace.open();
         workspace.key(Key::Char('c'));
+        ready_commit(&mut workspace);
         workspace.key(text("retain this message"));
         sent(workspace.key(Key::CtrlEnter));
         workspace.reply(Reply::Full(snapshot(None)));
@@ -2010,6 +2392,7 @@ mod tests {
         let mut workspace = Workspace::new(snapshot(None));
         workspace.open();
         workspace.key(Key::Char('c'));
+        ready_commit(&mut workspace);
         workspace.key(text("keep after I/O failure"));
         sent(workspace.key(Key::Escape));
         assert_eq!(workspace.prompt().map(Prompt::text), Some("keep after I/O failure"), "closing before persistence is acknowledged loses the message on failure");
@@ -2025,6 +2408,7 @@ mod tests {
         let mut workspace = Workspace::new(snapshot(None));
         workspace.open();
         workspace.key(Key::Char('c'));
+        ready_commit(&mut workspace);
         workspace.key(text("subject"));
         workspace.key(Key::Enter);
         workspace.key(text("body"));
@@ -2039,9 +2423,11 @@ mod tests {
         let mut workspace = Workspace::new(snapshot(None));
         workspace.open();
         workspace.key(Key::Char('c'));
+        ready_commit(&mut workspace);
         assert_eq!(workspace.key(Key::Char('q')), Effect::Nothing);
         assert_eq!(workspace.prompt().map(Prompt::text), Some("q"));
-        assert_eq!(workspace.key(Key::CtrlC), Effect::Send(Job::SaveDraft("q".to_owned())));
+        assert_eq!(workspace.key(Key::CtrlC), Effect::Nothing, "Copy without selection never closes the message editor");
+        assert_eq!(workspace.key(Key::Escape), Effect::Send(Job::SaveDraft("q".to_owned())));
     }
 
     #[test]

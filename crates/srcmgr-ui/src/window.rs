@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Instant;
+use minicon_core::composer::{self, Move};
 
 use minicon_platform::contract::font::RasterGlyph;
 use minicon_platform::contract::input::{KeyPressState, LogicalKey, NamedKey, NormalizedKeyEvent};
@@ -21,7 +22,13 @@ use minicon_ui_core::GlyphCache;
 use minicon_ui_core::pixel::{blend_mask_xrgb, fill_xrgb_rect};
 
 use crate::model::{Backend, Job, Line, PromptAction, Reply, Snapshot, Tone, short};
-use crate::workspace::{Confirm, Effect, Key, Pane, PromptKind, Workspace};
+use crate::workspace::{CommitFocus, Confirm, Effect, Key, Pane, PromptKind, Workspace};
+
+enum ClipboardRequest { Read, Write { text: String, cut: bool } }
+enum ClipboardTask {
+    Read { operation: minicon_platform::clipboard::ClipboardTextRead, id: u64 },
+    Write { receiver: Receiver<Result<(), String>>, id: u64, cut: Option<String> },
+}
 use crate::timing_receipt::{Category, TimingReceipt};
 
 const BASE_SIZE_PX: f64 = 16.0;
@@ -112,6 +119,10 @@ struct StatusWindow {
     timing: Option<TimingReceipt>,
     native_title: String,
     initial_path: Option<srcmgr_domain::NativePath>,
+    clipboard_request: Option<ClipboardRequest>,
+    clipboard_task: Option<ClipboardTask>,
+    ime_allowed: bool,
+    ime_position_failed: bool,
 }
 
 impl StatusWindow {
@@ -130,11 +141,18 @@ impl StatusWindow {
             timing: None,
             native_title,
             initial_path: None,
+            clipboard_request: None,
+            clipboard_task: None,
+            ime_allowed: false,
+            ime_position_failed: false,
         }
     }
 
     fn sync_title(&mut self, window: &PixelWindow) {
-        if self.workspace.identity_form().is_some() {
+        if let Some(form) = self.workspace.commit_composer() {
+            let title = if self.workspace.prompt().is_some_and(|prompt| prompt.pending()) { "MiniCon SrcMgr - Commit | Working" } else if form.review.as_ref().is_some_and(|review| review.blocked.is_some()) { "MiniCon SrcMgr - Commit | Review blocked" } else if form.review.is_some() && form.diff_ready { "MiniCon SrcMgr - Commit | Review ready" } else { "MiniCon SrcMgr - Commit | Loading review" };
+            if self.native_title != title { window.set_title(title); self.native_title = title.into(); }
+        } else if self.workspace.identity_form().is_some() {
             let title = if self.workspace.identity_form().is_some_and(|form| form.submitted) { "MiniCon SrcMgr - Identity settings | Working" } else { "MiniCon SrcMgr - Identity settings | Ready" };
             if self.native_title != title { window.set_title(title); self.native_title = title.into(); }
         } else if let Some(form) = self.workspace.create_form() {
@@ -149,6 +167,51 @@ impl StatusWindow {
         } else if self.native_title != self.workspace.snapshot().title {
             self.native_title.clone_from(&self.workspace.snapshot().title);
             window.set_title(&self.native_title);
+        }
+    }
+
+    fn service_clipboard(&mut self, window: &PixelWindow) {
+        let completion = match self.clipboard_task.as_ref() {
+            Some(ClipboardTask::Read { operation, id }) => match operation.try_poll() {
+                minicon_platform::clipboard::ClipboardTextReadPoll::Pending => None,
+                minicon_platform::clipboard::ClipboardTextReadPoll::Ready(result) => Some((*id, result.map(Some).map_err(|e| e.to_string()), None)),
+            },
+            Some(ClipboardTask::Write { receiver, id, cut }) => match receiver.try_recv() {
+                Ok(result) => Some((*id, result.map(|_| None), cut.clone())),
+                Err(mpsc::TryRecvError::Disconnected) => Some((*id, Err("Clipboard write worker disconnected".into()), None)),
+                Err(mpsc::TryRecvError::Empty) => None,
+            },
+            None => None,
+        };
+        if let Some((id, result, cut)) = completion {
+            self.clipboard_task = None;
+            match result {
+                Ok(text) => { let effect = self.workspace.complete_clipboard(id, text, cut); self.dispatch(effect); }
+                Err(error) => { let _ = self.workspace.reply(Reply::Notice(format!("Clipboard unavailable; text was retained: {error}"))); }
+            }
+            window.request_redraw();
+        }
+        let Some(request) = self.clipboard_request.take() else { return; };
+        if self.clipboard_task.is_some() { let _ = self.workspace.reply(Reply::Notice("Clipboard work is already pending".into())); return; }
+        let Some(id) = self.workspace.commit_composer().map(|form| form.id) else { return; };
+        let wake = window.waker();
+        match request {
+            ClipboardRequest::Read => match minicon_platform::clipboard::read_text_async(composer::PASTE_LIMIT_BYTES, move || { let _ = wake.wake(); }) {
+                Ok(operation) => self.clipboard_task = Some(ClipboardTask::Read { operation, id }),
+                Err(error) => { let _ = self.workspace.reply(Reply::Notice(format!("Clipboard unavailable: {error}"))); }
+            },
+            ClipboardRequest::Write { text, cut } => {
+                let source = cut.then(|| text.clone());
+                let (sender, receiver) = mpsc::sync_channel(1);
+                match thread::Builder::new().name("srcmgr-clipboard-write".into()).spawn(move || {
+                    let result = std::panic::catch_unwind(|| minicon_platform::clipboard::set_text(&text).map_err(|e| e.to_string())).unwrap_or_else(|_| Err("Clipboard write worker panicked".into()));
+                    let _ = sender.send(result);
+                    let _ = wake.wake();
+                }) {
+                    Ok(_) => self.clipboard_task = Some(ClipboardTask::Write { receiver, id, cut: source }),
+                    Err(error) => { let _ = self.workspace.reply(Reply::Notice(format!("Clipboard worker unavailable; text retained: {error}"))); }
+                }
+            }
         }
     }
 
@@ -167,6 +230,43 @@ impl StatusWindow {
         let Some(surface) = self.surface else {
             return Ok(PixelWindowDirective::Continue);
         };
+        if self.workspace.commit_composer().is_some() {
+            let scale = window.scale_factor()?;
+            let geometry = commit_geometry(surface.width, surface.height, surface.grid);
+            let px = (x * scale).round() as i64;
+            let py = (y * scale).round() as i64;
+            let effect = match gesture {
+                Gesture::Click if contains(geometry.commit, px, py) => self.workspace.key(Key::CtrlEnter),
+                Gesture::Click if contains(geometry.refresh, px, py) => self.workspace.refresh_commit_review(),
+                Gesture::Click if contains(geometry.close, px, py) => self.workspace.close_commit(false),
+                Gesture::Click if contains(geometry.index, px, py) => {
+                    self.workspace.focus_commit(CommitFocus::Index);
+                    let inner = inner_of(geometry.index, surface.grid);
+                    let form = self.workspace.commit_composer().unwrap();
+                    let length = form.review.as_ref().map_or(0, |review| review.files.len());
+                    let rows = (inner.rows - COMMIT_CONTEXT_ROWS).max(1);
+                    let offset = window_start(form.selected, length, rows);
+                    let first = inner.top + COMMIT_CONTEXT_ROWS * surface.grid.row;
+                    if py < first { Effect::Nothing } else { self.workspace.select_staged(offset + ((py - first) / surface.grid.row) as usize) }
+                }
+                Gesture::Click if contains(geometry.message, px, py) => {
+                    let inner = inner_of(geometry.message, surface.grid);
+                    self.workspace.click_commit_caret(((py - inner.top).max(0) / surface.grid.row) as usize, (((px - inner.x).max(0) as f32) / surface.grid.advance) as usize, inner.rows.max(1) as usize, inner.cols)
+                }
+                Gesture::Click if contains(geometry.diff, px, py) => self.workspace.focus_commit(CommitFocus::Diff),
+                Gesture::Wheel(delta) if contains(geometry.diff, px, py) => self.workspace.scroll_commit_diff(wheel_lines(delta, surface.grid.row, scale)),
+                Gesture::Wheel(delta) if contains(geometry.index, px, py) => {
+                    let form = self.workspace.commit_composer().unwrap();
+                    let index = form.selected.saturating_add_signed(wheel_lines(delta, surface.grid.row, scale));
+                    self.workspace.select_staged(index.min(form.review.as_ref().map_or(0, |review| review.files.len().saturating_sub(1))))
+                }
+                _ => Effect::Nothing,
+            };
+            let directive = self.dispatch(effect);
+            self.sync_title(window);
+            window.request_redraw();
+            return Ok(directive);
+        }
         if self.workspace.identity_form().is_some() {
             let scale = window.scale_factor()?;
             let main = layout(surface.width, surface.height, surface.grid).main;
@@ -255,6 +355,7 @@ impl StatusWindow {
             (Gesture::Click, Hit::Create) => self.workspace.request_create(),
             (Gesture::Click, Hit::GitSettings) => self.workspace.request_git_settings(),
             (Gesture::Click, Hit::IdentitySettings) => self.workspace.request_identity(),
+            (Gesture::Click, Hit::Commit) => self.workspace.request_commit(),
             (Gesture::Click, Hit::Panel(pane)) => self.workspace.click_row(pane, usize::MAX),
             (Gesture::Click, Hit::Row(pane, index)) => self.workspace.click_row(pane, index),
             (Gesture::Click, Hit::Main(line)) => self.workspace.click_main(line),
@@ -296,7 +397,10 @@ impl StatusWindow {
     /// Runs an effect. Jobs go to the worker; quitting ends the event loop.
     fn dispatch(&mut self, effect: Effect) -> PixelWindowDirective {
         match effect {
+            Effect::Copy { text, cut } => { self.clipboard_request = Some(ClipboardRequest::Write { text, cut }); PixelWindowDirective::Continue }
+            Effect::Paste => { self.clipboard_request = Some(ClipboardRequest::Read); PixelWindowDirective::Continue }
             Effect::Nothing => PixelWindowDirective::Continue,
+            Effect::Quit if self.pending != 0 || !self.queued.is_empty() => { let _ = self.workspace.reply(Reply::Notice("Wait for current repository work before closing".into())); PixelWindowDirective::Continue }
             Effect::Quit => PixelWindowDirective::Exit,
             Effect::Send(job) => {
                 if matches!(job, Job::LoadIdentity | Job::SaveIdentity { .. } | Job::ConfigureGit(_) | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_)) && (self.pending != 0 || !self.queued.is_empty()) {
@@ -304,6 +408,7 @@ impl StatusWindow {
                     return PixelWindowDirective::Continue;
                 }
                 if (matches!(job, Job::Main { .. }) && self.queued.back().is_some_and(|last| matches!(last, Job::Main { .. })))
+                    || (matches!(job, Job::CommitDiff { .. }) && self.queued.back().is_some_and(|last| matches!(last, Job::CommitDiff { .. })))
                     || (matches!(job, Job::CancelPrepared) && self.queued.back() == Some(&Job::CancelPrepared)) {
                     *self.queued.back_mut().unwrap() = job;
                 } else if self.queued.len() < 16 || matches!(job, Job::CancelPrepared | Job::CancelEntry) {
@@ -362,7 +467,7 @@ impl StatusWindow {
                 let top = at.baseline - style.ascent + i64::from(glyph.offset_y);
                 blit_mask(canvas, glyph, left, top, style.colour);
             }
-            pen += style.advance.round() as i64;
+            pen += style.advance.round() as i64 * composer::character_cells(character) as i64;
         }
         Ok(())
     }
@@ -377,7 +482,8 @@ fn job_failure(job: &Job, message: &str) -> Reply {
         Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) => Reply::PromptFailed { action: PromptAction::OpenRepository, text },
         Job::Main { generation, .. } => Reply::MainFailed { generation: *generation, text },
         Job::Prepare { generation, .. } => Reply::ConfirmationFailed { generation: *generation, text },
-        Job::Commit(_) => Reply::PromptFailed { action: PromptAction::Commit, text },
+        Job::Commit { .. } | Job::LoadCommitReview { .. } => Reply::PromptFailed { action: PromptAction::Commit, text },
+        Job::CommitDiff { generation, .. } => Reply::MainFailed { generation: *generation, text },
         Job::CreateBranch(_) => Reply::PromptFailed { action: PromptAction::CreateBranch, text },
         Job::SaveDraft(_) => Reply::PromptFailed { action: PromptAction::SaveDraft, text },
         _ => Reply::Notice(text),
@@ -470,7 +576,7 @@ impl PixelWindowApplication for StatusWindow {
             _ => Category::Other,
         });
         let result = (|| { match event {
-            PixelWindowEvent::CloseRequested => Ok(PixelWindowDirective::Exit),
+            PixelWindowEvent::CloseRequested => { let effect = self.workspace.close_commit(true); Ok(self.dispatch(effect)) }
             PixelWindowEvent::Wake => {
                 let replies: Vec<Reply> =
                     self.replies.as_ref().map_or_else(Vec::new, |receiver| receiver.try_iter().collect());
@@ -502,6 +608,18 @@ impl PixelWindowApplication for StatusWindow {
                 window.request_redraw();
                 Ok(directive)
             }
+            PixelWindowEvent::Ime(event) => {
+                use minicon_platform::contract::ime::ImeEvent;
+                let effect = match event {
+                    ImeEvent::Preedit { text, .. } => { self.workspace.ime_preedit(text); Effect::Nothing }
+                    ImeEvent::Commit(text) => self.workspace.ime_commit(text),
+                    ImeEvent::Disabled => { self.workspace.ime_preedit(String::new()); Effect::Nothing }
+                    _ => Effect::Nothing,
+                };
+                let directive = self.dispatch(effect);
+                window.request_redraw();
+                Ok(directive)
+            }
             PixelWindowEvent::PointerMoved { position, .. } => {
                 self.pointer = Some((position.x, position.y));
                 Ok(PixelWindowDirective::Continue)
@@ -525,6 +643,11 @@ impl PixelWindowApplication for StatusWindow {
             }
             _ => Ok(PixelWindowDirective::Continue),
         } })();
+        self.service_clipboard(window);
+        let text_focus = self.workspace.prompt().is_some_and(|prompt| !prompt.pending() && (prompt.kind() != PromptKind::Commit || self.workspace.commit_composer().is_some_and(|form| form.focus == CommitFocus::Message)))
+            || self.workspace.create_form().is_some_and(|form| !form.submitted && form.review.is_none())
+            || self.workspace.identity_form().is_some_and(|form| !form.submitted);
+        if text_focus != self.ime_allowed { window.set_ime_allowed(text_focus); self.ime_allowed = text_focus; }
         if let (Some(started), Some(category), Some(timing)) = (started, category, self.timing.as_mut()) {
             timing.record(category, started.elapsed());
         }
@@ -546,12 +669,24 @@ impl PixelWindowApplication for StatusWindow {
         let grid = Grid {
             row,
             ascent: metrics.ascent.round() as i64,
-            advance: metrics.cell_width,
+            advance: metrics.cell_width.round().max(1.0),
             margin: (MARGIN_PX * scale).round() as i64,
             gap: (row / 3).max(2),
         };
         let width = frame.width();
         let height = frame.height();
+        if !self.ime_position_failed && let Some(form) = self.workspace.commit_composer() && form.focus == CommitFocus::Message {
+            let geometry = commit_geometry(i64::from(width), i64::from(height), grid);
+            let input = inner_of(geometry.message, grid);
+            let visible = composer::visible_line_window(&form.editor.text, form.editor.caret, input.rows.max(1) as usize);
+            let range = composer::line_range(&form.editor.text, visible.first_line + visible.caret_row);
+            let line = &form.editor.text[range.clone()];
+            let caret = form.editor.caret.saturating_sub(range.start).min(line.len());
+            let horizontal = composer::visible_window(line, &form.editor.preedit, caret, 1, input.cols).text;
+            let cell = composer::cells(&line[horizontal..caret]) + composer::cells(&form.editor.preedit);
+            let area = minicon_platform::window_host::LogicalRect::new((input.x + cell as i64 * grid.advance.round() as i64) as f64 / scale, (input.top + visible.caret_row as i64 * grid.row) as f64 / scale, f64::from(grid.advance) / scale, grid.row as f64 / scale);
+            if let Err(error) = window.set_ime_cursor_area(area) { self.ime_position_failed = true; let _ = self.workspace.reply(Reply::Notice(format!("IME caret positioning is unavailable: {error}"))); }
+        }
         if let Some(review) = self.workspace.trust_review() {
             let main = layout(i64::from(width), i64::from(height), grid).main;
             let (body, _) = trust_content(main, grid);
@@ -597,11 +732,16 @@ impl PixelWindowApplication for StatusWindow {
 
     fn about_to_wait(
         &mut self,
-        _window: &PixelWindow,
-        _now: Instant,
+        window: &PixelWindow,
+        now: Instant,
     ) -> Result<PixelWindowDirective, PixelWindowError> {
         if let Some(timing) = &mut self.timing { timing.record(Category::Wait, std::time::Duration::ZERO); }
-        Ok(PixelWindowDirective::Wait)
+        if self.workspace.draft_deadline().is_some_and(|deadline| deadline <= now) {
+            let effect = self.workspace.checkpoint_draft();
+            self.dispatch(effect);
+            window.request_redraw();
+        }
+        Ok(self.workspace.draft_deadline().map_or(PixelWindowDirective::Wait, PixelWindowDirective::WaitUntil))
     }
 }
 
@@ -657,12 +797,12 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
     draws.push(Draw::Text {
         x: margin,
         baseline: margin + ascent,
-        text: fit(&header, grid.columns(width - 2 * margin).saturating_sub(45)),
+        text: fit(&header, grid.columns(width - 2 * margin).saturating_sub(55)),
         colour: colour(Tone::Heading),
     });
     if pending > 0 {
         let size = (row / 2).max(2);
-        draws.push(Draw::Text { x: width - margin - (grid.advance * 41.0) as i64, baseline: margin + ascent, text: "Working".to_owned(), colour: colour(Tone::Heading) });
+        draws.push(Draw::Text { x: width - margin - (grid.advance * 51.0) as i64, baseline: margin + ascent, text: "Working".to_owned(), colour: colour(Tone::Heading) });
         draws.push(Draw::Rect { rect: Rect { x: width - margin - size, y: margin, width: size, height: size }, colour: FOCUS_BORDER });
     }
 
@@ -675,9 +815,15 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
     if workspace.is_welcome() {
         draws.push(Draw::Text { x: width - margin - (grid.advance * 17.0) as i64, baseline: margin + ascent, text: "Create [N]".into(), colour: colour(Tone::Heading) });
     } else {
+        draws.push(Draw::Text { x: width - margin - (grid.advance * 39.0) as i64, baseline: margin + ascent, text: "Commit [C]".into(), colour: colour(Tone::Heading) });
         draws.push(Draw::Text { x: width - margin - (grid.advance * 17.0) as i64, baseline: margin + ascent, text: "Identity".into(), colour: colour(Tone::Heading) });
     }
     draws.push(Draw::Text { x: width - margin - (grid.advance * 6.0) as i64, baseline: margin + ascent, text: "Git".into(), colour: colour(Tone::Heading) });
+
+    if workspace.commit_composer().is_some() {
+        commit_scene(&mut draws, workspace, width, height, grid);
+        return draws;
+    }
 
     if workspace.is_welcome() {
         let panels = layout(width, height, grid);
@@ -792,6 +938,82 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
     draws
 }
 
+struct CommitGeometry { index: Rect, message: Rect, diff: Rect, commit: Rect, refresh: Rect, close: Rect, footer: i64 }
+const COMMIT_CONTEXT_ROWS: i64 = 3;
+
+fn commit_geometry(width: i64, height: i64, grid: Grid) -> CommitGeometry {
+    let panels = layout(width, height, grid);
+    let index = Rect { x: grid.margin, y: panels.main.y, width: panels.files.width, height: panels.main.height };
+    let (_, button_height) = trust_content(panels.main, grid);
+    let button_width = ((panels.main.width - 2 * grid.gap) / 3).max(0);
+    let commit = Rect { x: panels.main.x, y: panels.main.y + panels.main.height - button_height, width: button_width, height: button_height };
+    let refresh = Rect { x: commit.x + button_width + grid.gap, ..commit };
+    let close = Rect { x: refresh.x + button_width + grid.gap, ..commit };
+    let body_height = (commit.y - panels.main.y - grid.gap).max(0);
+    let message = Rect { height: (8 * grid.row).min(body_height / 2), ..panels.main };
+    let diff = Rect { y: message.y + message.height + grid.gap, height: (body_height - message.height - grid.gap).max(0), ..panels.main };
+    CommitGeometry { index, message, diff, commit, refresh, close, footer: panels.footer_top }
+}
+
+fn commit_scene(draws: &mut Vec<Draw>, workspace: &Workspace, width: i64, height: i64, grid: Grid) {
+    let form = workspace.commit_composer().unwrap();
+    let geometry = commit_geometry(width, height, grid);
+    let inner = frame(draws, geometry.index, grid, form.focus == CommitFocus::Index, "Complete staged index");
+    if let Some(review) = &form.review {
+        for (row, line) in wrapped_lines(&review.head, inner.cols).into_iter().take(2).enumerate() {
+            draws.push(Draw::Text { x: inner.x, baseline: inner.top + row as i64 * grid.row + grid.ascent, text: line.text, colour: MUTED_TEXT });
+        }
+        draws.push(Draw::Text { x: inner.x, baseline: inner.top + 2 * grid.row + grid.ascent, text: fit(&format!("{} paths | unfiltered", review.files.len()), inner.cols), colour: colour(Tone::Heading) });
+        let rows = (inner.rows - COMMIT_CONTEXT_ROWS).max(1);
+        let offset = window_start(form.selected, review.files.len(), rows);
+        for (index, file) in review.files.iter().enumerate().skip(offset).take(rows as usize) {
+            let y = inner.top + (COMMIT_CONTEXT_ROWS + (index - offset) as i64) * grid.row;
+            if index == form.selected { draws.push(Draw::Rect { rect: Rect { x: inner.x, y, width: inner.width, height: grid.row }, colour: if form.focus == CommitFocus::Index { SELECTION } else { SELECTION_DIM } }); }
+            let counts = match (file.added, file.deleted) { (Some(added), Some(deleted)) => format!("+{added}/-{deleted}"), _ => "binary/?".into() };
+            draws.push(Draw::Text { x: inner.x, baseline: y + grid.ascent, text: fit(&format!("{} {counts} {}", file.change, file.path.display_label()), inner.cols), colour: colour(Tone::Text) });
+        }
+    } else {
+        draws.push(Draw::Text { x: inner.x, baseline: inner.top + grid.ascent, text: "Review unavailable/loading".into(), colour: MUTED_TEXT });
+    }
+    let input = frame(draws, geometry.message, grid, form.focus == CommitFocus::Message, "Commit message | Ctrl+Enter submits");
+    let visible = composer::visible_line_window(&form.editor.text, form.editor.caret, input.rows.max(1) as usize);
+    let selection = composer::selection_bounds(&form.editor);
+    for row in 0..visible.line_count {
+        let range = composer::line_range(&form.editor.text, visible.first_line + row);
+        let line = &form.editor.text[range.clone()];
+        let caret = form.editor.caret.saturating_sub(range.start).min(line.len());
+        let horizontal = if row == visible.caret_row { composer::visible_window(line, &form.editor.preedit, caret, 1, input.cols).text } else { 0 };
+        let top = input.top + row as i64 * grid.row;
+        if let Some((start, end)) = selection {
+            let start = start.max(range.start + horizontal).min(range.end);
+            let end = end.min(range.end).max(start);
+            if start < end {
+                let before = composer::cells(&form.editor.text[range.start + horizontal..start]);
+                let cells = composer::cells(&form.editor.text[start..end]).min(input.cols.saturating_sub(before));
+                draws.push(Draw::Rect { rect: Rect { x: input.x + before as i64 * grid.advance.round() as i64, y: top, width: cells as i64 * grid.advance.round() as i64, height: grid.row }, colour: SELECTION });
+            }
+        }
+        let mut text = line[horizontal..].to_owned();
+        if row == visible.caret_row && form.focus == CommitFocus::Message {
+            text.insert_str(caret.saturating_sub(horizontal), &format!("{}|", form.editor.preedit));
+        }
+        draws.push(Draw::Text { x: input.x, baseline: top + grid.ascent, text: fit(&text, input.cols), colour: colour(Tone::Text) });
+    }
+    let diff_inner = frame(draws, geometry.diff, grid, form.focus == CommitFocus::Diff, "Staged Diff | arrows/page scroll");
+    for (row, line) in form.diff.lines.iter().skip(form.diff_scroll).take(diff_inner.rows.max(0) as usize).enumerate() {
+        let offset = composer::caret_at_cell(&line.text, 0, form.diff_column);
+        draws.push(Draw::Text { x: diff_inner.x, baseline: diff_inner.top + row as i64 * grid.row + grid.ascent, text: fit(&line.text[offset..], diff_inner.cols), colour: colour(line.tone) });
+    }
+    let blocked = form.review.as_ref().and_then(|review| review.blocked.as_deref());
+    let ready = form.review.is_some() && blocked.is_none() && form.diff_ready && !form.editor.text.trim().is_empty() && form.editor.text.len() <= composer::PASTE_LIMIT_BYTES && form.editor.preedit.is_empty() && !workspace.prompt().is_some_and(|prompt| prompt.pending());
+    button_draw(draws, geometry.commit, grid, if ready { "Commit" } else { "Commit disabled" }, if ready { FOCUS_BORDER } else { BORDER });
+    button_draw(draws, geometry.refresh, grid, "Refresh review", BORDER);
+    button_draw(draws, geometry.close, grid, "Save and close", BORDER);
+    let notice = form.save_error.as_deref().or(workspace.notice()).or(blocked).unwrap_or("Review is bound to the full index; Commit rechecks freshness");
+    draws.push(Draw::Text { x: grid.margin, baseline: geometry.footer + grid.ascent, text: fit(&format!("{} | {notice}", workspace.draft_status()), grid.columns(width - 2 * grid.margin)), colour: colour(Tone::Changed) });
+    draws.push(Draw::Text { x: grid.margin, baseline: geometry.footer + grid.row + grid.ascent, text: fit("Tab Message/Index/Diff   F5 Refresh   Ctrl+S Save   Ctrl+Enter Commit   Esc Save and close", grid.columns(width - 2 * grid.margin)), colour: MUTED_TEXT });
+}
+
 /// The panels' rectangles for one frame, in physical pixels.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Layout {
@@ -839,6 +1061,7 @@ struct Surface {
 /// What a pointer position is over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Hit {
+    Commit,
     IdentitySettings,
     GitSettings,
     Create,
@@ -863,6 +1086,8 @@ enum Gesture {
 
 fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
     let grid = surface.grid;
+    let commit_x = surface.width - grid.margin - (grid.advance * 39.0) as i64;
+    if !workspace.is_welcome() && x >= commit_x && x < commit_x + (grid.advance * 10.0) as i64 && y >= grid.margin && y < grid.margin + grid.row.max(2 * grid.margin) { return Hit::Commit; }
     let git_x = surface.width - grid.margin - (grid.advance * 6.0) as i64;
     if x >= git_x && x < git_x + (grid.advance * 6.0) as i64 && y >= grid.margin && y < grid.margin + grid.row.max(2 * grid.margin) { return Hit::GitSettings; }
     let create_x = surface.width - grid.margin - (grid.advance * 17.0) as i64;
@@ -920,7 +1145,7 @@ const fn pane_of(hit: Hit) -> Option<Pane> {
         Hit::Panel(pane) | Hit::Row(pane, _) => Some(pane),
         Hit::Main(_) => Some(Pane::Main),
         Hit::Recent(_) => Some(Pane::Files),
-        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::RecentOpen => None,
+        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::RecentOpen | Hit::Commit => None,
     }
 }
 
@@ -1103,10 +1328,10 @@ fn create_fields(rect: Rect, grid: Grid) -> (Rect, Rect) {
 }
 
 fn field_tail(text: &str, columns: usize, focused: bool) -> String {
-    let chars: Vec<_> = text.chars().collect();
     let room = columns.saturating_sub(usize::from(focused));
-    let start = chars.len().saturating_sub(room);
-    let mut visible: String = chars[start..].iter().collect();
+    let mut used = 0;
+    let reversed: Vec<_> = text.chars().rev().take_while(|ch| { used += composer::character_cells(*ch); used <= room }).collect();
+    let mut visible: String = reversed.into_iter().rev().collect();
     if focused { visible.push('_'); }
     visible
 }
@@ -1136,11 +1361,18 @@ fn trust_lines(review: &crate::model::TrustReview, columns: usize) -> Vec<Line> 
 fn wrapped_lines(text: &str, columns: usize) -> Vec<Line> {
     let mut lines = Vec::new();
     for line in text.lines() {
-        let chars: Vec<_> = line.chars().collect();
-        if chars.is_empty() { lines.push(Line { tone: Tone::Text, text: String::new() }); }
-        for chunk in chars.chunks(columns.max(1)) {
-            lines.push(Line { tone: Tone::Text, text: chunk.iter().collect() });
+        let mut current = String::new();
+        let mut cells = 0;
+        for ch in line.chars() {
+            let width = composer::character_cells(ch);
+            if !current.is_empty() && cells + width > columns.max(1) {
+                lines.push(Line { tone: Tone::Text, text: std::mem::take(&mut current) });
+                cells = 0;
+            }
+            current.push(ch);
+            cells += width;
         }
+        lines.push(Line { tone: Tone::Text, text: current });
     }
     lines
 }
@@ -1258,15 +1490,12 @@ fn hints(workspace: &Workspace) -> String {
 /// Shortens `text` to `columns` characters, marking the cut with "..". Control
 /// characters become spaces so they cannot disturb the layout.
 fn fit(text: &str, columns: usize) -> String {
-    let clean: Vec<char> = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
-    if clean.len() <= columns {
-        return clean.into_iter().collect();
-    }
-    if columns <= 2 {
-        return clean.into_iter().take(columns).collect();
-    }
-    let mut out: String = clean.into_iter().take(columns - 2).collect();
-    out.push_str("..");
+    let clean: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    if composer::cells(&clean) <= columns { return clean; }
+    let budget = if columns <= 2 { columns } else { columns - 2 };
+    let mut used = 0;
+    let mut out: String = clean.chars().take_while(|ch| { used += composer::character_cells(*ch); used <= budget }).collect();
+    if columns > 2 { out.push_str(".."); }
     out
 }
 
@@ -1278,8 +1507,19 @@ fn key_of(event: &NormalizedKeyEvent) -> Option<Key> {
     }
     let control = event.modifiers.control_or_meta();
     let shift = event.modifiers.shift;
+    if event.modifiers.control && event.modifiers.alt && !event.modifiers.meta {
+        return event.text.as_ref().filter(|text| !text.is_empty()).map(|text| Key::Text(text.clone()));
+    }
     match &event.logical {
         LogicalKey::Named(named) => Some(match named {
+            NamedKey::ArrowLeft if control || shift => Key::EditMove { movement: if control { Move::WordLeft } else { Move::Left }, extend: shift },
+            NamedKey::ArrowRight if control || shift => Key::EditMove { movement: if control { Move::WordRight } else { Move::Right }, extend: shift },
+            NamedKey::ArrowUp if shift => Key::EditMove { movement: Move::Up, extend: true },
+            NamedKey::ArrowDown if shift => Key::EditMove { movement: Move::Down, extend: true },
+            NamedKey::Home if control || shift => Key::EditMove { movement: if control { Move::DraftStart } else { Move::LineStart }, extend: shift },
+            NamedKey::End if control || shift => Key::EditMove { movement: if control { Move::DraftEnd } else { Move::LineEnd }, extend: shift },
+            NamedKey::F5 => Key::RefreshReview,
+            NamedKey::Delete => Key::Delete,
             NamedKey::ArrowUp => Key::Up,
             NamedKey::ArrowDown => Key::Down,
             NamedKey::ArrowLeft => Key::Left,
@@ -1300,6 +1540,10 @@ fn key_of(event: &NormalizedKeyEvent) -> Option<Key> {
         LogicalKey::Character(text) => {
             if control {
                 return match text.as_str() {
+                    "a" | "A" => Some(Key::SelectAll),
+                    "x" | "X" => Some(Key::Cut),
+                    "v" | "V" => Some(Key::Paste),
+                    "s" | "S" => Some(Key::Save),
                     "c" | "C" => Some(Key::CtrlC),
                     "o" | "O" => Some(Key::CtrlO),
                     "d" | "D" => Some(Key::HalfPageDown),

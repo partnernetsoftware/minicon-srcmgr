@@ -243,6 +243,7 @@ impl ApplicationBackend {
         if let Some(active) = self.active.as_mut() {
             active.options.git = Some(executable.clone());
             active.prepared = None;
+            active.commit_review = None;
         }
         self.trust = None;
         self.create = None;

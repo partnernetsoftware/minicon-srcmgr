@@ -34,6 +34,8 @@ Reviewed entry points: `Cargo.toml`, `AGENTS.md`, `PRD.md`, `prd/PRD_02_28_share
 
 ## Reuse inventory
 
+The commit composer consumes `minicon-core::composer` directly at the existing immutable MiniCon revision, together with the platform clipboard feature and typed IME caret positioning. Caret, selection, movement, paste limits and cell geometry remain shared mechanisms; full-index review, draft acknowledgements and Git authority remain SrcMgr-owned. Clipboard I/O runs outside the UI thread and completion is fenced to the originating composer. Unsupported platform operations produce visible errors without discarding text. Native capability qualification is separate from successful compilation; no sibling source or revision is changed for this consumer.
+
 | Mechanism / source | Reuse decision | Boundary and qualification |
 |---|---|---|
 | `minicon-core`: click, composer, keymap, json, numeric, tree, version | Direct immutable Git dependency for needed APIs | Composer/keymap express MiniCon editing policy, not SrcMgr action routing; use explicit newline handling where available |

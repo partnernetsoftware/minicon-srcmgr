@@ -210,6 +210,8 @@ Typing, deleting, clearing and cancelling use already loaded rows and launch no 
 
 ## Delivery contracts
 
+The ordinary commit surface has a named Commit entry and three navigable regions: complete staged index, multiline message and selected staged Diff. Tab cycles the regions; the index supports bounded visible rows and selection, and Diff supports independent vertical/horizontal scroll. Message editing uses shared MiniCon caret/selection/word movement and clipboard mechanisms. Literal Unicode/IME text never becomes a repository shortcut; composition must finish before submit. Ctrl+Enter and the named Commit control share the same readiness and pending-write guards. Refresh review retains the message; save failure retains editable/copyable text and requires explicit retry instead of a timer loop. Save and close waits for the exact latest text acknowledgement. These interaction requirements do not imply native clipboard, IME or accessibility qualification; scoped evidence remains in the active version plan.
+
 | ID / leaf | Invariant | Observable evidence | Safe failure | Dependencies | Non-goal |
 |---|---|---|---|---|---|
 | UX-01 · shell | Active context and primary action remain reachable | QA-J09 minimum window, long labels and splitters | Stack/collapse with preserved focus | 03, 13 | Exact copy of terminal layout |

@@ -211,6 +211,8 @@ pub enum MainRequest {
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Job {
+    LoadCommitReview { generation: u64 },
+    CommitDiff { ticket: String, generation: u64, index: usize },
     LoadIdentity,
     SaveIdentity { ticket: String, name: String, email: String },
     LoadGitSettings,
@@ -277,13 +279,15 @@ pub enum Job {
     Stash,
     /// Checks out a commit by its full id, leaving HEAD detached.
     Detach(String),
-    Commit(String),
+    Commit { ticket: String, message: String },
     /// Replaces the saved draft; an empty text clears it.
     SaveDraft(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reply {
+    CommitReview { generation: u64, review: CommitReview },
+    CommitDiff { generation: u64, view: MainView },
     IdentitySettings { ticket: String, name: String, email: String, detail: String },
     IdentitySaved { path: NativePath, review: Option<TrustReview>, detail: String },
     GitSettings { path: Option<NativePath>, detail: String },
@@ -309,6 +313,22 @@ pub enum Reply {
     },
     /// An action was refused. The text is shown to the user as is.
     Notice(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StagedRow {
+    pub path: NativePath,
+    pub change: String,
+    pub added: Option<u64>,
+    pub deleted: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommitReview {
+    pub ticket: String,
+    pub head: String,
+    pub files: Vec<StagedRow>,
+    pub blocked: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

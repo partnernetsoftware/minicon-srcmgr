@@ -5,7 +5,7 @@
 
 use std::fmt;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, Transaction};
@@ -29,6 +29,7 @@ pub enum StoreError {
     /// A bounded product metadata record is malformed or unsupported. Keep it
     /// intact for inspection instead of replacing it with an empty default.
     InvalidMetadata,
+    CommitPending,
 }
 
 impl fmt::Display for StoreError {
@@ -44,6 +45,7 @@ impl fmt::Display for StoreError {
             Self::Sql(_) => formatter.write_str("the profile database could not be read or written"),
             Self::Io(_) => formatter.write_str("the profile directory could not be prepared"),
             Self::InvalidMetadata => formatter.write_str("stored navigation or preference metadata is invalid, foreign to this platform, or exceeds supported limits; existing records were preserved"),
+            Self::CommitPending => formatter.write_str("a previous commit attempt needs reconciliation; inspect repository state with Refresh before retrying"),
         }
     }
 }
@@ -78,7 +80,11 @@ impl WriterLock {
 
 impl Drop for WriterLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        let mut bytes = Vec::new();
+        if fs::File::open(&self.path).and_then(|file| file.take(64).read_to_end(&mut bytes)).is_ok()
+            && bytes == format!("{}\n", std::process::id()).as_bytes() {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -89,6 +95,37 @@ pub struct ProfileStore {
 }
 
 impl ProfileStore {
+    /// Persist the exact submitted draft and pending operation atomically,
+    /// before launching Git. The profile writer remains held by the caller.
+    pub fn begin_git_commit(&mut self, repository: &str, message: &str, before: Option<&str>) -> Result<(), StoreError> {
+        if self.git_commit_intent(repository)?.is_some() { return Err(StoreError::CommitPending); }
+        if before.is_some_and(|oid| !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit())) { return Err(StoreError::InvalidMetadata); }
+        let key = commit_intent_key(repository);
+        let value = format!("pending:{}", before.unwrap_or("unborn"));
+        let transaction = self.connection.transaction()?;
+        transaction.execute("INSERT INTO drafts (backend, repository, body) VALUES ('git', ?1, ?2) ON CONFLICT (backend, repository) DO UPDATE SET body = excluded.body", (repository, message))?;
+        transaction.execute("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value", (&key, &value))?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Some(None) means an interrupted attempt on an unborn HEAD.
+    pub fn git_commit_intent(&self, repository: &str) -> Result<Option<Option<String>>, StoreError> {
+        match self.get_setting_bounded(&commit_intent_key(repository), 80)? {
+            None => Ok(None),
+            Some(value) if value == "clear" => Ok(None),
+            Some(value) => match value.strip_prefix("pending:") {
+                Some("unborn") => Ok(Some(None)),
+                Some(oid) if matches!(oid.len(), 40 | 64) && oid.bytes().all(|byte| byte.is_ascii_hexdigit()) => Ok(Some(Some(oid.into()))),
+                _ => Err(StoreError::InvalidMetadata),
+            },
+        }
+    }
+
+    pub fn finish_git_commit(&mut self, repository: &str) -> Result<(), StoreError> {
+        self.git_commit_intent(repository)?;
+        self.put_setting(&commit_intent_key(repository), "clear")
+    }
     /// Takes the profile's writer lock, opens the database in WAL mode with
     /// full synchronous commits, and migrates an empty or older schema.
     pub fn open(directory: &Path) -> Result<Self, StoreError> {
@@ -179,6 +216,12 @@ impl ProfileStore {
             None => Ok(None),
         }
     }
+}
+
+fn commit_intent_key(repository: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest: String = Sha256::digest(repository.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("git.commit.intent.v1.{digest}")
 }
 
 /// Creates the schema on an empty database and refuses a newer one. Each
