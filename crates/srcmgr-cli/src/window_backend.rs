@@ -134,6 +134,7 @@ impl WindowBackend {
         let location = NativePath::new(identity.worktree_root.as_os_str()).display_label();
         let name = NativePath::new(identity.worktree_root.file_name().unwrap_or(identity.worktree_root.as_os_str())).display_label();
         let mut snapshot = Snapshot::new(NativePath::new(identity.worktree_root.as_os_str()), format!("MiniCon SrcMgr - {name} | {location}"), &status, branches, commits, draft);
+        snapshot.history_limit = limit;
         snapshot.stashes = srcmgr_git::stash_list(installation, identity).map_err(|e| e.to_string())?.into_iter()
             .map(|s| srcmgr_ui::StashRow { id: s.id, subject: s.subject }).collect();
         Ok(snapshot)
@@ -540,6 +541,51 @@ pub(crate) mod tests {
             prepared: None,
             commit_review: None,
         }
+    }
+
+    #[test]
+    fn commit_review_filtered_files_keep_full_index_scope_and_never_widen_all_or_stash() {
+        use srcmgr_ui::{Workspace, Pane, Key, Effect};
+        fn drive(ui: &mut Workspace, backend: &mut WindowBackend, mut effect: Effect) {
+            for _ in 0..16 {
+                match effect { Effect::Nothing => return, Effect::Send(job) => effect = ui.reply(backend.run(job)), _ => panic!("unexpected effect") }
+            }
+            panic!("work did not settle");
+        }
+        let scratch = Scratch::new("filtered-commit");
+        let repo = repository(&scratch.0, "repo");
+        fs::write(repo.join("hidden.bin"), [0, 255, 1]).unwrap();
+        fs::write(repo.join("--hidden 中文.txt"), b"native staged content\n").unwrap();
+        fixture_git(&repo, &["add", "--", "a.txt", "hidden.bin", "--hidden 中文.txt"]);
+        fs::write(repo.join("a.txt"), b"unstaged bytes survive\n").unwrap();
+        let before_index = git_text(&repo, &["write-tree"]);
+        let mut backend = backend(&scratch.0, &repo, true);
+        let mut ui = Workspace::new(backend.snapshot().unwrap());
+        let effect = ui.open(); drive(&mut ui, &mut backend, effect);
+        ui.request_filter(Pane::Files);
+        let effect = ui.key(Key::Text("a.txt".into())); drive(&mut ui, &mut backend, effect);
+        let effect = ui.key(Key::Enter); drive(&mut ui, &mut backend, effect);
+        for key in [Key::Char('a'), Key::Char('s')] { let effect = ui.key(key); drive(&mut ui, &mut backend, effect); }
+        assert_eq!(git_text(&repo, &["write-tree"]), before_index, "filtered all/stash must not consume unseen changes");
+        assert!(git_text(&repo, &["stash", "list"]).is_empty());
+        assert_eq!(fs::read(repo.join("a.txt")).unwrap(), b"unstaged bytes survive\n");
+        ui.request_filter(Pane::Files); ui.key(Key::SelectAll); ui.key(Key::Text("中文".into()));
+        let effect = ui.key(Key::Enter); drive(&mut ui, &mut backend, effect);
+        let effect = ui.key(Key::Space); drive(&mut ui, &mut backend, effect);
+        assert!(!Command::new(git_executable()).current_dir(&repo).args(["ls-files", "--error-unmatch", "--", "--hidden 中文.txt"]).output().unwrap().status.success());
+        assert_eq!(git_text(&repo, &["show", ":a.txt"]), "two");
+        let effect = ui.key(Key::Space); drive(&mut ui, &mut backend, effect);
+        assert_eq!(git_text(&repo, &["write-tree"]), before_index);
+        ui.request_filter(Pane::Files); ui.key(Key::SelectAll); ui.key(Key::Text("a.txt".into()));
+        let effect = ui.key(Key::Enter); drive(&mut ui, &mut backend, effect);
+        assert_eq!(ui.visible_rows(Pane::Files).len(), 1);
+        let effect = ui.key(Key::Char('c')); drive(&mut ui, &mut backend, effect);
+        assert_eq!(ui.commit_composer().unwrap().review.as_ref().unwrap().files.len(), 3, "the complete index stays visible beside a filtered worktree list");
+        ui.key(Key::Text("full index from filtered view".into()));
+        let effect = ui.key(Key::CtrlEnter); drive(&mut ui, &mut backend, effect);
+        assert_eq!(git_text(&repo, &["rev-parse", "HEAD^{tree}"]), before_index);
+        assert_eq!(fs::read(repo.join("a.txt")).unwrap(), b"unstaged bytes survive\n");
+        assert_eq!(ui.filter_query(Pane::Files), "a.txt");
     }
 
     #[test]

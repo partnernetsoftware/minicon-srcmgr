@@ -91,6 +91,7 @@ pub struct TrustReview {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Snapshot {
+    pub history_limit: usize,
     pub navigation: Option<crate::Navigation>,
     /// None is an explicit Welcome state, not a guessed Git repository.
     pub repository: Option<NativePath>,
@@ -118,6 +119,7 @@ impl Snapshot {
     ) -> Self {
         Self {
             navigation: None,
+            history_limit: 200,
             repository: Some(repository),
             recents: Vec::new(),
             title: title.into(),
@@ -134,6 +136,7 @@ impl Snapshot {
     pub fn welcome() -> Self {
         Self {
             navigation: None,
+            history_limit: 200,
             repository: None, recents: Vec::new(), title: "MiniCon SrcMgr".into(),
             head: "Open a local repository. No account required.".into(),
             files: Vec::new(), branches: Vec::new(), commits: Vec::new(),

@@ -44,6 +44,7 @@ const SELECTION_DIM: u32 = 0x0033_3740;
 const MUTED_TEXT: u32 = 0x0080_8080;
 
 const HELP_LINES: &[&str] = &[
+    "/            filter loaded Files, Branches or Commits; Esc clears",
     "Ctrl+Tab     next repository; Ctrl+Shift+Tab previous",
     "Ctrl+W       close active repository after saving context",
     "O            open another trusted repository (or click Open)",
@@ -151,6 +152,11 @@ impl StatusWindow {
     }
 
     fn sync_title(&mut self, window: &PixelWindow) {
+        if let Some(form) = self.workspace.filter_editor() {
+            let title = format!("MiniCon SrcMgr - Filter | {} | {} matches", pane_label(form.pane), self.workspace.visible_rows(form.pane).len());
+            if self.native_title != title { window.set_title(&title); self.native_title = title; }
+            return;
+        }
         if let Some(form) = self.workspace.commit_composer() {
             let title = if self.workspace.prompt().is_some_and(|prompt| prompt.pending()) { "MiniCon SrcMgr - Commit | Working" } else if form.review.as_ref().is_some_and(|review| review.blocked.is_some()) { "MiniCon SrcMgr - Commit | Review blocked" } else if form.review.is_some() && form.diff_ready { "MiniCon SrcMgr - Commit | Review ready" } else { "MiniCon SrcMgr - Commit | Loading review" };
             if self.native_title != title { window.set_title(title); self.native_title = title.into(); }
@@ -195,7 +201,7 @@ impl StatusWindow {
         }
         let Some(request) = self.clipboard_request.take() else { return; };
         if self.clipboard_task.is_some() { let _ = self.workspace.reply(Reply::Notice("Clipboard work is already pending".into())); return; }
-        let Some(id) = self.workspace.commit_composer().map(|form| form.id) else { return; };
+        let Some(id) = self.workspace.clipboard_context() else { return; };
         let wake = window.waker();
         match request {
             ClipboardRequest::Read => match minicon_platform::clipboard::read_text_async(composer::PASTE_LIMIT_BYTES, move || { let _ = wake.wake(); }) {
@@ -355,6 +361,29 @@ impl StatusWindow {
             window.request_redraw();
             return Ok(directive);
         }
+        if self.workspace.filter_editor().is_some() {
+            let hit = hit_test(&self.workspace, surface, px, py);
+            let effect = match (gesture, hit) {
+                (Gesture::Click, Hit::ClearFilter(pane)) => self.workspace.clear_filter(pane),
+                (Gesture::Click, Hit::Filter(pane)) => { self.workspace.finish_filter(true, false); self.workspace.request_filter(pane) }
+                (Gesture::Click, Hit::Row(pane, index)) => { self.workspace.finish_filter(true, false); if self.workspace.filter_editor().is_none() { self.workspace.click_row(pane, index) } else { Effect::Nothing } }
+                (Gesture::Click, Hit::Panel(pane)) => { self.workspace.finish_filter(true, false); if self.workspace.filter_editor().is_none() { self.workspace.click_row(pane, usize::MAX) } else { Effect::Nothing } }
+                (Gesture::Click, Hit::Main(_)) => {
+                    let inner = inner_of(filter_field(layout(surface.width, surface.height, surface.grid).main, surface.grid), surface.grid);
+                    self.workspace.click_filter_caret(((px - inner.x).max(0) as f32 / surface.grid.advance) as usize, inner.cols)
+                }
+                (Gesture::Wheel(delta), Hit::Row(pane, _) | Hit::Panel(pane)) => {
+                    let current = self.workspace.selected(pane);
+                    let next = current.saturating_add_signed(wheel_lines(delta, surface.grid.row, scale)).min(self.workspace.visible_rows(pane).len().saturating_sub(1));
+                    self.workspace.preview_filter_row(pane, next)
+                }
+                _ => Effect::Nothing,
+            };
+            let directive = self.dispatch(effect);
+            self.sync_title(window);
+            window.request_redraw();
+            return Ok(directive);
+        }
         if self.workspace.modal() {
             return Ok(PixelWindowDirective::Continue);
         }
@@ -368,6 +397,8 @@ impl StatusWindow {
             (Gesture::Click, Hit::GitSettings) => self.workspace.request_git_settings(),
             (Gesture::Click, Hit::IdentitySettings) => self.workspace.request_identity(),
             (Gesture::Click, Hit::Commit) => self.workspace.request_commit(),
+            (Gesture::Click, Hit::Filter(pane)) => self.workspace.request_filter(pane),
+            (Gesture::Click, Hit::ClearFilter(pane)) => self.workspace.clear_filter(pane),
             (Gesture::Click, Hit::Repository(index)) => self.workspace.select_repository(index),
             (Gesture::Click, Hit::CloseRepository) => self.workspace.close_repository(),
             (Gesture::Click, Hit::NextRepository) => self.workspace.key(Key::NextRepository),
@@ -585,7 +616,7 @@ impl PixelWindowApplication for StatusWindow {
     ) -> Result<PixelWindowDirective, PixelWindowError> {
         let started = self.timing.as_ref().map(|_| Instant::now());
         let category = started.map(|_| match &event {
-            PixelWindowEvent::Keyboard(key) if key_of(key).is_some() => if self.workspace.prompt().is_some() { Category::Text } else { Category::Keyboard },
+            PixelWindowEvent::Keyboard(key) if key_of(key).is_some() => if self.workspace.prompt().is_some() || self.workspace.filter_editor().is_some() { Category::Text } else { Category::Keyboard },
             PixelWindowEvent::PointerButton { .. } | PixelWindowEvent::MouseWheel { .. } => Category::Pointer,
             PixelWindowEvent::Wake => Category::Wake,
             PixelWindowEvent::GeometryChanged { .. } | PixelWindowEvent::ResizeInteractionEnded => Category::Layout,
@@ -633,6 +664,7 @@ impl PixelWindowApplication for StatusWindow {
                     _ => Effect::Nothing,
                 };
                 let directive = self.dispatch(effect);
+                self.sync_title(window);
                 window.request_redraw();
                 Ok(directive)
             }
@@ -660,7 +692,7 @@ impl PixelWindowApplication for StatusWindow {
             _ => Ok(PixelWindowDirective::Continue),
         } })();
         self.service_clipboard(window);
-        let text_focus = self.workspace.prompt().is_some_and(|prompt| !prompt.pending() && (prompt.kind() != PromptKind::Commit || self.workspace.commit_composer().is_some_and(|form| form.focus == CommitFocus::Message)))
+        let text_focus = self.workspace.filter_editor().is_some() || self.workspace.prompt().is_some_and(|prompt| !prompt.pending() && (prompt.kind() != PromptKind::Commit || self.workspace.commit_composer().is_some_and(|form| form.focus == CommitFocus::Message)))
             || self.workspace.create_form().is_some_and(|form| !form.submitted && form.review.is_none())
             || self.workspace.identity_form().is_some_and(|form| !form.submitted);
         if text_focus != self.ime_allowed { window.set_ime_allowed(text_focus); self.ime_allowed = text_focus; }
@@ -701,6 +733,13 @@ impl PixelWindowApplication for StatusWindow {
             let horizontal = composer::visible_window(line, &form.editor.preedit, caret, 1, input.cols).text;
             let cell = composer::cells(&line[horizontal..caret]) + composer::cells(&form.editor.preedit);
             let area = minicon_platform::window_host::LogicalRect::new((input.x + cell as i64 * grid.advance.round() as i64) as f64 / scale, (input.top + visible.caret_row as i64 * grid.row) as f64 / scale, f64::from(grid.advance) / scale, grid.row as f64 / scale);
+            if let Err(error) = window.set_ime_cursor_area(area) { self.ime_position_failed = true; let _ = self.workspace.reply(Reply::Notice(format!("IME caret positioning is unavailable: {error}"))); }
+        }
+        if !self.ime_position_failed && let Some(form) = self.workspace.filter_editor() {
+            let input = inner_of(filter_field(layout(i64::from(width), i64::from(height), grid).main, grid), grid);
+            let visible = composer::visible_window(&form.editor.text, &form.editor.preedit, form.editor.caret, 1, input.cols);
+            let cell = composer::cells(&form.editor.text[visible.text..form.editor.caret]) + composer::cells(&form.editor.preedit);
+            let area = minicon_platform::window_host::LogicalRect::new((input.x + cell as i64 * grid.advance.round() as i64) as f64 / scale, input.top as f64 / scale, f64::from(grid.advance) / scale, grid.row as f64 / scale);
             if let Err(error) = window.set_ime_cursor_area(area) { self.ime_position_failed = true; let _ = self.workspace.reply(Reply::Notice(format!("IME caret positioning is unavailable: {error}"))); }
         }
         if let Some(review) = self.workspace.trust_review() {
@@ -889,64 +928,12 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         selected(Pane::Status),
     );
     let file_pane = if workspace.stash_list_visible() { Pane::Stashes } else { Pane::Files };
-    let file_rows: Vec<Line> = if workspace.stash_list_visible() {
-        snapshot.stashes.iter().enumerate().map(|(index, s)| Line { tone: Tone::Text, text: format!("stash@{{{index}}} {} {}", short(&s.id), s.subject) }).collect()
-    } else {
-        snapshot.files.iter().map(|file| Line { tone: file.tone, text: file.label.clone() }).collect()
-    };
-    let file_title = if workspace.stash_list_visible() { format!("[5] Stashes ({}; max 200)", snapshot.stashes.len()) } else { format!("[2] Files ({})", snapshot.files.len()) };
-    list_panel(
-        &mut draws,
-        files_rect,
-        grid,
-        Panel {
-            focused: focus == file_pane,
-            title: &file_title,
-            empty: if workspace.stash_list_visible() { "No stashes" } else { "Working tree clean" },
-        },
-        &file_rows,
-        selected(file_pane),
-    );
-    let branch_rows: Vec<Line> = snapshot
-        .branches
-        .iter()
-        .map(|branch| Line {
-            tone: if branch.current { Tone::Heading } else { Tone::Text },
-            text: format!("{} {}", if branch.current { '*' } else { ' ' }, branch.label),
-        })
-        .collect();
-    list_panel(
-        &mut draws,
-        branches_rect,
-        grid,
-        Panel {
-            focused: focus == Pane::Branches,
-            title: &format!("[3] Branches ({})", snapshot.branches.len()),
-            empty: "No local branches",
-        },
-        &branch_rows,
-        selected(Pane::Branches),
-    );
-    let commit_rows: Vec<Line> = snapshot
-        .commits
-        .iter()
-        .map(|commit| Line {
-            tone: Tone::Text,
-            text: format!("{}{} {}", if commit.merge { 'M' } else { ' ' }, short(&commit.id), commit.subject),
-        })
-        .collect();
-    list_panel(
-        &mut draws,
-        commits_rect,
-        grid,
-        Panel {
-            focused: focus == Pane::Commits,
-            title: &format!("[4] Commits ({})", snapshot.commits.len()),
-            empty: "No commits yet",
-        },
-        &commit_rows,
-        selected(Pane::Commits),
-    );
+    if file_pane == Pane::Stashes {
+        let rows: Vec<_> = snapshot.stashes.iter().enumerate().map(|(index, item)| Line { tone: Tone::Text, text: format!("stash@{{{index}}} {} {}", short(&item.id), item.subject) }).collect();
+        list_panel(&mut draws, files_rect, grid, Panel { focused: focus == Pane::Stashes, title: &format!("[5] Stashes ({}; max 200)", snapshot.stashes.len()), empty: "No stashes" }, &rows, selected(Pane::Stashes));
+    } else { filtered_panel(&mut draws, files_rect, grid, workspace, Pane::Files); }
+    filtered_panel(&mut draws, branches_rect, grid, workspace, Pane::Branches);
+    filtered_panel(&mut draws, commits_rect, grid, workspace, Pane::Commits);
 
     main_panel(&mut draws, main_rect, grid, workspace);
 
@@ -1090,6 +1077,8 @@ struct Surface {
 /// What a pointer position is over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Hit {
+    Filter(Pane),
+    ClearFilter(Pane),
     Repository(usize),
     NextRepository,
     PreviousRepository,
@@ -1172,15 +1161,20 @@ fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
     let snapshot = workspace.snapshot();
     let lists = [
         (Pane::Status, panels.status, 1),
-        (if workspace.stash_list_visible() { Pane::Stashes } else { Pane::Files }, panels.files, if workspace.stash_list_visible() { snapshot.stashes.len() } else { snapshot.files.len() }),
-        (Pane::Branches, panels.branches, snapshot.branches.len()),
-        (Pane::Commits, panels.commits, snapshot.commits.len()),
+        (if workspace.stash_list_visible() { Pane::Stashes } else { Pane::Files }, panels.files, if workspace.stash_list_visible() { snapshot.stashes.len() } else { workspace.visible_rows(Pane::Files).len() }),
+        (Pane::Branches, panels.branches, workspace.visible_rows(Pane::Branches).len()),
+        (Pane::Commits, panels.commits, workspace.visible_rows(Pane::Commits).len()),
     ];
     for (pane, rect, length) in lists {
         if !contains(rect, x, y) {
             continue;
         }
-        let inner = inner_of(rect, grid);
+        let inner = if matches!(pane, Pane::Files | Pane::Branches | Pane::Commits) { filtered_inner_of(rect, grid) } else { inner_of(rect, grid) };
+        if matches!(pane, Pane::Files | Pane::Branches | Pane::Commits) {
+            let (field, clear) = filter_controls(rect, grid);
+            if contains(clear, x, y) { return Hit::ClearFilter(pane); }
+            if contains(field, x, y) { return Hit::Filter(pane); }
+        }
         if y < inner.top || y >= inner.top + inner.rows * grid.row {
             return Hit::Panel(pane);
         }
@@ -1206,7 +1200,7 @@ const fn pane_of(hit: Hit) -> Option<Pane> {
         Hit::Panel(pane) | Hit::Row(pane, _) => Some(pane),
         Hit::Main(_) => Some(Pane::Main),
         Hit::Recent(_) => Some(Pane::Files),
-        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::RecentOpen | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository => None,
+        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::RecentOpen | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository | Hit::Filter(_) | Hit::ClearFilter(_) => None,
     }
 }
 
@@ -1225,6 +1219,77 @@ struct Panel<'a> {
     focused: bool,
     title: &'a str,
     empty: &'a str,
+}
+
+fn pane_label(pane: Pane) -> &'static str { match pane { Pane::Files => "Files", Pane::Branches => "Branches", Pane::Commits => "Commits", _ => "List" } }
+
+fn filter_controls(rect: Rect, grid: Grid) -> (Rect, Rect) {
+    let inner = inner_of(rect, grid);
+    let clear = Rect { x: inner.x + inner.width - (grid.advance * 6.0) as i64, y: inner.top, width: (grid.advance * 6.0) as i64, height: grid.row };
+    (Rect { x: inner.x, y: inner.top, width: (clear.x - inner.x - grid.gap).max(0), height: grid.row }, clear)
+}
+
+fn filtered_inner_of(rect: Rect, grid: Grid) -> Inner {
+    let mut inner = inner_of(rect, grid);
+    inner.top += grid.row;
+    inner.rows = (inner.rows - 1).max(0);
+    inner
+}
+
+fn filtered_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace, pane: Pane) {
+    let snapshot = workspace.snapshot();
+    let rows = workspace.visible_rows(pane);
+    let total = match pane { Pane::Files => snapshot.files.len(), Pane::Branches => snapshot.branches.len(), Pane::Commits => snapshot.commits.len(), _ => 0 };
+    let number = match pane { Pane::Files => 2, Pane::Branches => 3, _ => 4 };
+    let query = workspace.filter_query(pane);
+    let counts = if query.is_empty() { total.to_string() } else { format!("{}/{total}", rows.len()) };
+    let title = if pane == Pane::Commits { format!("[4] Loaded commits {counts} max{}", snapshot.history_limit) } else { format!("[{number}] {} ({counts})", pane_label(pane)) };
+    frame(draws, rect, grid, workspace.focus() == pane, &title);
+    let (field, clear) = filter_controls(rect, grid);
+    draws.push(Draw::Text { x: field.x, baseline: field.y + grid.ascent, text: fit(&format!("Filter /: {query}"), grid.columns(field.width)), colour: if query.is_empty() { MUTED_TEXT } else { colour(Tone::Heading) } });
+    draws.push(Draw::Text { x: clear.x, baseline: clear.y + grid.ascent, text: "Clear".into(), colour: if query.is_empty() { MUTED_TEXT } else { colour(Tone::Heading) } });
+    let inner = filtered_inner_of(rect, grid);
+    if rows.is_empty() {
+        let message = if !query.is_empty() { "No matching loaded items" } else { match pane { Pane::Files => "Working tree clean", Pane::Branches => "No local branches", _ => "No commits yet" } };
+        draws.push(Draw::Text { x: inner.x, baseline: inner.top + grid.ascent, text: fit(message, inner.cols), colour: MUTED_TEXT });
+        return;
+    }
+    let selected = workspace.selected(pane);
+    let offset = window_start(selected, rows.len(), inner.rows);
+    for (position, raw) in rows.iter().enumerate().skip(offset).take(inner.rows.max(0) as usize) {
+        let top = inner.top + (position - offset) as i64 * grid.row;
+        if position == selected { draws.push(Draw::Rect { rect: Rect { x: inner.x, y: top, width: inner.width, height: grid.row }, colour: if workspace.focus() == pane { SELECTION } else { SELECTION_DIM } }); }
+        let (text, tone) = match pane {
+            Pane::Files => { let file = &snapshot.files[*raw]; (file.label.clone(), file.tone) }
+            Pane::Branches => { let branch = &snapshot.branches[*raw]; (format!("{} {}", if branch.current { '*' } else { ' ' }, branch.label), if branch.current { Tone::Heading } else { Tone::Text }) }
+            _ => { let commit = &snapshot.commits[*raw]; (format!("{}{} {}", if commit.merge { 'M' } else { ' ' }, short(&commit.id), commit.subject), Tone::Text) }
+        };
+        draws.push(Draw::Text { x: inner.x, baseline: top + grid.ascent, text: fit(&text, inner.cols), colour: colour(tone) });
+    }
+}
+
+fn filter_field(rect: Rect, grid: Grid) -> Rect { Rect { x: rect.x + grid.gap, y: rect.y + grid.row + grid.gap, width: (rect.width - 2 * grid.gap).max(0), height: 3 * grid.row } }
+
+fn filter_scene(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
+    let form = workspace.filter_editor().unwrap();
+    frame(draws, rect, grid, true, &format!("Filter {} | loaded items only", pane_label(form.pane)));
+    let input = frame(draws, filter_field(rect, grid), grid, true, "Literal query | 256 characters");
+    let window = composer::visible_window(&form.editor.text, &form.editor.preedit, form.editor.caret, 1, input.cols);
+    let mut text = form.editor.text[window.text..].to_owned();
+    text.insert_str(form.editor.caret.saturating_sub(window.text), &format!("{}|", form.editor.preedit));
+    if let Some((a, b)) = composer::selection_bounds(&form.editor) {
+        let start = a.max(window.text).min(form.editor.text.len());
+        let end = b.max(start);
+        let before = composer::cells(&form.editor.text[window.text..start]);
+        let cells = composer::cells(&form.editor.text[start..end]).min(input.cols.saturating_sub(before));
+        draws.push(Draw::Rect { rect: Rect { x: input.x + before as i64 * grid.advance.round() as i64, y: input.top, width: cells as i64 * grid.advance.round() as i64, height: grid.row }, colour: SELECTION });
+    }
+    draws.push(Draw::Text { x: input.x, baseline: input.top + grid.ascent, text: fit(&text, input.cols), colour: colour(Tone::Text) });
+    let total = match form.pane { Pane::Files => workspace.snapshot().files.len(), Pane::Branches => workspace.snapshot().branches.len(), _ => workspace.snapshot().commits.len() };
+    let scope = if form.pane == Pane::Commits { format!("Latest {total} loaded commits; configured maximum {}. Unloaded history is not searched.", workspace.snapshot().history_limit) } else { "Only loaded items are filtered. No Git, network or profile work occurs while typing.".into() };
+    let info = format!("{} / {total} loaded items match.\n{scope}\n\nEnter applies and returns to the list.\nEscape restores the previous query and selection.\nUp/Down previews selection without loading details.\nTab applies and changes pane. Clear restores the unfiltered list.\n\n{}", workspace.visible_rows(form.pane).len(), workspace.notice().unwrap_or("Literal, case-insensitive matching; spaces are meaningful."));
+    let body = Rect { y: filter_field(rect, grid).y + 4 * grid.row, height: (rect.height - 6 * grid.row).max(0), ..filter_field(rect, grid) };
+    text_panel(draws, body, grid, false, "Filter scope and actions", &wrapped_lines(&info, inner_of(body, grid).cols), 0, None);
 }
 
 fn list_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, panel: Panel<'_>, rows: &[Line], selected: usize) {
@@ -1260,6 +1325,7 @@ fn list_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, panel: Panel<'_>, r
 /// The main panel shows the editor while a prompt is open, the key help while
 /// help is open, and otherwise the diff or detail of the source list.
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
+    if workspace.filter_editor().is_some() { filter_scene(draws, rect, grid, workspace); return; }
     if let Some(form) = workspace.identity_form() {
         let (body, _) = trust_content(rect, grid);
         frame(draws, body, grid, true, "Repository identity (local scope)");
@@ -1514,11 +1580,12 @@ fn inner_of(rect: Rect, grid: Grid) -> Inner {
 /// The first visible index, keeping `selected` inside a window of `rows` rows.
 fn window_start(selected: usize, length: usize, rows: i64) -> usize {
     let rows = rows.max(1) as usize;
-    if length <= rows || selected < rows { 0 } else { (selected + 1 - rows).min(length - rows) }
+    if selected >= length || length <= rows || selected < rows { 0 } else { (selected + 1 - rows).min(length - rows) }
 }
 
 /// Keys the window shows for the current state, most useful first.
 fn hints(workspace: &Workspace) -> String {
+    if workspace.filter_editor().is_some() { return "Enter Apply   Esc Restore   Tab Change pane   Up/Down Preview   Ctrl+A/C/V Edit".into(); }
     if let Some(form) = workspace.identity_form() { return if form.submitted { "Working; fields are read-only until completion. Esc cancels a read, not a submitted save." } else { "Tab Switch field   Enter Save local/reload   Page/Up/Down Scroll sources   Esc Cancel" }.into(); }
     if workspace.help() {
         return "Esc close help".to_owned();
@@ -1700,6 +1767,7 @@ mod tests {
 
     fn snapshot(files: usize) -> Snapshot {
         Snapshot {
+            history_limit: 200,
             navigation: None,
             repository: Some(NativePath::new("fixture-repository")),
             recents: Vec::new(),
@@ -1807,7 +1875,7 @@ mod tests {
         assert!(all.iter().any(|text| text.starts_with("[1] Status")));
         assert!(all.iter().any(|text| text.starts_with("[2] Files (2)")));
         assert!(all.iter().any(|text| text.starts_with("[3] Branches (1)")));
-        assert!(all.iter().any(|text| text.starts_with("[4] Commits (1)")));
+        assert!(all.iter().any(|text| text.starts_with("[4] Loaded commits 1 max200")));
         assert!(all.iter().any(|text| text.contains("Space stage/unstage")));
     }
 
@@ -1879,7 +1947,7 @@ mod tests {
         let workspace = Workspace::new(snapshot(3));
         let surface = Surface { width: 1040, height: 680, grid: GRID };
         let panels = layout(1040, 680, GRID);
-        let row_y = inner_of(panels.files, GRID).top + GRID.row * 2 + 1;
+        let row_y = filtered_inner_of(panels.files, GRID).top + GRID.row * 2 + 1;
         assert_eq!(hit_test(&workspace, surface, panels.files.x + 5, row_y), Hit::Row(Pane::Files, 2));
         assert_eq!(hit_test(&workspace, surface, panels.main.x + 5, panels.main.y + 1), Hit::Main(None));
         assert_eq!(hit_test(&workspace, surface, 1, 1), Hit::Nothing, "the header is not a target");
@@ -1904,7 +1972,8 @@ mod tests {
     #[test]
     fn main_view_text_is_drawn_from_the_scroll_offset() {
         let mut workspace = Workspace::new(snapshot(1));
-        workspace.reply(Reply::Main { generation: 0, view: MainView::text("alpha\nbeta\ngamma") });
+        let Effect::Send(Job::Main { generation, .. }) = workspace.open() else { panic!(); };
+        workspace.reply(Reply::Main { generation, view: MainView::text("alpha\nbeta\ngamma") });
         workspace.key(Key::Enter);
         workspace.key(Key::Down);
         let draws = scene(&workspace, 1040, 680, GRID, 0);

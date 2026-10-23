@@ -23,6 +23,7 @@ def main():
     for name in ("exe", "git", "out"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--owned-topmost", action="store_true")
+    parser.add_argument("--filtered", action="store_true", help="exercise all three local filters before full-index commit and retain them across restart")
     args = parser.parse_args()
     workspace = Path(__file__).resolve().parents[1]
     root = Path(args.out).resolve()
@@ -45,6 +46,9 @@ def main():
     run("add", "a.txt")
     run("commit", "-qm", "initial")
     before = run("rev-parse", "HEAD")
+    if args.filtered:
+        run("branch", "feature/filter-c")
+        run("branch", "tools/(x)")
     staged = {"a.txt": b"staged\n", "hidden.bin": bytes([0, 255, 1]), "--hidden 中文.txt": b"unicode path\n"}
     for name, content in staged.items():
         (repo / name).write_bytes(content)
@@ -83,8 +87,71 @@ def main():
     def title(value):
         wait_entry(lambda: native_title(hwnd, user) == value, "missing context: " + value)
         wait_quiet(hwnd, user, gdi)
+    filter_done = False
+    def filter_case():
+        initial_index = run("write-tree")
+        key(hwnd, "/")
+        key(hwnd, "a.txt")
+        title("MiniCon SrcMgr - Filter | Files | 1 matches")
+        capture_entry(hwnd, user, gdi, root, "files-filter-one.png")
+        key(hwnd, 0x0D)
+        wait_entry(lambda: " - Filter |" not in native_title(hwnd, user), "file filter did not apply")
+        wait_quiet(hwnd, user, gdi)
+        key(hwnd, 0x41)
+        key(hwnd, 0x53)
+        capture_entry(hwnd, user, gdi, root, "filtered-all-stash-refused.png")
+        assert run("write-tree") == initial_index and not run("stash", "list")
+        key(hwnd, 0x33)
+        key(hwnd, "/")
+        key(hwnd, "(x)")
+        title("MiniCon SrcMgr - Filter | Branches | 1 matches")
+        capture_entry(hwnd, user, gdi, root, "branches-literal-filter.png")
+        key(hwnd, 0x0D)
+        key(hwnd, 0x34)
+        key(hwnd, "/")
+        key(hwnd, before.decode().strip()[:8])
+        title("MiniCon SrcMgr - Filter | Commits | 1 matches")
+        capture_entry(hwnd, user, gdi, root, "commits-loaded-prefix.png")
+        key(hwnd, 0x0D)
+        key(hwnd, 0x32)
+        capture_entry(hwnd, user, gdi, root, "files-filter-retained.png")
+        wait_quiet(hwnd, user, gdi)
+        # Locate the rendered active Clear text in the loaded Files strip.
+        # Follow-up native match count proves what the pointer action did.
+        rect = w.RECT()
+        user.GetClientRect(hwnd, c.byref(rect))
+        scale = user.GetDpiForWindow(hwnd) / 96
+        x = round(rect.right * .38 - 40 * scale)
+        dc = user.GetDC(hwnd)
+        try:
+            ys = [y for y in range(round(100 * scale), rect.bottom // 2)
+                  if gdi.GetPixel(dc, x, y) == 0xD69C56
+                  and not all(gdi.GetPixel(dc, x + dx, y) == 0xD69C56 for dx in range(-20, 21))]
+        finally:
+            user.ReleaseDC(hwnd, dc)
+        assert ys, "rendered Files Clear is unavailable"
+        point = w.POINT(x, ys[0])
+        assert user.ClientToScreen(hwnd, c.byref(point))
+        user.WindowFromPoint.argtypes, user.WindowFromPoint.restype = [w.POINT], w.HWND
+        assert user.GetForegroundWindow() == hwnd and user.WindowFromPoint(point) == hwnd
+        user.SetCursorPos(point.x, point.y)
+        actual = w.POINT()
+        assert user.GetCursorPos(c.byref(actual)) and (actual.x, actual.y) == (point.x, point.y)
+        assert user.GetForegroundWindow() == hwnd and user.WindowFromPoint(actual) == hwnd
+        user.mouse_event(2, 0, 0, 0, 0)
+        user.mouse_event(4, 0, 0, 0, 0)
+        capture_entry(hwnd, user, gdi, root, "files-pointer-cleared.png")
+        key(hwnd, "/")
+        title("MiniCon SrcMgr - Filter | Files | 3 matches")
+        key(hwnd, "a.txt")
+        title("MiniCon SrcMgr - Filter | Files | 1 matches")
+        key(hwnd, 0x0D)
+        wait_entry(lambda: " - Filter |" not in native_title(hwnd, user), "restored file filter did not apply")
+        wait_quiet(hwnd, user, gdi)
+        assert run("write-tree") == initial_index
+        receipt["cases"].append("PASS: Files/Branches/loaded-Commits literal filters, OID prefix, pointer Clear and retained independent queries; filtered all/stash leave the real index/worktree untouched")
     def launch():
-        nonlocal child, hwnd
+        nonlocal child, hwnd, filter_done
         hwnd = None
         with (root / "stderr.log").open("a", encoding="utf-8") as log:
             child = tree.spawn([exe, "--git", git, "--profile", str(profile), "gui", str(repo)], env=env, stdout=sp.DEVNULL, stderr=log)
@@ -95,6 +162,11 @@ def main():
             if not user.SetWindowPos(hwnd, w.HWND(-1), 0, 0, 0, 0, 0x0043):
                 raise RuntimeError("owned-window isolation refused")
         wait_entry(lambda: " | " in native_title(hwnd, user), "repository startup did not complete")
+        if args.filtered and not filter_done:
+            filter_case()
+            filter_done = True
+        elif args.filtered:
+            capture_entry(hwnd, user, gdi, root, "recovered-query-lists.png")
         key(hwnd, 0x43)
         title("MiniCon SrcMgr - Commit | Review ready")
     try:
@@ -144,6 +216,13 @@ def main():
         child.wait(timeout=15)
         assert child.returncode == 0 and draft() == recovered
         receipt["first_exit_code"] = child.returncode
+        if args.filtered:
+            with sqlite3.connect((profile / "profile.sqlite3").as_uri() + "?mode=ro", uri=True) as db:
+                rows = db.execute("SELECT value FROM settings WHERE key LIKE 'git.navigation.v1.%'").fetchall()
+            assert len(rows) == 1
+            fields = rows[0][0].split("\n")
+            assert fields[0] == "2" and [bytes.fromhex(s).decode() for s in fields[11:14]] == ["a.txt", "(x)", before.decode().strip()[:8]]
+            receipt["cases"].append("PASS: all three queries are durably bound to the worktree before native restart")
         # Restage an explicit fixture path so the second review is usable.
         run("add", "a.txt")
         launch()

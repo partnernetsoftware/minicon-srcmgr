@@ -222,10 +222,28 @@ pub enum Confirm {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RepositoryTab { pub path: NativePath, pub head: String }
 
+#[derive(Clone)]
+struct FilterAnchor { identity: Option<crate::NavigationSelection>, cursor: usize, scroll: usize }
+
+pub struct FilterEditor {
+    pub pane: Pane,
+    pub editor: ComposerState,
+    pub id: u64,
+    previous_query: String,
+    previous_anchor: Option<FilterAnchor>,
+    origin: FilterAnchor,
+    previous_view: Option<MainView>,
+    previous_request: Option<MainRequest>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TabAction { Select(NativePath), Close, Quit }
 
 pub struct Workspace {
+    filters: [crate::filter::FilterIndex; 3],
+    filter_anchors: [Option<FilterAnchor>; 3],
+    filter_editor: Option<FilterEditor>,
+    next_position: Option<(Pane, Option<crate::NavigationSelection>, usize, usize)>,
     tabs: Vec<RepositoryTab>,
     closing_tab: bool,
     tab_entry: bool,
@@ -243,6 +261,7 @@ pub struct Workspace {
     stashes: usize,
     stash_mode: bool,
     main: MainView,
+    main_ready: bool,
     /// The main panel's cursor: an index into `main.lines`.
     cursor: usize,
     /// The other end of a `v` line range. `None` when no range is open.
@@ -273,7 +292,8 @@ impl Workspace {
     #[must_use]
     pub fn new(snapshot: Snapshot) -> Self {
         let tabs = snapshot.repository.as_ref().map(|path| RepositoryTab { path: path.clone(), head: snapshot.head.clone() }).into_iter().collect();
-        Self {
+        let mut workspace = Self {
+            filters: std::array::from_fn(|_| Default::default()), filter_anchors: [None, None, None], filter_editor: None, next_position: None,
             tabs, closing_tab: false, tab_entry: false, tab_action: None, last_request: None, restore_position: None,
             snapshot,
             focus: Pane::Files,
@@ -284,6 +304,7 @@ impl Workspace {
             stashes: 0,
             stash_mode: false,
             main: MainView::default(),
+            main_ready: false,
             cursor: 0,
             anchor: None,
             scroll: 0,
@@ -303,7 +324,9 @@ impl Workspace {
             git_detail: String::new(),
             identity: None,
             composer: None,
-        }
+        };
+        workspace.load_filter_rows();
+        workspace
     }
 
     /// Requests the main-panel content for the first list. Call once after `new`.
@@ -318,14 +341,178 @@ impl Workspace {
 
     pub fn tabs(&self) -> &[RepositoryTab] { &self.tabs }
 
+    fn filter_slot(pane: Pane) -> Option<usize> { match pane { Pane::Files => Some(0), Pane::Branches => Some(1), Pane::Commits => Some(2), _ => None } }
+    pub fn filter_query(&self, pane: Pane) -> &str { Self::filter_slot(pane).map_or("", |i| self.filters[i].query.as_str()) }
+    pub fn visible_rows(&self, pane: Pane) -> &[usize] { Self::filter_slot(pane).map_or(&[], |i| self.filters[i].rows.as_slice()) }
+    pub fn filter_editor(&self) -> Option<&FilterEditor> { self.filter_editor.as_ref() }
+    pub fn clipboard_context(&self) -> Option<u64> { self.filter_editor.as_ref().map(|e| e.id).or_else(|| self.composer.as_ref().map(|c| c.id)) }
+
+    fn load_filter_rows(&mut self) {
+        self.filters[0].load(self.snapshot.files.iter().map(|f| f.path.display_label()), std::iter::empty());
+        self.filters[1].load(self.snapshot.branches.iter().map(|b| NativePath::new(b.name.clone()).display_label()), std::iter::empty());
+        self.filters[2].load(self.snapshot.commits.iter().map(|c| c.subject.clone()), self.snapshot.commits.iter().map(|c| c.id.clone()));
+    }
+
+    fn reconcile_filter_selection(&mut self) {
+        for (i, current) in [(0, &mut self.files), (1, &mut self.branches), (2, &mut self.commits)] {
+            if !self.filters[i].rows.contains(current) { *current = self.filters[i].rows.first().copied().unwrap_or(usize::MAX); }
+        }
+    }
+
+    fn selected_identity(&self, pane: Pane) -> Option<crate::NavigationSelection> {
+        match pane { Pane::Files => self.snapshot.files.get(self.files).map(|f| crate::NavigationSelection::File(f.path.clone())), Pane::Branches => self.snapshot.branches.get(self.branches).map(|b| crate::NavigationSelection::Branch(b.name.clone())), Pane::Commits => self.snapshot.commits.get(self.commits).map(|c| crate::NavigationSelection::Commit(c.id.clone())), _ => None }
+    }
+
+    fn restore_filter_identity(&mut self, pane: Pane, identity: &Option<crate::NavigationSelection>) {
+        match (pane, identity) {
+            (Pane::Files, Some(crate::NavigationSelection::File(path))) => self.files = self.snapshot.files.iter().position(|f| &f.path == path).unwrap_or(usize::MAX),
+            (Pane::Branches, Some(crate::NavigationSelection::Branch(name))) => self.branches = self.snapshot.branches.iter().position(|b| &b.name == name).unwrap_or(usize::MAX),
+            (Pane::Commits, Some(crate::NavigationSelection::Commit(id))) => self.commits = self.snapshot.commits.iter().position(|c| &c.id == id).unwrap_or(usize::MAX),
+            _ => {}
+        }
+        self.reconcile_filter_selection();
+    }
+
+    pub fn request_filter(&mut self, pane: Pane) -> Effect {
+        if self.modal() || self.is_welcome() { return Effect::Nothing; }
+        let Some(slot) = Self::filter_slot(pane) else { return Effect::Nothing; };
+        let same_source = self.source == pane;
+        self.focus = pane;
+        self.source = pane;
+        self.generation += 1;
+        let origin = FilterAnchor { identity: self.selected_identity(pane), cursor: if same_source { self.cursor } else { 0 }, scroll: if same_source { self.scroll } else { 0 } };
+        let mut editor = ComposerState::default();
+        editor.text.clone_from(&self.filters[slot].query);
+        editor.caret = editor.text.len();
+        let previous_view = std::mem::replace(&mut self.main, MainView::note("Filter loaded items; Enter applies, Esc restores the previous query"));
+        let previous_request = self.last_request.take();
+        self.filter_editor = Some(FilterEditor { pane, editor, id: self.generation, previous_query: self.filters[slot].query.clone(), previous_anchor: self.filter_anchors[slot].clone(), origin, previous_view: (self.main_ready && same_source).then_some(previous_view), previous_request: if self.main_ready && same_source { previous_request } else { None } });
+        self.main_ready = false;
+        self.notice = None;
+        Effect::Nothing
+    }
+
+    fn update_filter_text(&mut self) {
+        let form = self.filter_editor.as_ref().unwrap();
+        let slot = Self::filter_slot(form.pane).unwrap();
+        if self.filters[slot].query == form.editor.text { return; }
+        if self.filters[slot].query.is_empty() && !form.editor.text.is_empty() && self.filter_anchors[slot].is_none() { self.filter_anchors[slot] = Some(form.origin.clone()); }
+        self.filters[slot].query.clone_from(&form.editor.text);
+        self.filters[slot].project();
+        self.reconcile_filter_selection();
+        self.generation += 1;
+        self.anchor = None;
+        self.restore_position = None;
+        self.last_request = None;
+    }
+
+    pub fn finish_filter(&mut self, apply: bool, inspect: bool) -> Effect {
+        let Some(form) = self.filter_editor.take() else { return Effect::Nothing; };
+        if !form.editor.preedit.is_empty() { self.notice = Some("Finish IME composition before leaving the filter".into()); self.filter_editor = Some(form); return Effect::Nothing; }
+        let slot = Self::filter_slot(form.pane).unwrap();
+        self.focus = form.pane;
+        self.source = form.pane;
+        if !apply {
+            self.filters[slot].query = form.previous_query;
+            self.filters[slot].project();
+            self.filter_anchors[slot] = form.previous_anchor;
+            self.restore_filter_identity(form.pane, &form.origin.identity);
+            if self.selected_identity(form.pane) == form.origin.identity && let Some(view) = form.previous_view {
+                self.main = view;
+                self.main_ready = true;
+                self.last_request = form.previous_request;
+                self.cursor = form.origin.cursor;
+                self.scroll = form.origin.scroll;
+            }
+            return Effect::Nothing;
+        }
+        if self.filters[slot].query.is_empty() && let Some(anchor) = self.filter_anchors[slot].take() {
+            self.restore_filter_identity(form.pane, &anchor.identity);
+            self.next_position = Some((form.pane, self.selected_identity(form.pane), anchor.cursor, anchor.scroll));
+        }
+        if inspect { return self.show_source(); }
+        Effect::Nothing
+    }
+
+    pub fn clear_filter(&mut self, pane: Pane) -> Effect {
+        let Some(slot) = Self::filter_slot(pane) else { return Effect::Nothing; };
+        if self.filter_editor.as_ref().is_some_and(|e| !e.editor.preedit.is_empty()) { self.notice = Some("Finish IME composition before clearing the filter".into()); return Effect::Nothing; }
+        self.filter_editor = None;
+        self.filters[slot].query.clear();
+        self.filters[slot].project();
+        if let Some(anchor) = self.filter_anchors[slot].take() {
+            self.restore_filter_identity(pane, &anchor.identity);
+            self.next_position = Some((pane, self.selected_identity(pane), anchor.cursor, anchor.scroll));
+        } else { self.reconcile_filter_selection(); }
+        self.focus = pane;
+        self.source = pane;
+        self.generation += 1;
+        self.last_request = None;
+        self.anchor = None;
+        self.detail_back = None;
+        self.main = MainView::note("Filter cleared. Enter or select a row to inspect current content.");
+        Effect::Nothing
+    }
+
+    fn filter_key(&mut self, key: Key) -> Effect {
+        let form = self.filter_editor.as_mut().unwrap();
+        if !form.editor.preedit.is_empty() { if key == Key::Escape { form.editor.preedit.clear(); } return Effect::Nothing; }
+        match key {
+            Key::Escape => return self.finish_filter(false, false),
+            Key::Enter => return self.finish_filter(true, true),
+            Key::Tab | Key::BackTab => { self.finish_filter(true, false); return self.cycle(matches!(key, Key::Tab)); }
+            Key::Up | Key::Down => {
+                let pane = form.pane;
+                let length = self.list_length(pane);
+                if length > 0 { let current = self.selected(pane); let next = if key == Key::Up { current.saturating_sub(1) } else { current.saturating_add(1).min(length - 1) }; self.set_selected(pane, next); }
+                return Effect::Nothing;
+            }
+            Key::SelectAll => composer::select_all(&mut form.editor),
+            Key::CtrlC | Key::Cut => return composer::selection_text(&form.editor).map_or(Effect::Nothing, |s| Effect::Copy { text: s.into(), cut: key == Key::Cut }),
+            Key::Paste => return Effect::Paste,
+            Key::Backspace => composer::backspace(&mut form.editor), Key::Delete => composer::delete_forward(&mut form.editor),
+            Key::Left => composer::move_caret(&mut form.editor, Move::Left), Key::Right => composer::move_caret(&mut form.editor, Move::Right), Key::Home => composer::move_caret(&mut form.editor, Move::LineStart), Key::End => composer::move_caret(&mut form.editor, Move::LineEnd),
+            Key::EditMove { movement, extend } => { if extend { composer::extend_selection(&mut form.editor, movement); } else { composer::move_caret(&mut form.editor, movement); } }
+            key => {
+                let text = match key { Key::Char(c) => c.to_string(), Key::Text(s) | Key::Pasted(s) => s, Key::Space => " ".into(), _ => return Effect::Nothing };
+                let removed = composer::selection_bounds(&form.editor).map_or(0, |(a,b)| form.editor.text[a..b].chars().count());
+                if text.contains(['\n', '\r']) || form.editor.text.chars().count() - removed + text.chars().count() > 256 { self.notice = Some("Filter limit is 256 Unicode characters on one line; input was not inserted".into()); return Effect::Nothing; }
+                composer::insert(&mut form.editor, &text);
+            }
+        }
+        self.update_filter_text();
+        Effect::Nothing
+    }
+
+    pub fn preview_filter_row(&mut self, pane: Pane, index: usize) -> Effect {
+        if self.filter_editor.as_ref().is_some_and(|e| e.pane == pane) { self.set_selected(pane, index); }
+        Effect::Nothing
+    }
+
+    pub fn click_filter_caret(&mut self, column: usize, columns: usize) -> Effect {
+        if let Some(form) = self.filter_editor.as_mut() {
+            let start = composer::visible_window(&form.editor.text, &form.editor.preedit, form.editor.caret, 1, columns).text;
+            form.editor.caret = composer::caret_at_cell(&form.editor.text, start, column);
+            form.editor.anchor = None;
+            form.editor.select_all = false;
+        }
+        Effect::Nothing
+    }
+
     pub fn navigation(&self) -> crate::Navigation {
-        crate::Navigation { focus: self.focus, source: self.source,
+        crate::Navigation { queries: std::array::from_fn(|i| self.filters[i].query.clone()), anchors: std::array::from_fn(|i| self.filter_anchors[i].as_ref().and_then(|a| a.identity.clone())), anchor_positions: std::array::from_fn(|i| self.filter_anchors[i].as_ref().map_or((0, 0), |a| (a.cursor, a.scroll))), focus: self.focus, source: self.source,
             file: self.snapshot.files.get(self.files).map(|f| f.path.clone()), branch: self.snapshot.branches.get(self.branches).map(|b| b.name.clone()),
             commit: self.snapshot.commits.get(self.commits).map(|c| c.id.clone()), stash: self.snapshot.stashes.get(self.stashes).map(|s| s.id.clone()),
             stash_mode: self.stash_mode, cursor: self.cursor, scroll: self.scroll, request: self.last_request.clone() }
     }
 
     fn restore_navigation(&mut self, navigation: crate::Navigation) -> Effect {
+        for i in 0..3 {
+            self.filters[i].query.clone_from(&navigation.queries[i]);
+            self.filters[i].project();
+            let (cursor, scroll) = navigation.anchor_positions[i];
+            self.filter_anchors[i] = navigation.anchors[i].clone().map(|identity| FilterAnchor { identity: Some(identity), cursor, scroll });
+        }
         self.focus = navigation.focus;
         self.source = navigation.source;
         self.stash_mode = navigation.stash_mode;
@@ -333,10 +520,11 @@ impl Workspace {
         self.branches = navigation.branch.as_ref().and_then(|n| self.snapshot.branches.iter().position(|b| &b.name == n)).unwrap_or(0);
         self.commits = navigation.commit.as_ref().and_then(|id| self.snapshot.commits.iter().position(|c| &c.id == id)).unwrap_or(0);
         self.stashes = navigation.stash.as_ref().and_then(|id| self.snapshot.stashes.iter().position(|s| &s.id == id)).unwrap_or(0);
+        self.reconcile_filter_selection();
         let request = navigation.request.filter(|request| match request {
-            MainRequest::File { path, staged_view, .. } => self.snapshot.files.iter().any(|f| &f.path == path && if *staged_view { f.has_staged } else { f.has_unstaged }),
+            MainRequest::File { path, staged_view, .. } => self.snapshot.files.get(self.files).is_some_and(|f| &f.path == path && if *staged_view { f.has_staged } else { f.has_unstaged }),
             MainRequest::Stash { id } => self.snapshot.stashes.iter().any(|s| &s.id == id),
-            _ => true,
+            MainRequest::Commit { id } | MainRequest::CommitFiles { id } | MainRequest::CommitFile { id, .. } => self.snapshot.commits.get(self.commits).is_some_and(|c| &c.id == id),
         });
         let Some(request) = request else { return self.show_source(); };
         self.generation += 1;
@@ -366,6 +554,10 @@ impl Workspace {
     pub fn close_repository(&mut self) -> Effect { self.repository_action(TabAction::Close) }
 
     fn repository_action(&mut self, action: TabAction) -> Effect {
+        if self.filter_editor.is_some() {
+            self.finish_filter(true, false);
+            if self.filter_editor.is_some() { return Effect::Nothing; }
+        }
         if self.composer.is_some() {
             if self.composer.as_ref().is_some_and(|form| !form.editor.preedit.is_empty()) { self.notice = Some("Finish IME composition before changing repositories".into()); return Effect::Nothing; }
             if self.prompt.as_ref().is_some_and(Prompt::pending) { self.notice = Some("Wait for the current save or commit before switching repositories".into()); return Effect::Nothing; }
@@ -412,12 +604,14 @@ impl Workspace {
     }
 
     pub fn ime_preedit(&mut self, text: String) {
+        if let Some(form) = self.filter_editor.as_mut() { form.editor.preedit = text.chars().take(4096).collect(); return; }
         if let Some(form) = self.composer.as_mut() && (form.focus == CommitFocus::Message || text.is_empty()) {
             form.editor.preedit = text.chars().take(4096).collect();
         }
     }
 
     pub fn ime_commit(&mut self, text: String) -> Effect {
+        if let Some(form) = self.filter_editor.as_mut() { form.editor.preedit.clear(); return self.filter_key(Key::Text(text)); }
         if let Some(form) = self.composer.as_mut() {
             form.editor.preedit.clear();
             let focus = form.focus;
@@ -535,6 +729,12 @@ impl Workspace {
     }
 
     pub fn complete_clipboard(&mut self, id: u64, text: Option<String>, cut: Option<String>) -> Effect {
+        if let Some(form) = self.filter_editor.as_mut() {
+            if form.id != id { return Effect::Nothing; }
+            if let Some(text) = text { return self.filter_key(Key::Pasted(text)); }
+            if let Some(cut) = cut && composer::selection_text(&form.editor) == Some(cut.as_str()) { composer::cut(&mut form.editor); self.update_filter_text(); }
+            return Effect::Nothing;
+        }
         let Some(form) = self.composer.as_mut() else { return Effect::Nothing; };
         if form.id != id || self.prompt.as_ref().is_some_and(Prompt::pending) { return Effect::Nothing; }
         if let Some(text) = text { return self.commit_key(Key::Pasted(text)); }
@@ -818,14 +1018,16 @@ impl Workspace {
     }
 
     #[must_use]
-    pub const fn selected(&self, pane: Pane) -> usize {
-        match pane {
+    pub fn selected(&self, pane: Pane) -> usize {
+        if self.is_welcome() && pane == Pane::Files { return self.files; }
+        let raw = match pane {
             Pane::Files => self.files,
             Pane::Branches => self.branches,
             Pane::Commits => self.commits,
             Pane::Stashes => self.stashes,
             Pane::Status | Pane::Main => 0,
-        }
+        };
+        Self::filter_slot(pane).map_or(raw, |i| self.filters[i].rows.iter().position(|r| *r == raw).unwrap_or(usize::MAX))
     }
 
     #[must_use]
@@ -900,7 +1102,7 @@ impl Workspace {
     /// waits until it closes.
     #[must_use]
     pub const fn modal(&self) -> bool {
-        self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some()
+        self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some()
     }
 
     /// Tells the workspace how many main-panel lines are visible, so the cursor
@@ -920,6 +1122,7 @@ impl Workspace {
             }
             _ => {}
         }
+        if self.filter_editor.is_some() { return self.filter_key(key); }
         if self.composer.is_some() { return self.commit_key(key); }
         if self.identity.is_some() { return self.identity_key(key); }
         if self.create.is_some() { return self.create_key(key); }
@@ -983,6 +1186,7 @@ impl Workspace {
             };
         }
         match key {
+            Key::Char('/') => self.request_filter(self.focus),
             Key::Char('I') => self.request_identity(),
             Key::Char('G') => self.request_git_settings(),
             Key::Char('O') | Key::CtrlO => self.request_open(),
@@ -1016,10 +1220,14 @@ impl Workspace {
                     self.anchor = None;
                 } else if self.focus == Pane::Main {
                     self.focus = self.source;
+                } else if !self.filter_query(self.focus).is_empty() {
+                    return self.clear_filter(self.focus);
                 }
                 Effect::Nothing
             }
             Key::Enter => {
+                if matches!(self.focus, Pane::Files | Pane::Branches | Pane::Commits) && self.list_length(self.focus) == 0 { return Effect::Nothing; }
+                if self.focus == Pane::Files && self.last_request.is_none() { self.focus = Pane::Main; return self.show_source(); }
                 if self.focus == Pane::Commits {
                     let Some(commit) = self.snapshot.commits.get(self.commits) else { return Effect::Nothing; };
                     let request = MainRequest::CommitFiles { id: commit.id.clone() };
@@ -1027,6 +1235,7 @@ impl Workspace {
                     self.focus = Pane::Main;
                     self.generation += 1;
                     self.main = MainView::note("Loading committed files...");
+                    self.main_ready = false;
                     self.cursor = 0;
                     self.scroll = 0;
                     self.anchor = None;
@@ -1039,6 +1248,7 @@ impl Workspace {
                         self.detail_back = Some((self.main.clone(), self.cursor, self.scroll));
                         self.generation += 1;
                         self.main = MainView::note("Loading committed file diff...");
+                        self.main_ready = false;
                         self.cursor = 0;
                         self.scroll = 0;
                         self.anchor = None;
@@ -1261,7 +1471,17 @@ impl Workspace {
                         false
                     } else { true }
                 });
+                self.load_filter_rows();
+                self.reconcile_filter_selection();
                 self.notice = None;
+                if let Some(form) = self.filter_editor.as_mut() {
+                    form.previous_view = None;
+                    form.previous_request = None;
+                    self.generation += 1;
+                    self.last_request = None;
+                    self.main = MainView::note("Loaded items refreshed. Apply the query to inspect a current result.");
+                    return Effect::Nothing;
+                }
                 if self.source == Pane::Stashes && self.snapshot.stage_result.is_none() {
                     self.notice = removed_stash.map(|id| format!("Selected stash {id} was removed; list refreshed"));
                 }
@@ -1277,6 +1497,7 @@ impl Workspace {
             Reply::Main { generation, view } => {
                 if generation == self.generation {
                     self.main = view;
+                    self.main_ready = true;
                     self.scroll = 0;
                     self.anchor = None;
                     // The cursor starts on the first changed line, or the top.
@@ -1395,7 +1616,7 @@ impl Workspace {
         if pane == Pane::Status || index >= self.list_length(pane) {
             return self.focus_list(pane);
         }
-        let changed = self.selected(pane) != index || self.source != pane;
+        let changed = self.selected(pane) != index || self.source != pane || self.last_request.is_none();
         self.notice = None;
         self.focus = pane;
         self.set_selected(pane, index);
@@ -1590,6 +1811,7 @@ impl Workspace {
     /// `a`: stage or unstage every file, or stage the hunk under the cursor.
     fn act_all(&mut self) -> Effect {
         self.notice = None;
+        if self.focus == Pane::Files && !self.filter_query(Pane::Files).is_empty() { self.notice = Some("Clear Files filter to review the full operation scope".into()); return Effect::Nothing; }
         match self.focus {
             Pane::Files => {
                 let stage = self.snapshot.files.iter().any(|file| file.has_unstaged);
@@ -1708,6 +1930,7 @@ impl Workspace {
     /// left alone, so a list of only untracked files has nothing to save.
     fn stash(&mut self) -> Effect {
         self.notice = None;
+        if !self.filter_query(Pane::Files).is_empty() { self.notice = Some("Clear Files filter to review the full operation scope".into()); return Effect::Nothing; }
         if self.snapshot.files.iter().all(|file| file.untracked) {
             self.notice = Some("no tracked changes to stash".to_owned());
             return Effect::Nothing;
@@ -1737,6 +1960,8 @@ impl Workspace {
     /// Asks for the main-panel content of the source list. The main panel
     /// shows a loading note until the reply arrives.
     fn show_source(&mut self) -> Effect {
+        self.main_ready = false;
+        let position = self.next_position.take().filter(|(pane, identity, _, _)| *pane == self.source && *identity == self.selected_identity(self.source));
         self.last_request = None;
         self.restore_position = None;
         self.detail_back = None;
@@ -1756,14 +1981,14 @@ impl Workspace {
                     untracked: row.untracked,
                 },
                 None => {
-                    self.main = MainView::note("Working tree clean");
+                    self.main = MainView::note(if self.filter_query(Pane::Files).is_empty() { "Working tree clean" } else { "No matching loaded files. Clear the Files filter to see all loaded changes." });
                     return Effect::Nothing;
                 }
             },
             Pane::Commits => match self.snapshot.commits.get(self.commits) {
                 Some(commit) => MainRequest::Commit { id: commit.id.clone() },
                 None => {
-                    self.main = MainView::note("No commits yet");
+                    self.main = MainView::note(if self.filter_query(Pane::Commits).is_empty() { "No commits yet" } else { "No matching loaded commits. This filter does not search unloaded history." });
                     return Effect::Nothing;
                 }
             },
@@ -1780,11 +2005,13 @@ impl Workspace {
             committed: None,
         };
         self.last_request = Some(request.clone());
+        self.restore_position = position.map(|(_, _, cursor, scroll)| (self.generation, cursor, scroll));
         Effect::Send(Job::Main { generation: self.generation, request })
     }
 
     /// The Status panel has one row; the others have one row per item.
-    const fn list_length(&self, pane: Pane) -> usize {
+    fn list_length(&self, pane: Pane) -> usize {
+        if let Some(i) = Self::filter_slot(pane) { return self.filters[i].rows.len(); }
         match pane {
             Pane::Status => 1,
             Pane::Files => self.snapshot.files.len(),
@@ -1796,6 +2023,7 @@ impl Workspace {
     }
 
     fn set_selected(&mut self, pane: Pane, value: usize) {
+        let value = Self::filter_slot(pane).map_or(value, |i| self.filters[i].rows.get(value).copied().unwrap_or(usize::MAX));
         match pane {
             Pane::Files => self.files = value,
             Pane::Branches => self.branches = value,
@@ -1816,6 +2044,97 @@ fn clamp_index(index: usize, length: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn quick_filter_cancel_during_a_pending_detail_keeps_an_explicit_reload_path() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open(); // Detail has been requested but has not completed.
+        workspace.request_filter(Pane::Files);
+        workspace.key(Key::Text("a".into()));
+        workspace.key(Key::Escape);
+        assert!(workspace.main.file.is_none());
+        assert!(matches!(workspace.key(Key::Enter), Effect::Send(Job::Main { .. })), "cancel must not restore a loading placeholder whose request was invalidated");
+    }
+
+    #[test]
+    fn quick_filter_projects_loaded_rows_without_work_and_keeps_raw_action_targets() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.open();
+        workspace.click_row(Pane::Files, 2);
+        assert_eq!(workspace.key(Key::Char('/')), Effect::Nothing);
+        assert_eq!(workspace.key(Key::Text("B.TXT".into())), Effect::Nothing);
+        assert_eq!(workspace.visible_rows(Pane::Files), &[1]);
+        assert_eq!(workspace.key(Key::Down), Effect::Nothing);
+        let Job::Main { request, .. } = sent(workspace.key(Key::Enter)) else { panic!(); };
+        assert!(matches!(request, MainRequest::File { path, staged_view: true, .. } if path == NativePath::new("b.txt")));
+        assert_eq!(workspace.key(Key::Space), Effect::Send(Job::SetFile { path: NativePath::new("b.txt"), stage: false }));
+        assert_eq!(workspace.key(Key::Char('a')), Effect::Nothing);
+        assert_eq!(workspace.key(Key::Char('s')), Effect::Nothing);
+        workspace.request_filter(Pane::Files);
+        workspace.key(Key::SelectAll);
+        assert_eq!(workspace.ime_commit("; c q [*.rs] 中文".into()), Effect::Nothing);
+        assert!(workspace.visible_rows(Pane::Files).is_empty());
+        workspace.key(Key::Enter);
+        assert_eq!(workspace.key(Key::Space), Effect::Nothing);
+        assert_eq!(workspace.key(Key::Char('d')), Effect::Nothing);
+        assert_eq!(workspace.clear_filter(Pane::Files), Effect::Nothing);
+        assert_eq!(workspace.files, 2, "Clear returns to the raw pre-filter identity");
+        workspace.request_filter(Pane::Branches);
+        workspace.key(Key::Text("MAIN".into()));
+        assert_eq!(workspace.visible_rows(Pane::Branches), &[1]);
+        workspace.key(Key::Enter);
+        assert_eq!(workspace.key(Key::Space), Effect::Nothing, "current branch cannot be checked out again");
+        workspace.request_filter(Pane::Commits);
+        workspace.key(Key::Text("subject 2".into()));
+        assert_eq!(workspace.visible_rows(Pane::Commits), &[1]);
+        workspace.key(Key::SelectAll);
+        workspace.key(Key::Text("1".into()));
+        assert_eq!(workspace.visible_rows(Pane::Commits), &[0], "OID prefixes bind full revision identity");
+    }
+
+    #[test]
+    fn quick_filter_cancel_refresh_limits_and_navigation_preserve_their_own_context() {
+        let mut workspace = Workspace::new(snapshot(None));
+        let Job::Main { generation, .. } = sent(workspace.open()) else { panic!(); };
+        workspace.reply(Reply::Main { generation, view: MainView::text("original view") });
+        workspace.request_filter(Pane::Files);
+        workspace.key(Key::Text("b".into()));
+        assert_eq!(workspace.key(Key::Escape), Effect::Nothing);
+        assert_eq!(workspace.filter_query(Pane::Files), "");
+        assert_eq!(workspace.main.lines[0].text, "original view");
+        workspace.request_filter(Pane::Files);
+        workspace.key(Key::Text("b".into()));
+        workspace.key(Key::Enter);
+        let nav = crate::Navigation::decode(&workspace.navigation().encode()).unwrap();
+        let mut restored = snapshot(None);
+        restored.navigation = Some(nav);
+        let mut second = Workspace::new(restored);
+        second.open();
+        assert_eq!(second.filter_query(Pane::Files), "b");
+        assert_eq!(second.visible_rows(Pane::Files), &[1]);
+        second.clear_filter(Pane::Files);
+        assert_eq!(second.files, 0, "the pre-filter anchor survives a navigation round trip");
+        second.request_filter(Pane::Files);
+        second.key(Key::Text("中".repeat(256)));
+        second.key(Key::Text("x".into()));
+        assert_eq!(second.filter_editor().unwrap().editor.text.chars().count(), 256);
+        assert!(second.notice().unwrap().contains("256"));
+        second.key(Key::SelectAll);
+        second.ime_preedit("a".into());
+        assert_eq!(second.key(Key::Enter), Effect::Nothing);
+        second.ime_commit("a".into());
+        assert_eq!(second.filter_editor().unwrap().editor.text, "a");
+        let mut changed = snapshot(None);
+        changed.files.remove(0);
+        assert_eq!(second.reply(Reply::Full(changed)), Effect::Nothing, "refresh during editing cannot request details");
+        assert!(second.visible_rows(Pane::Files).is_empty());
+        second.key(Key::Escape);
+        assert!(second.main.file.is_none(), "cancel after refresh cannot revive an obsolete actionable Diff");
+        let encoded = workspace.navigation().encode();
+        let mut legacy: Vec<_> = encoded.split('\n').take(11).collect();
+        legacy[0] = "1";
+        assert!(crate::Navigation::decode(&legacy.join("\n")).unwrap().queries.iter().all(String::is_empty));
+    }
+
     #[test]
     fn commit_review_is_required_and_old_refresh_or_diff_replies_cannot_retarget_it() {
         let mut workspace = Workspace::new(snapshot(None));
@@ -1995,6 +2314,7 @@ mod tests {
 
     fn snapshot(draft: Option<&str>) -> Snapshot {
         Snapshot {
+            history_limit: 200,
             navigation: None,
             repository: Some(NativePath::new("fixture-repository")),
             recents: Vec::new(),
