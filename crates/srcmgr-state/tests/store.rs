@@ -12,6 +12,25 @@ use srcmgr_state::{ProfileStore, SCHEMA_VERSION, StoreError};
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn navigation_roundtrip_is_native_scoped_bounded_and_independent_of_drafts() {
+    use srcmgr_domain::NativePath;
+    let profile = Profile::new("navigation");
+    let left = NativePath::new("left 中文");
+    let right = NativePath::new("right");
+    {
+        let mut store = ProfileStore::open(&profile.root).unwrap();
+        store.put_navigation(&left, "left selection\nscroll 40").unwrap();
+        store.put_navigation(&right, "right selection").unwrap();
+        store.put_draft("git", "left", "draft untouched").unwrap();
+        assert!(store.put_navigation(&left, &"x".repeat(256 * 1024 + 1)).is_err());
+    }
+    let store = ProfileStore::open(&profile.root).unwrap();
+    assert_eq!(store.navigation(&left).unwrap().as_deref(), Some("left selection\nscroll 40"));
+    assert_eq!(store.navigation(&right).unwrap().as_deref(), Some("right selection"));
+    assert_eq!(store.get_draft("git", "left").unwrap().as_deref(), Some("draft untouched"));
+}
+
+#[test]
 fn commit_intent_atomically_preserves_submitted_draft_and_blocks_replay_after_restart() {
     let profile = Profile::new("commit-intent");
     let before = "1234567890abcdef1234567890abcdef12345678";

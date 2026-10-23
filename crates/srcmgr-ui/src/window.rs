@@ -44,6 +44,8 @@ const SELECTION_DIM: u32 = 0x0033_3740;
 const MUTED_TEXT: u32 = 0x0080_8080;
 
 const HELP_LINES: &[&str] = &[
+    "Ctrl+Tab     next repository; Ctrl+Shift+Tab previous",
+    "Ctrl+W       close active repository after saving context",
     "O            open another trusted repository (or click Open)",
     "1 2 3 4      focus Status, Files, Branches or Commits",
     "Tab          next pane (Shift+Tab previous)",
@@ -230,6 +232,16 @@ impl StatusWindow {
         let Some(surface) = self.surface else {
             return Ok(PixelWindowDirective::Continue);
         };
+        let scale = window.scale_factor()?;
+        let px = (x * scale).round() as i64;
+        let py = (y * scale).round() as i64;
+        if matches!(gesture, Gesture::Click) && let Some(hit) = tab_hit(&self.workspace, surface, px, py) {
+            let effect = match hit { Hit::Repository(index) => self.workspace.select_repository(index), Hit::CloseRepository => self.workspace.close_repository(), Hit::NextRepository => self.workspace.key(Key::NextRepository), Hit::PreviousRepository => self.workspace.key(Key::PreviousRepository), _ => Effect::Nothing };
+            let directive = self.dispatch(effect);
+            self.sync_title(window);
+            window.request_redraw();
+            return Ok(directive);
+        }
         if self.workspace.commit_composer().is_some() {
             let scale = window.scale_factor()?;
             let geometry = commit_geometry(surface.width, surface.height, surface.grid);
@@ -356,6 +368,10 @@ impl StatusWindow {
             (Gesture::Click, Hit::GitSettings) => self.workspace.request_git_settings(),
             (Gesture::Click, Hit::IdentitySettings) => self.workspace.request_identity(),
             (Gesture::Click, Hit::Commit) => self.workspace.request_commit(),
+            (Gesture::Click, Hit::Repository(index)) => self.workspace.select_repository(index),
+            (Gesture::Click, Hit::CloseRepository) => self.workspace.close_repository(),
+            (Gesture::Click, Hit::NextRepository) => self.workspace.key(Key::NextRepository),
+            (Gesture::Click, Hit::PreviousRepository) => self.workspace.key(Key::PreviousRepository),
             (Gesture::Click, Hit::Panel(pane)) => self.workspace.click_row(pane, usize::MAX),
             (Gesture::Click, Hit::Row(pane, index)) => self.workspace.click_row(pane, index),
             (Gesture::Click, Hit::Main(line)) => self.workspace.click_main(line),
@@ -403,7 +419,7 @@ impl StatusWindow {
             Effect::Quit if self.pending != 0 || !self.queued.is_empty() => { let _ = self.workspace.reply(Reply::Notice("Wait for current repository work before closing".into())); PixelWindowDirective::Continue }
             Effect::Quit => PixelWindowDirective::Exit,
             Effect::Send(job) => {
-                if matches!(job, Job::LoadIdentity | Job::SaveIdentity { .. } | Job::ConfigureGit(_) | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_)) && (self.pending != 0 || !self.queued.is_empty()) {
+                if matches!(job, Job::EnterRepository { .. } | Job::LoadIdentity | Job::SaveIdentity { .. } | Job::ConfigureGit(_) | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_)) && (self.pending != 0 || !self.queued.is_empty()) {
                     let _ = self.workspace.reply(job_failure(&job, "Wait for current repository work to finish, then retry entry"));
                     return PixelWindowDirective::Continue;
                 }
@@ -479,7 +495,7 @@ fn job_failure(job: &Job, message: &str) -> Reply {
         Job::LoadIdentity | Job::SaveIdentity { .. } => Reply::PromptFailed { action: PromptAction::IdentitySettings, text },
         Job::LoadGitSettings | Job::ConfigureGit(_) => Reply::PromptFailed { action: PromptAction::GitSettings, text },
         Job::PrepareCreate { .. } | Job::ExecuteCreate(_) => Reply::PromptFailed { action: PromptAction::CreateRepository, text },
-        Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) => Reply::PromptFailed { action: PromptAction::OpenRepository, text },
+        Job::EnterRepository { .. } | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) => Reply::PromptFailed { action: PromptAction::OpenRepository, text },
         Job::Main { generation, .. } => Reply::MainFailed { generation: *generation, text },
         Job::Prepare { generation, .. } => Reply::ConfirmationFailed { generation: *generation, text },
         Job::Commit { .. } | Job::LoadCommitReview { .. } => Reply::PromptFailed { action: PromptAction::Commit, text },
@@ -576,7 +592,7 @@ impl PixelWindowApplication for StatusWindow {
             _ => Category::Other,
         });
         let result = (|| { match event {
-            PixelWindowEvent::CloseRequested => { let effect = self.workspace.close_commit(true); Ok(self.dispatch(effect)) }
+            PixelWindowEvent::CloseRequested => { let effect = self.workspace.request_quit(); Ok(self.dispatch(effect)) }
             PixelWindowEvent::Wake => {
                 let replies: Vec<Reply> =
                     self.replies.as_ref().map_or_else(Vec::new, |receiver| receiver.try_iter().collect());
@@ -819,6 +835,19 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         draws.push(Draw::Text { x: width - margin - (grid.advance * 17.0) as i64, baseline: margin + ascent, text: "Identity".into(), colour: colour(Tone::Heading) });
     }
     draws.push(Draw::Text { x: width - margin - (grid.advance * 6.0) as i64, baseline: margin + ascent, text: "Git".into(), colour: colour(Tone::Heading) });
+    for (index, rect) in tab_rectangles(workspace, width, grid) {
+        let tab = &workspace.tabs()[index];
+        let active = workspace.snapshot().repository.as_ref() == Some(&tab.path);
+        let label = std::path::Path::new(tab.path.as_os_str()).file_name().map(|n| srcmgr_domain::NativePath::new(n).display_label()).unwrap_or_else(|| tab.path.display_label());
+        let head = if active { workspace.snapshot().head.clone() } else { format!("last: {}", tab.head) };
+        button_draw(&mut draws, rect, grid, &format!("{} {label} | {head}", index + 1), if active { FOCUS_BORDER } else { BORDER });
+    }
+    if !workspace.tabs().is_empty() {
+        let [previous, next, close] = tab_controls(width, grid);
+        button_draw(&mut draws, previous, grid, "<", BORDER);
+        button_draw(&mut draws, next, grid, ">", BORDER);
+        button_draw(&mut draws, close, grid, "Close", BORDER);
+    }
 
     if workspace.commit_composer().is_some() {
         commit_scene(&mut draws, workspace, width, height, grid);
@@ -1028,7 +1057,7 @@ struct Layout {
 fn layout(width: i64, height: i64, grid: Grid) -> Layout {
     let Grid { row, margin, gap, .. } = grid;
     let footer_top = height - margin - 2 * row;
-    let body_top = margin + row + gap;
+    let body_top = margin + 2 * row + 2 * gap;
     let body_height = (footer_top - gap - body_top).max(0);
     let left_width = (width * 38 / 100 - margin - gap / 2).max(0);
     let right_x = margin + left_width + gap;
@@ -1061,6 +1090,10 @@ struct Surface {
 /// What a pointer position is over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Hit {
+    Repository(usize),
+    NextRepository,
+    PreviousRepository,
+    CloseRepository,
     Commit,
     IdentitySettings,
     GitSettings,
@@ -1082,6 +1115,34 @@ enum Hit {
 enum Gesture {
     Click,
     Wheel(WheelDelta),
+}
+
+fn tab_controls(width: i64, grid: Grid) -> [Rect; 3] {
+    let close_width = (grid.advance * 8.0) as i64;
+    let arrow_width = (grid.advance * 4.0) as i64;
+    let close = Rect { x: width - grid.margin - close_width, y: grid.margin + grid.row + grid.gap, width: close_width, height: grid.row + grid.gap };
+    let next = Rect { x: close.x - grid.gap - arrow_width, width: arrow_width, ..close };
+    let previous = Rect { x: next.x - grid.gap - arrow_width, ..next };
+    [previous, next, close]
+}
+
+fn tab_rectangles(workspace: &Workspace, width: i64, grid: Grid) -> Vec<(usize, Rect)> {
+    let available = (tab_controls(width, grid)[0].x - 2 * grid.margin).max(1);
+    let count = ((available / (grid.advance * 25.0) as i64).max(1) as usize).min(workspace.tabs().len());
+    if count == 0 { return Vec::new(); }
+    let active = workspace.tabs().iter().position(|t| Some(&t.path) == workspace.snapshot().repository.as_ref()).unwrap_or(0);
+    let start = active.saturating_sub(count / 2).min(workspace.tabs().len() - count);
+    let slot = available / count as i64;
+    (start..start + count).enumerate().map(|(column, index)| (index, Rect { x: grid.margin + column as i64 * slot, y: grid.margin + grid.row + grid.gap, width: slot - grid.gap, height: grid.row + grid.gap })).collect()
+}
+
+fn tab_hit(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Option<Hit> {
+    if workspace.tabs().is_empty() { return None; }
+    let [previous, next, close] = tab_controls(surface.width, surface.grid);
+    if contains(previous, x, y) { return Some(Hit::PreviousRepository); }
+    if contains(next, x, y) { return Some(Hit::NextRepository); }
+    if contains(close, x, y) { return Some(Hit::CloseRepository); }
+    tab_rectangles(workspace, surface.width, surface.grid).into_iter().find(|(_, rect)| contains(*rect, x, y)).map(|(index, _)| Hit::Repository(index))
 }
 
 fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
@@ -1145,7 +1206,7 @@ const fn pane_of(hit: Hit) -> Option<Pane> {
         Hit::Panel(pane) | Hit::Row(pane, _) => Some(pane),
         Hit::Main(_) => Some(Pane::Main),
         Hit::Recent(_) => Some(Pane::Files),
-        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::RecentOpen | Hit::Commit => None,
+        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::RecentOpen | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository => None,
     }
 }
 
@@ -1531,6 +1592,8 @@ fn key_of(event: &NormalizedKeyEvent) -> Option<Key> {
             NamedKey::Enter if control => Key::CtrlEnter,
             NamedKey::Enter => Key::Enter,
             NamedKey::Escape => Key::Escape,
+            NamedKey::Tab if control && shift => Key::PreviousRepository,
+            NamedKey::Tab if control => Key::NextRepository,
             NamedKey::Tab if shift => Key::BackTab,
             NamedKey::Tab => Key::Tab,
             NamedKey::Space => Key::Space,
@@ -1544,6 +1607,7 @@ fn key_of(event: &NormalizedKeyEvent) -> Option<Key> {
                     "x" | "X" => Some(Key::Cut),
                     "v" | "V" => Some(Key::Paste),
                     "s" | "S" => Some(Key::Save),
+                    "w" | "W" => Some(Key::CloseRepository),
                     "c" | "C" => Some(Key::CtrlC),
                     "o" | "O" => Some(Key::CtrlO),
                     "d" | "D" => Some(Key::HalfPageDown),
@@ -1598,6 +1662,23 @@ mod tests {
     }
 
     #[test]
+    fn repository_tab_busy_refusal_keeps_the_tab_and_does_not_leave_an_open_dialog() {
+        struct UnusedBackend;
+        impl Backend for UnusedBackend { fn run(&mut self, _: Job) -> Reply { panic!("channel fixture only") } }
+        let mut window = StatusWindow::new(snapshot(1), Box::new(UnusedBackend));
+        window.pending = 1;
+        let effect = window.workspace.close_repository();
+        window.dispatch(effect);
+        assert_eq!(window.workspace.tabs().len(), 1);
+        assert_eq!(window.workspace.snapshot().repository, Some(NativePath::new("fixture-repository")));
+        assert!(!window.workspace.modal(), "a refused Close is not an editable Open request");
+        assert!(window.queued.is_empty());
+        assert!(window.workspace.notice().unwrap().contains("Wait"));
+        window.pending = 0;
+        assert!(matches!(window.workspace.close_repository(), Effect::Send(Job::EnterRepository { path: None, .. })), "explicit retry is available after the work finishes");
+    }
+
+    #[test]
     fn open_repository_cannot_retarget_queued_work() {
         struct UnusedBackend;
         impl Backend for UnusedBackend { fn run(&mut self, _: Job) -> Reply { panic!("must not launch") } }
@@ -1611,7 +1692,7 @@ mod tests {
         assert_eq!(window.queued, VecDeque::from([Job::Reload]));
         assert_eq!(window.pending, 1);
         assert_eq!(window.workspace.prompt().unwrap().text(), "other repository");
-        assert_eq!(window.workspace.key(Key::Enter), Effect::Send(Job::OpenRepository(NativePath::new("other repository"))));
+        assert!(matches!(window.workspace.key(Key::Enter), Effect::Send(Job::EnterRepository { path: Some(path), current: Some(_) }) if path == NativePath::new("other repository")));
         let surface = Surface { width: 1040, height: 680, grid: GRID };
         let x = surface.width - GRID.margin - (GRID.advance * 27.0) as i64;
         assert_eq!(hit_test(&window.workspace, surface, x + 4, GRID.margin + 4), Hit::Open);
@@ -1619,6 +1700,7 @@ mod tests {
 
     fn snapshot(files: usize) -> Snapshot {
         Snapshot {
+            navigation: None,
             repository: Some(NativePath::new("fixture-repository")),
             recents: Vec::new(),
             title: "MiniCon SrcMgr - demo".to_owned(),

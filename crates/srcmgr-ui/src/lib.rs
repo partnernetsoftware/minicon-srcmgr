@@ -3,6 +3,8 @@
 //! the [`Backend`] trait on a worker thread.
 
 mod model;
+mod navigation;
+pub use navigation::Navigation;
 mod window;
 mod workspace;
 mod timing_receipt;

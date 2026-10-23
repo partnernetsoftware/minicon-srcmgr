@@ -30,6 +30,9 @@ pub enum Pane {
 /// A key after the window has normalised the platform event.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Key {
+    NextRepository,
+    PreviousRepository,
+    CloseRepository,
     EditMove { movement: Move, extend: bool },
     SelectAll,
     Cut,
@@ -216,7 +219,19 @@ pub enum Confirm {
     Stash { id: String, operation: String },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepositoryTab { pub path: NativePath, pub head: String }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TabAction { Select(NativePath), Close, Quit }
+
 pub struct Workspace {
+    tabs: Vec<RepositoryTab>,
+    closing_tab: bool,
+    tab_entry: bool,
+    tab_action: Option<TabAction>,
+    last_request: Option<MainRequest>,
+    restore_position: Option<(u64, usize, usize)>,
     snapshot: Snapshot,
     focus: Pane,
     /// The list whose selection the main panel shows. It is set whenever a list
@@ -257,7 +272,9 @@ pub struct Workspace {
 impl Workspace {
     #[must_use]
     pub fn new(snapshot: Snapshot) -> Self {
+        let tabs = snapshot.repository.as_ref().map(|path| RepositoryTab { path: path.clone(), head: snapshot.head.clone() }).into_iter().collect();
         Self {
+            tabs, closing_tab: false, tab_entry: false, tab_action: None, last_request: None, restore_position: None,
             snapshot,
             focus: Pane::Files,
             source: Pane::Files,
@@ -295,8 +312,92 @@ impl Workspace {
             self.main = MainView::text("Open a repository by path, or select a recent location.\nRecent locations are not trusted automatically.\nNo repository commands run while browsing this screen.\n\nCtrl+O: Open path\nEnter: Open selected recent location\nd: Remove selected recent record only\nr: Reload recent records");
             return Effect::Send(Job::LoadWelcome);
         }
+        if let Some(navigation) = self.snapshot.navigation.take() { return self.restore_navigation(navigation); }
         self.show_source()
     }
+
+    pub fn tabs(&self) -> &[RepositoryTab] { &self.tabs }
+
+    pub fn navigation(&self) -> crate::Navigation {
+        crate::Navigation { focus: self.focus, source: self.source,
+            file: self.snapshot.files.get(self.files).map(|f| f.path.clone()), branch: self.snapshot.branches.get(self.branches).map(|b| b.name.clone()),
+            commit: self.snapshot.commits.get(self.commits).map(|c| c.id.clone()), stash: self.snapshot.stashes.get(self.stashes).map(|s| s.id.clone()),
+            stash_mode: self.stash_mode, cursor: self.cursor, scroll: self.scroll, request: self.last_request.clone() }
+    }
+
+    fn restore_navigation(&mut self, navigation: crate::Navigation) -> Effect {
+        self.focus = navigation.focus;
+        self.source = navigation.source;
+        self.stash_mode = navigation.stash_mode;
+        self.files = navigation.file.as_ref().and_then(|p| self.snapshot.files.iter().position(|f| &f.path == p)).unwrap_or(0);
+        self.branches = navigation.branch.as_ref().and_then(|n| self.snapshot.branches.iter().position(|b| &b.name == n)).unwrap_or(0);
+        self.commits = navigation.commit.as_ref().and_then(|id| self.snapshot.commits.iter().position(|c| &c.id == id)).unwrap_or(0);
+        self.stashes = navigation.stash.as_ref().and_then(|id| self.snapshot.stashes.iter().position(|s| &s.id == id)).unwrap_or(0);
+        let request = navigation.request.filter(|request| match request {
+            MainRequest::File { path, staged_view, .. } => self.snapshot.files.iter().any(|f| &f.path == path && if *staged_view { f.has_staged } else { f.has_unstaged }),
+            MainRequest::Stash { id } => self.snapshot.stashes.iter().any(|s| &s.id == id),
+            _ => true,
+        });
+        let Some(request) = request else { return self.show_source(); };
+        self.generation += 1;
+        self.restore_position = Some((self.generation, navigation.cursor, navigation.scroll));
+        self.last_request = Some(request.clone());
+        self.main = MainView::note("Refreshing restored selection...");
+        Effect::Send(Job::Main { generation: self.generation, request })
+    }
+
+    fn entry(&mut self, path: Option<NativePath>) -> Effect {
+        if path.as_ref().is_some_and(|p| self.tabs.len() >= 16 && !self.tabs.iter().any(|t| &t.path == p)) {
+            self.notice = Some("16 repositories are open; close a tab before opening another".into());
+            if let Some(prompt) = self.prompt.as_mut() { prompt.submitted = None; }
+            self.closing_tab = false;
+            return Effect::Nothing;
+        }
+        let current = self.snapshot.repository.clone().map(|p| (p, Box::new(self.navigation())));
+        Effect::Send(Job::EnterRepository { path, current })
+    }
+
+    pub fn select_repository(&mut self, index: usize) -> Effect {
+        let Some(tab) = self.tabs.get(index) else { return Effect::Nothing; };
+        if self.snapshot.repository.as_ref() == Some(&tab.path) { return Effect::Nothing; }
+        self.repository_action(TabAction::Select(tab.path.clone()))
+    }
+
+    pub fn close_repository(&mut self) -> Effect { self.repository_action(TabAction::Close) }
+
+    fn repository_action(&mut self, action: TabAction) -> Effect {
+        if self.composer.is_some() {
+            if self.composer.as_ref().is_some_and(|form| !form.editor.preedit.is_empty()) { self.notice = Some("Finish IME composition before changing repositories".into()); return Effect::Nothing; }
+            if self.prompt.as_ref().is_some_and(Prompt::pending) { self.notice = Some("Wait for the current save or commit before switching repositories".into()); return Effect::Nothing; }
+            self.tab_action = Some(action);
+            let effect = self.close_commit(false);
+            if self.composer.is_none() { return self.finish_repository_action(); }
+            return effect;
+        }
+        if self.modal() { self.notice = Some("Finish or cancel this dialog before changing repositories".into()); return Effect::Nothing; }
+        self.tab_action = Some(action);
+        self.finish_repository_action()
+    }
+
+    fn finish_repository_action(&mut self) -> Effect {
+        let Some(action) = self.tab_action.take() else { return Effect::Nothing; };
+        if self.is_welcome() && action == TabAction::Quit { return Effect::Quit; }
+        let path = match action {
+            TabAction::Select(path) => Some(path),
+            TabAction::Close => {
+                if self.is_welcome() { return Effect::Nothing; }
+                self.closing_tab = true;
+                let active = self.tabs.iter().position(|t| Some(&t.path) == self.snapshot.repository.as_ref()).unwrap_or(0);
+                self.tabs.get(if active > 0 { active - 1 } else { 1 }).map(|t| t.path.clone())
+            }
+            TabAction::Quit => { self.tab_action = Some(TabAction::Quit); None }
+        };
+        self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: path.as_ref().map(|p| p.display_label()).unwrap_or_default(), submitted: Some(PromptAction::OpenRepository) });
+        self.tab_entry = true;
+        self.entry(path)
+    }
+
+    pub fn request_quit(&mut self) -> Effect { self.repository_action(TabAction::Quit) }
 
     pub fn is_welcome(&self) -> bool { self.snapshot.repository.is_none() }
     pub fn create_form(&self) -> Option<&CreateForm> { self.create.as_ref() }
@@ -698,7 +799,7 @@ impl Workspace {
             return Effect::Nothing;
         };
         self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: text.into(), submitted: Some(PromptAction::OpenRepository) });
-        Effect::Send(Job::OpenRepository(path))
+        self.entry(Some(path))
     }
 
     #[must_use]
@@ -810,6 +911,15 @@ impl Workspace {
     }
 
     pub fn key(&mut self, key: Key) -> Effect {
+        match key {
+            Key::CloseRepository => return self.close_repository(),
+            Key::NextRepository | Key::PreviousRepository => {
+                if self.tabs.len() < 2 { return Effect::Nothing; }
+                let current = self.tabs.iter().position(|t| Some(&t.path) == self.snapshot.repository.as_ref()).unwrap_or(0);
+                return self.select_repository(if matches!(key, Key::NextRepository) { (current + 1) % self.tabs.len() } else { (current + self.tabs.len() - 1) % self.tabs.len() });
+            }
+            _ => {}
+        }
         if self.composer.is_some() { return self.commit_key(key); }
         if self.identity.is_some() { return self.identity_key(key); }
         if self.create.is_some() { return self.create_key(key); }
@@ -845,7 +955,7 @@ impl Workspace {
             if stays_open {
                 self.prompt = Some(prompt);
             }
-            return effect;
+            return if let Effect::Send(Job::OpenRepository(path)) = effect { self.entry(Some(path)) } else { effect };
         }
         if let Some(confirm) = self.confirm.take() {
             return self.answer(confirm, key);
@@ -876,7 +986,7 @@ impl Workspace {
             Key::Char('I') => self.request_identity(),
             Key::Char('G') => self.request_git_settings(),
             Key::Char('O') | Key::CtrlO => self.request_open(),
-            Key::Char('q') | Key::CtrlC => Effect::Quit,
+            Key::Char('q') | Key::CtrlC => self.request_quit(),
             Key::Char('?') => {
                 self.help = true;
                 Effect::Nothing
@@ -920,6 +1030,7 @@ impl Workspace {
                     self.cursor = 0;
                     self.scroll = 0;
                     self.anchor = None;
+                    self.last_request = Some(request.clone());
                     return Effect::Send(Job::Main { generation: self.generation, request });
                 }
                 if self.focus == Pane::Main && let Some(list) = &self.main.committed {
@@ -931,6 +1042,7 @@ impl Workspace {
                         self.cursor = 0;
                         self.scroll = 0;
                         self.anchor = None;
+                        self.last_request = Some(request.clone());
                         return Effect::Send(Job::Main { generation: self.generation, request });
                 }
                 self.focus = Pane::Main;
@@ -976,6 +1088,19 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::RepositoryClosed(recents) => {
+                if !self.prompt.as_ref().is_some_and(|p| p.submitted == Some(PromptAction::OpenRepository)) { return Effect::Nothing; }
+                let quit = self.tab_action.take() == Some(TabAction::Quit);
+                let generation = self.generation + 1;
+                let mut tabs = std::mem::take(&mut self.tabs);
+                if self.closing_tab { tabs.retain(|t| Some(&t.path) != self.snapshot.repository.as_ref()); }
+                *self = Self::new(Snapshot::welcome());
+                self.generation = generation;
+                self.tabs = tabs;
+                self.snapshot.recents = recents;
+                if quit { return Effect::Quit; }
+                self.open()
+            }
             Reply::CommitReview { generation, review } => {
                 if let Some(form) = self.composer.as_mut() && form.review_generation == generation {
                     form.selected = form.selected.min(review.files.len().saturating_sub(1));
@@ -1068,8 +1193,13 @@ impl Workspace {
                 if !self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(PromptAction::OpenRepository)) {
                     return Effect::Nothing;
                 }
-                let generation = self.generation;
+                let generation = self.generation + 1;
+                let mut tabs = std::mem::take(&mut self.tabs);
+                if let Some(active) = tabs.iter_mut().find(|t| Some(&t.path) == self.snapshot.repository.as_ref()) { active.head.clone_from(&self.snapshot.head); }
+                if self.closing_tab { tabs.retain(|t| Some(&t.path) != self.snapshot.repository.as_ref()); }
+                if let Some(path) = &snapshot.repository && !tabs.iter().any(|t| &t.path == path) { tabs.push(RepositoryTab { path: path.clone(), head: snapshot.head.clone() }); }
                 *self = Self::new(snapshot);
+                self.tabs = tabs;
                 self.generation = generation;
                 self.open()
             }
@@ -1153,6 +1283,11 @@ impl Workspace {
                     let last = self.main.lines.len().saturating_sub(1);
                     self.cursor = if self.main.committed.as_ref().is_some_and(|list| !list.files.is_empty()) { 2 } else { self.main.hunks.first().map_or(0, |start| (start + 1).min(last)) };
                     self.follow();
+                    if let Some((expected, cursor, scroll)) = self.restore_position.take() && expected == generation {
+                        self.cursor = cursor.min(self.main.lines.len().saturating_sub(1));
+                        self.scroll = scroll.min(self.main.lines.len().saturating_sub(self.view_rows.max(1)));
+                        self.follow();
+                    }
                 }
                 Effect::Nothing
             }
@@ -1180,7 +1315,12 @@ impl Workspace {
                     form.submitted = false;
                     form.review = None;
                 }
-                if action == PromptAction::OpenRepository { self.trust = None; }
+                if action == PromptAction::OpenRepository {
+                    self.trust = None;
+                    self.closing_tab = false;
+                    self.tab_action = None;
+                    if self.tab_entry { self.prompt = None; self.tab_entry = false; }
+                }
                 self.notice = Some(text);
                 if let Some(prompt) = self.prompt.as_mut() && prompt.submitted == Some(action) {
                     prompt.submitted = None;
@@ -1216,7 +1356,12 @@ impl Workspace {
                         form.save_error = None;
                         self.snapshot.draft = draft;
                         if form.editor.text == form.saved { form.dirty_since = None; }
-                        if form.closing { let quit = form.quit; return self.close_commit(quit); }
+                        if form.closing {
+                            let quit = form.quit;
+                            let effect = self.close_commit(quit);
+                            if self.composer.is_none() && self.tab_action.is_some() { return self.finish_repository_action(); }
+                            return effect;
+                        }
                         return Effect::Nothing;
                     }
                     return Effect::Nothing;
@@ -1592,6 +1737,8 @@ impl Workspace {
     /// Asks for the main-panel content of the source list. The main panel
     /// shows a loading note until the reply arrives.
     fn show_source(&mut self) -> Effect {
+        self.last_request = None;
+        self.restore_position = None;
         self.detail_back = None;
         self.generation += 1;
         self.scroll = 0;
@@ -1632,6 +1779,7 @@ impl Workspace {
             file: None,
             committed: None,
         };
+        self.last_request = Some(request.clone());
         Effect::Send(Job::Main { generation: self.generation, request })
     }
 
@@ -1847,6 +1995,7 @@ mod tests {
 
     fn snapshot(draft: Option<&str>) -> Snapshot {
         Snapshot {
+            navigation: None,
             repository: Some(NativePath::new("fixture-repository")),
             recents: Vec::new(),
             title: "t".to_owned(),
@@ -1868,17 +2017,75 @@ mod tests {
     }
 
     #[test]
+    fn repository_tabs_restore_raw_selection_scroll_and_wait_for_latest_draft() {
+        let mut workspace = Workspace::new(snapshot(Some("left draft")));
+        workspace.view_rows = 6;
+        let Job::Main { generation, .. } = sent(workspace.click_row(Pane::Files, 2)) else { panic!() };
+        let view = MainView::diff(&(0..80).map(|n| format!("+line {n}\n")).collect::<String>(), crate::FileTarget { path: NativePath::new("c.txt"), staged_view: false });
+        workspace.reply(Reply::Main { generation, view: view.clone() });
+        workspace.click_main(Some(50));
+        let saved = workspace.navigation();
+        let saved = crate::Navigation::decode(&saved.encode()).unwrap();
+        assert_eq!(saved.file, Some(NativePath::new("c.txt")));
+        assert!(saved.scroll > 0);
+        workspace.request_open();
+        workspace.key(Key::Text("right".into()));
+        workspace.key(Key::Enter);
+        let mut right = snapshot(None);
+        right.repository = Some(NativePath::new("right"));
+        workspace.reply(Reply::RepositoryOpened(right.clone()));
+        assert_eq!(workspace.tabs.len(), 2);
+        workspace.request_commit();
+        workspace.key(Key::Text("right 中文 draft".into()));
+        assert_eq!(workspace.select_repository(0), Effect::Send(Job::SaveDraft("right 中文 draft".into())));
+        assert_eq!(workspace.snapshot.repository, right.repository);
+        let Effect::Send(Job::EnterRepository { path: Some(target), current: Some((source, _)) }) = workspace.reply(Reply::DraftSaved(Some("right 中文 draft".into()))) else { panic!("switch must wait for acknowledged draft"); };
+        assert_eq!(source, NativePath::new("right"));
+        assert_eq!(target, NativePath::new("fixture-repository"));
+        let mut left = snapshot(Some("left draft"));
+        left.navigation = Some(saved.clone());
+        let Job::Main { generation: fresh, .. } = sent(workspace.reply(Reply::RepositoryOpened(left))) else { panic!() };
+        workspace.view_rows = 6;
+        workspace.reply(Reply::Main { generation, view: MainView::text("late right view") });
+        workspace.reply(Reply::Main { generation: fresh, view });
+        assert_eq!(workspace.selected(Pane::Files), 2);
+        assert_eq!((workspace.cursor, workspace.scroll), (saved.cursor, saved.scroll));
+        assert_eq!(workspace.snapshot.draft.as_deref(), Some("left draft"));
+        assert!(matches!(workspace.close_repository(), Effect::Send(Job::EnterRepository { path: Some(p), .. }) if p == NativePath::new("right")));
+        workspace.reply(Reply::RepositoryOpened(right));
+        assert_eq!(workspace.tabs.len(), 1);
+        assert!(matches!(workspace.close_repository(), Effect::Send(Job::EnterRepository { path: None, .. })));
+        workspace.reply(Reply::RepositoryClosed(Vec::new()));
+        assert!(workspace.is_welcome() && workspace.tabs.is_empty());
+    }
+
+    #[test]
+    fn repository_tab_save_failure_preserves_editor_and_target_until_explicit_retry() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.tabs.push(RepositoryTab { path: NativePath::new("other"), head: "unread".into() });
+        workspace.request_commit();
+        workspace.key(Key::Text("cannot lose this".into()));
+        assert!(matches!(workspace.select_repository(1), Effect::Send(Job::SaveDraft(_))));
+        workspace.reply(Reply::PromptFailed { action: PromptAction::SaveDraft, text: "disk unavailable".into() });
+        assert_eq!(workspace.snapshot.repository, Some(NativePath::new("fixture-repository")));
+        assert_eq!(workspace.prompt().unwrap().text(), "cannot lose this");
+        assert!(workspace.draft_deadline().is_none());
+        assert!(matches!(workspace.key(Key::Save), Effect::Send(Job::SaveDraft(_))));
+        assert!(matches!(workspace.reply(Reply::DraftSaved(Some("cannot lose this".into()))), Effect::Send(Job::EnterRepository { path: Some(p), .. }) if p == NativePath::new("other")));
+    }
+
+    #[test]
     fn open_repository_keeps_input_on_refusal_and_rejects_old_detail_after_switch() {
         let mut workspace = Workspace::new(snapshot(Some("original durable draft")));
         let _ = workspace.open();
         let old_generation = workspace.generation;
         workspace.key(Key::CtrlO);
         workspace.key(Key::Text("D:/other repo".to_owned()));
-        assert_eq!(sent(workspace.key(Key::Enter)), Job::OpenRepository(NativePath::new("D:/other repo")));
+        assert!(matches!(sent(workspace.key(Key::Enter)), Job::EnterRepository { path: Some(path), current: Some((source, _)) } if path == NativePath::new("D:/other repo") && source == NativePath::new("fixture-repository")));
         workspace.reply(Reply::PromptFailed { action: PromptAction::OpenRepository, text: "not trusted".into() });
         assert_eq!(workspace.prompt().unwrap().text(), "D:/other repo");
         assert_eq!(workspace.snapshot().draft.as_deref(), Some("original durable draft"));
-        assert_eq!(sent(workspace.key(Key::Enter)), Job::OpenRepository(NativePath::new("D:/other repo")));
+        assert!(matches!(sent(workspace.key(Key::Enter)), Job::EnterRepository { path: Some(path), current: Some((source, _)) } if path == NativePath::new("D:/other repo") && source == NativePath::new("fixture-repository")));
         let mut other = snapshot(Some("other durable draft"));
         other.files = vec![file("other.txt", false, true)];
         other.title = "other repository".into();
@@ -1899,7 +2106,7 @@ mod tests {
         }
         let raw = NativePath::new("actual repository");
         workspace.reply(Reply::Welcome(vec![crate::model::RecentRow { backend: "git".into(), path: raw.encoded(), label: "unrelated display label".into() }]));
-        assert_eq!(workspace.key(Key::Enter), Effect::Send(Job::OpenRepository(raw.clone())));
+        assert_eq!(workspace.key(Key::Enter), Effect::Send(Job::EnterRepository { path: Some(raw.clone()), current: None }));
         let review = crate::model::TrustReview { ticket: "one-use".into(), worktree: raw, git_directory: NativePath::new("metadata"), fingerprint: "digest".into(), submitted: false };
         workspace.reply(Reply::TrustReview(review));
         assert_eq!(workspace.key(Key::Enter), Effect::Nothing, "opening Enter cannot approve trust");
@@ -2439,8 +2646,9 @@ mod tests {
         assert_eq!(workspace.key(Key::Char('q')), Effect::Nothing);
         workspace.key(Key::Escape);
         assert!(!workspace.help());
-        assert_eq!(workspace.key(Key::Char('q')), Effect::Quit);
-        assert_eq!(Workspace::new(snapshot(None)).key(Key::CtrlC), Effect::Quit);
+        assert!(matches!(workspace.key(Key::Char('q')), Effect::Send(Job::EnterRepository { path: None, current: Some(_) })));
+        assert_eq!(workspace.reply(Reply::RepositoryClosed(Vec::new())), Effect::Quit);
+        assert!(matches!(Workspace::new(snapshot(None)).key(Key::CtrlC), Effect::Send(Job::EnterRepository { path: None, current: Some(_) })));
     }
 
     #[test]

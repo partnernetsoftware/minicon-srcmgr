@@ -255,6 +255,22 @@ impl ApplicationBackend {
 impl Backend for ApplicationBackend {
     fn run(&mut self, job: Job) -> Reply {
         match job {
+            Job::EnterRepository { path, current } => (|| {
+                if let Some((source, navigation)) = current {
+                    let active = self.active.as_ref().ok_or("No active repository for navigation save")?;
+                    if std::path::Path::new(source.as_os_str()) != active.worktree { return Err("Navigation belongs to another repository; target unchanged".into()); }
+                    open_profile_store(&self.options)?.put_navigation(&source, &navigation.encode()).map_err(|e| e.to_string())?;
+                } else if self.active.is_some() { return Err("Active repository context is required before entry".into()); }
+                if let Some(path) = path { self.open(path) }
+                else {
+                    let Reply::Welcome(recents) = self.recent()? else { return Err("Recent list unavailable".into()); };
+                    self.active = None;
+                    self.trust = None;
+                    self.create = None;
+                    self.identity = None;
+                    Ok(Reply::RepositoryClosed(recents))
+                }
+            })().unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::OpenRepository, text }),
             Job::LoadIdentity => self.load_identity().unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::IdentitySettings, text }),
             Job::SaveIdentity { ticket, name, email } => self.save_identity(&ticket, &name, &email).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::IdentitySettings, text }),
             Job::LoadGitSettings => self.git_settings().unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::GitSettings, text }),
@@ -328,6 +344,52 @@ mod tests {
         let approved = review(&mut app, repo);
         assert!(matches!(app.run(Job::GrantRepositoryTrust(approved.ticket)), Reply::RepositoryOpened(_)));
         app
+    }
+
+    #[test]
+    fn entry_repository_tabs_persist_context_and_never_retarget_a_write_on_refusal() {
+        use srcmgr_ui::{Workspace, Pane, Key};
+        let root = Scratch::new("entry-tabs");
+        let left = repository(&root.0, "left");
+        let right = repository(&root.0, "right 中文");
+        let mut app = trusted_app(&root.0, &left);
+        let _ = trusted_app(&root.0, &right);
+        let left_path = NativePath::new(std::fs::canonicalize(&left).unwrap().into_os_string());
+        let right_path = NativePath::new(std::fs::canonicalize(&right).unwrap().into_os_string());
+        let snapshot = app.active.as_ref().unwrap().snapshot().unwrap();
+        let mut workspace = Workspace::new(snapshot);
+        workspace.click_row(Pane::Files, 1);
+        let navigation = workspace.navigation();
+        let options = app.options.clone();
+        crate::open_profile_store(&options).unwrap().put_draft("git", &crate::repository_key(&left).unwrap(), "left draft").unwrap();
+        let Reply::RepositoryOpened(opened) = app.run(Job::EnterRepository { path: Some(right_path.clone()), current: Some((left_path.clone(), Box::new(navigation.clone()))) }) else { panic!("right must open"); };
+        assert_eq!(opened.repository, Some(right_path.clone()));
+        assert!(matches!(app.run(Job::SetFile { path: NativePath::new("a.txt"), stage: true }), Reply::Full(_)));
+        let show = |p: &std::path::Path| std::process::Command::new(git_executable()).current_dir(p).args(["show", ":a.txt"]).output().unwrap().stdout;
+        assert_eq!(show(&left), b"one\n");
+        assert_eq!(show(&right), b"two\n");
+        assert!(matches!(app.run(Job::EnterRepository { path: Some(left_path.clone()), current: Some((left_path.clone(), Box::new(navigation.clone()))) }), Reply::PromptFailed { .. }), "forged old source cannot save or activate");
+        assert_eq!(app.active.as_ref().unwrap().worktree, std::fs::canonicalize(&right).unwrap());
+        let mut other = Workspace::new(opened);
+        other.key(Key::Char('3'));
+        let other_navigation = other.navigation();
+        assert!(matches!(app.run(Job::EnterRepository { path: Some(NativePath::new(root.0.join("missing").into_os_string())), current: Some((right_path.clone(), Box::new(other_navigation.clone()))) }), Reply::PromptFailed { .. }));
+        assert_eq!(app.active.as_ref().unwrap().worktree, std::fs::canonicalize(&right).unwrap());
+        assert!(matches!(app.run(Job::EnterRepository { path: None, current: Some((right_path.clone(), Box::new(other_navigation.clone()))) }), Reply::RepositoryClosed(_)));
+        assert!(app.active.is_none());
+        let mut restarted = ApplicationBackend::welcome(options.clone());
+        let Reply::RepositoryOpened(restored) = restarted.run(Job::EnterRepository { path: Some(left_path), current: None }) else { panic!("left must reopen"); };
+        assert_eq!(restored.navigation, Some(navigation.clone()));
+        assert_eq!(restored.draft.as_deref(), Some("left draft"));
+        assert_eq!(crate::open_profile_store(&options).unwrap().navigation(&right_path).unwrap(), Some(other_navigation.encode()));
+        // A storage refusal preserves the active backend, not only the label.
+        let lock = root.0.join("profile/profile.lock");
+        std::fs::write(&lock, std::process::id().to_string()).unwrap();
+        let result = restarted.run(Job::EnterRepository { path: Some(right_path), current: restored.repository.map(|p| (p, Box::new(navigation))) });
+        std::fs::remove_file(lock).unwrap();
+        assert!(matches!(result, Reply::PromptFailed { .. }));
+        assert_eq!(show(&left), b"one\n");
+        assert_eq!(restarted.active.as_ref().unwrap().worktree, std::fs::canonicalize(&left).unwrap());
     }
 
     #[test]

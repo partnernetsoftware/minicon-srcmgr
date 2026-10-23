@@ -98,6 +98,8 @@ impl WindowBackend {
         if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
         let candidate = Self { options: selected, worktree, prepared: None, commit_review: None };
         let mut snapshot = candidate.snapshot()?;
+        snapshot.navigation = open_profile_store(options)?.navigation(&NativePath::new(candidate.worktree.as_os_str())).map_err(|e| e.to_string())?
+            .map(|record| srcmgr_ui::Navigation::decode(&record)).transpose().map_err(str::to_owned)?;
         if let Err(error) = open_profile_store(options)?.remember_repository(BACKEND_GIT, &candidate.worktree) {
             snapshot.stage_result = Some(format!("Recent list not updated: {error}; repository data was not changed"));
         }
@@ -140,7 +142,7 @@ impl WindowBackend {
     fn perform(&mut self, job: Job, ticket: Option<&str>) -> Result<Reply, String> {
         Ok(match job {
             Job::LoadIdentity | Job::SaveIdentity { .. } | Job::LoadGitSettings | Job::ConfigureGit(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_) | Job::LoadWelcome | Job::ForgetRecent { .. } | Job::GrantRepositoryTrust(_) | Job::CancelEntry => return Err("repository entry requires the application entry boundary".into()),
-            Job::OpenRepository(_) => return Err("repository entry must use its isolated worker path".to_owned()),
+            Job::OpenRepository(_) | Job::EnterRepository { .. } => return Err("repository entry must use its isolated worker path".to_owned()),
             Job::StashAction { id, expected, operation } => {
                 let session = open_trusted(&self.options, &self.worktree)?;
                 let ticket = ticket.ok_or_else(|| "stash action requires a consumed confirmation".to_owned())?;

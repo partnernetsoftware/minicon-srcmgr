@@ -91,6 +91,7 @@ pub struct TrustReview {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Snapshot {
+    pub navigation: Option<crate::Navigation>,
     /// None is an explicit Welcome state, not a guessed Git repository.
     pub repository: Option<NativePath>,
     pub recents: Vec<RecentRow>,
@@ -116,6 +117,7 @@ impl Snapshot {
         draft: Option<String>,
     ) -> Self {
         Self {
+            navigation: None,
             repository: Some(repository),
             recents: Vec::new(),
             title: title.into(),
@@ -131,6 +133,7 @@ impl Snapshot {
 
     pub fn welcome() -> Self {
         Self {
+            navigation: None,
             repository: None, recents: Vec::new(), title: "MiniCon SrcMgr".into(),
             head: "Open a local repository. No account required.".into(),
             files: Vec::new(), branches: Vec::new(), commits: Vec::new(),
@@ -211,6 +214,7 @@ pub enum MainRequest {
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Job {
+    EnterRepository { path: Option<NativePath>, current: Option<(NativePath, Box<crate::Navigation>)> },
     LoadCommitReview { generation: u64 },
     CommitDiff { ticket: String, generation: u64, index: usize },
     LoadIdentity,
@@ -286,6 +290,7 @@ pub enum Job {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reply {
+    RepositoryClosed(Vec<RecentRow>),
     CommitReview { generation: u64, review: CommitReview },
     CommitDiff { generation: u64, view: MainView },
     IdentitySettings { ticket: String, name: String, email: String, detail: String },

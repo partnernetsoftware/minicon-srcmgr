@@ -95,6 +95,15 @@ pub struct ProfileStore {
 }
 
 impl ProfileStore {
+    pub fn put_navigation(&mut self, repository: &srcmgr_domain::NativePath, value: &str) -> Result<(), StoreError> {
+        if value.len() > 256 * 1024 { return Err(StoreError::InvalidMetadata); }
+        self.put_setting(&navigation_key(repository)?, value)
+    }
+
+    pub fn navigation(&self, repository: &srcmgr_domain::NativePath) -> Result<Option<String>, StoreError> {
+        self.get_setting_bounded(&navigation_key(repository)?, 256 * 1024)
+    }
+
     /// Persist the exact submitted draft and pending operation atomically,
     /// before launching Git. The profile writer remains held by the caller.
     pub fn begin_git_commit(&mut self, repository: &str, message: &str, before: Option<&str>) -> Result<(), StoreError> {
@@ -219,9 +228,18 @@ impl ProfileStore {
 }
 
 fn commit_intent_key(repository: &str) -> String {
+    repository_record_key("git.commit.intent.v1", repository)
+}
+
+fn navigation_key(repository: &srcmgr_domain::NativePath) -> Result<String, StoreError> {
+    let encoded = repository.encoded();
+    Ok(repository_record_key("git.navigation.v1", &format!("{}:{}", encoded.tag(), crate::recent::encode_path(&encoded)?)))
+}
+
+fn repository_record_key(prefix: &str, repository: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest: String = Sha256::digest(repository.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
-    format!("git.commit.intent.v1.{digest}")
+    format!("{prefix}.{digest}")
 }
 
 /// Creates the schema on an empty database and refuses a newer one. Each
