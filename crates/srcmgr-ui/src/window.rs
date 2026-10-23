@@ -470,6 +470,10 @@ impl StatusWindow {
         if self.workspace.modal() {
             return Ok(PixelWindowDirective::Continue);
         }
+        if self.workspace.is_welcome() && let Gesture::Wheel(delta) = gesture && matches!(hit_test(&self.workspace,surface,px,py),Hit::Main(_)) {
+            let effect=self.workspace.scroll_trust(wheel_lines(delta,surface.grid.row,scale));
+            let directive=self.dispatch(effect);window.request_redraw();return Ok(directive);
+        }
         let scale = window.scale_factor()?;
         let hit = hit_test(&self.workspace, surface, (x * scale).round() as i64, (y * scale).round() as i64);
         let effect = match (gesture, hit) {
@@ -887,6 +891,13 @@ impl PixelWindowApplication for StatusWindow {
             let text = form.review.as_ref().map_or_else(|| locate_text(form), |(_, lines)| lines.join("\n"));
             let count = wrapped_lines(&text, inner.cols).len();
             self.workspace.set_trust_scroll_limit(count.saturating_sub(inner.rows.max(0) as usize));
+        }
+        if self.workspace.is_welcome() && !self.workspace.modal() {
+            let main=layout(i64::from(width),i64::from(height),grid).main;
+            let body=if self.workspace.snapshot().recents.is_empty() {main} else {trust_content(main,grid).0};
+            let inner=inner_of(body,grid);
+            let text=self.workspace.main().lines.iter().map(|line|line.text.as_str()).collect::<Vec<_>>().join("\n");
+            self.workspace.set_trust_scroll_limit(wrapped_lines(&text,inner.cols).len().saturating_sub(inner.rows.max(0) as usize));
         }
         self.surface = Some(Surface { width: i64::from(width), height: i64::from(height), grid });
         // The main panel's visible rows, so the cursor stays on screen after a resize.
@@ -1662,6 +1673,12 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         text_panel(draws, rect, grid, true, "Confirm and recovery", &lines, 0, None);
         return;
     }
+    if workspace.is_welcome() {
+        let body=if workspace.snapshot().recents.is_empty() {rect} else {trust_content(rect,grid).0};
+        let text=workspace.main().lines.iter().map(|line|line.text.as_str()).collect::<Vec<_>>().join("\n");
+        text_panel(draws,body,grid,focused,"Welcome",&wrapped_lines(&text,inner_of(body,grid).cols),workspace.trust_scroll(),None);
+        return;
+    }
     let main = workspace.main();
     let title = if workspace.is_welcome() { "Welcome" } else { match workspace.source() {
         Pane::Commits => match workspace.history_context() { Some(("Files", _, _)) => "Committed files", Some(("File Diff", _, _)) => "Committed file Diff", _ => "Commit details" },
@@ -1952,6 +1969,15 @@ mod tests {
 
     use super::*;
     use crate::model::{BranchRow, CommitRow, FileRow, MainView};
+
+    #[test]
+    fn welcome_selected_recent_wraps_the_path_end_into_visible_content() {
+        let mut workspace=Workspace::new(Snapshot::welcome());
+        let path=format!("{}located project 中文_END42", "long parent directory/".repeat(8));
+        workspace.reply(Reply::Welcome(vec![crate::RecentRow { backend:"git".into(),path:NativePath::new(path.clone()).encoded(),label:path }]));
+        let draws=scene(&workspace,1040,680,GRID,0);
+        assert!(draws.iter().any(|d| matches!(d,Draw::Text {text,..} if text.contains("END42"))),"selected recent details must show the distinguishing end of a long path");
+    }
 
     #[test]
     fn recent_pointer_controls_bind_the_selected_record_and_locate_respects_busy_work() {

@@ -1127,6 +1127,7 @@ impl Workspace {
 
     pub fn select_recent(&mut self, index: usize) -> Effect {
         if !self.is_welcome() || index >= self.snapshot.recents.len() { return Effect::Nothing; }
+        self.trust_scroll = 0;
         self.files = index;
         let entry = &self.snapshot.recents[index];
         self.main = MainView::text(&format!("Recent location ({})\n{}\n\nNot checked or trusted by listing it.\nOpen: inspect this location through the ordinary trust gate.\nLocate: replace this bookmark's path after review.\nRemove: remove this navigation record only; keep files/drafts/trust.", entry.backend, entry.label));
@@ -1344,6 +1345,8 @@ impl Workspace {
                 Key::Char('O') | Key::CtrlO => self.request_open(),
                 Key::Char('q') | Key::CtrlC => Effect::Quit,
                 Key::Char('r') => Effect::Send(Job::LoadWelcome),
+                Key::PageUp => self.scroll_trust(-(PAGE_LINES as isize)),
+                Key::PageDown => self.scroll_trust(PAGE_LINES as isize),
                 Key::Enter => self.open_recent(),
                 Key::Up | Key::Char('k') => self.select_recent(self.files.saturating_sub(1)),
                 Key::Down | Key::Char('j') => self.select_recent((self.files + 1).min(self.snapshot.recents.len().saturating_sub(1))),
