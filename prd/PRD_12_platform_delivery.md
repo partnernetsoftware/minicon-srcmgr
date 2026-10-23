@@ -153,9 +153,13 @@ Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Rele
 - No IME composition beyond committed text, no screen-reader bridge, no checkout of a commit, no commit files, no search or filter, no discard, stash or rebase.
 - Linux and macOS cells are not run.
 
-## Development 0.0.5 status
+## Development 0.0.6 status
 
-Workspace target: **0.0.5**, a source-only candidate under qualification; no `v0.0.5` public tag or GitHub Release has been published. Local optimized binaries exist solely for validation and are not distribution artifacts. The latest public release remains 0.0.4 below. Current scope, scoped host evidence and remaining gates live in [the version plan](../plan/plan-0.0.5.md). Reference-environment response/resource certification remains open; implementation and a passing diagnostic do not waive that gate.
+Workspace version: **0.0.6**, partial implementation under the [active plan](../plan/plan-0.0.6.md). The owner authorizes sequential public releases through 0.0.9 after their applicable gates. No 0.0.6 tag/release or distributed binary exists at implementation start; latest published version remains 0.0.4. Recents storage and contract CI are initial work, not completion of repository entry, tabs, commit review or runtime qualification. Public binary first-user delivery remains the separately qualified 0.1.0 target above.
+
+## 0.0.5 source checkpoint
+
+Historical workspace target: **0.0.5**, an unpublished source checkpoint with scoped qualification evidence; no `v0.0.5` public tag or GitHub Release has been published. Local optimized binaries exist solely for validation and are not distribution artifacts. The latest public release remains 0.0.4 below. Current scope, scoped host evidence and remaining gates live in [the version plan](../plan/plan-0.0.5.md). Reference-environment response/resource certification remains open; implementation and a passing diagnostic do not waive that gate.
 
 ## Release 0.0.4 status
 

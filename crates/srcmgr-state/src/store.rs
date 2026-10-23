@@ -26,6 +26,9 @@ pub enum StoreError {
     NewerSchema { found: i64 },
     Sql(rusqlite::Error),
     Io(io::Error),
+    /// A bounded product metadata record is malformed or unsupported. Keep it
+    /// intact for inspection instead of replacing it with an empty default.
+    InvalidMetadata,
 }
 
 impl fmt::Display for StoreError {
@@ -40,6 +43,7 @@ impl fmt::Display for StoreError {
             ),
             Self::Sql(_) => formatter.write_str("the profile database could not be read or written"),
             Self::Io(_) => formatter.write_str("the profile directory could not be prepared"),
+            Self::InvalidMetadata => formatter.write_str("the recent repository metadata is invalid or exceeds its supported limits; existing records were preserved"),
         }
     }
 }
@@ -151,6 +155,22 @@ impl ProfileStore {
             .connection
             .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| row.get(0))
             .optional()?)
+    }
+
+    /// Check byte length inside SQLite before materializing bounded metadata.
+    /// An oversized record is refused, never treated as a missing setting.
+    pub(crate) fn get_setting_bounded(&self, key: &str, limit: usize) -> Result<Option<String>, StoreError> {
+        let value: Option<Option<String>> = self.connection.query_row(
+            "SELECT CASE WHEN length(CAST(value AS BLOB)) <= ?2 THEN value ELSE NULL END
+             FROM settings WHERE key = ?1",
+            (key, limit as u64),
+            |row| row.get(0),
+        ).optional()?;
+        match value {
+            Some(None) => Err(StoreError::InvalidMetadata),
+            Some(Some(value)) => Ok(Some(value)),
+            None => Ok(None),
+        }
     }
 }
 

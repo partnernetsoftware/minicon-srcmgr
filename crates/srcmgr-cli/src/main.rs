@@ -92,7 +92,11 @@ fn gui(options: &Options) -> Result<(), String> {
         worktree: worktree.to_path_buf(),
         prepared: None,
     };
-    let snapshot = backend.snapshot()?;
+    let mut snapshot = backend.snapshot()?;
+    let recent = open_profile_store(options)?.remember_repository(BACKEND_GIT, &canonical_worktree(worktree)?);
+    if let Err(error) = recent {
+        snapshot.stage_result = Some(format!("Recent list not updated: {error}; repository data was not changed"));
+    }
     let timing = if env::var_os("SRCMGR_MEASURE_UI").as_deref() == Some(std::ffi::OsStr::new("1")) {
         let profile = std::fs::canonicalize(profile_root(options)?).map_err(|e| e.to_string())?;
         let repository = canonical_worktree(worktree)?;

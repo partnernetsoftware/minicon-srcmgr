@@ -98,6 +98,6 @@ The owner-directed near-term goal is [a usable 0.1.0 Git client](prd/PRD_01_prod
 - [v] Requirements baseline: this index and 15 linked owner modules; documentation checks are reproducible through `python scripts/check_docs.py`.
 - [-] M0 foundation and Windows local Git/UI slices have implementation and scoped evidence. Native accessibility, remaining capability proofs and full milestone qualification stay open; see 02/14.
 - [-] M1 local workflows are partially delivered; paged graph, workspace/control and other cumulative clauses remain open. M2/M3 are not complete because selected later behaviors shipped early.
-- [-] Current development target 0.0.5 is under qualification; 0.0.6 and the route to 0.1.0 are planned, not implemented. Exact source-release status is owned by [12](prd/PRD_12_platform_delivery.md), current execution evidence by the version plans linked from 14.
+- [-] Current development target 0.0.6 is partially implemented; 0.0.5 remains an unpublished checkpoint with scoped reusable evidence. Later versions toward 0.1.0 remain planned. Exact source-release status is owned by [12](prd/PRD_12_platform_delivery.md), current execution evidence by the version plans linked from 14.
 
 The documentation checker validates structure and local links, not semantic correctness or implementation. Source research and unresolved feasibility gates are owned by 02; requirement-to-evidence mapping is owned by 14.

@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+srcmgr-domain.workspace = true
 sha2.workspace = true
 rusqlite.workspace = true
 

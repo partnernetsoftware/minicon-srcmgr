@@ -62,6 +62,25 @@ impl NativePath {
         &self.0
     }
 
+    /// Restores native units only on the matching platform; never guesses a
+    /// path when a profile was copied from another operating system.
+    pub fn from_encoded(value: EncodedPath) -> Result<Self, PathError> {
+        match value {
+            #[cfg(unix)]
+            EncodedPath::UnixBytes(bytes) => {
+                use std::os::unix::ffi::OsStringExt;
+                Ok(Self(OsString::from_vec(bytes)))
+            }
+            #[cfg(windows)]
+            EncodedPath::WindowsUtf16(units) => {
+                use std::os::windows::ffi::OsStringExt;
+                Ok(Self(OsString::from_wide(&units)))
+            }
+            #[allow(unreachable_patterns)]
+            _ => Err(PathError::NotRepresentable),
+        }
+    }
+
     #[must_use]
     pub fn encoded(&self) -> EncodedPath {
         #[cfg(unix)]

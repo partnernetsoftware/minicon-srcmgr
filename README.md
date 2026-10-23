@@ -4,9 +4,9 @@ A lightweight, native source-control GUI for Windows, macOS and Linux on x86_64 
 
 **Latest published release: source version 0.0.4 (see [release status](prd/PRD_12_platform_delivery.md#release-004-status)), published as source only, not as a binary. It contains the M0 foundation and the M1 local slice on Windows: status, stage and unstage (files, hunks and lines), commit with a saved draft, history and commit details, branch list, create, checkout, delete, discard, stash and detached checkout, ignore, and a workspace window modelled on lazygit's core flow with numbered panels, a main-panel cursor and mouse support. Several milestone items remain open.** Build and test commands and their evidence are listed in the [work order](prd/PRD_14_verification_roadmap.md#implementation-work-order-and-evidence).
 
-Development target: **0.0.5**, with local workflow improvements and resource, response and stability qualification in progress. Scope, current evidence and open release gates are tracked in [the implementation plan](plan/plan-0.0.5.md).
+Development target: **0.0.6**, with local workflow improvements and resource, response and stability qualification in progress. Scope, current evidence and open release gates are tracked in [the implementation plan](plan/plan-0.0.6.md).
 
-Next-version design: [0.0.6 local-client plan](plan/plan-0.0.6.md) and [the 0.0.x → 0.1.0 usable-client roadmap](plan/roadmap-0.1.0.md), planned and not implemented. The first-user feature tree and UI/UX remain owned by the PRDs; current package version and published status are unchanged.
+The [0.0.x → 0.1.0 roadmap](plan/roadmap-0.1.0.md) allocates subsequent collaboration/recovery/history work. 0.0.6 has started; later versions remain planned. The first-user feature tree and UI/UX remain owned by the PRDs. Published release status is unchanged.
 
 Start with [PRD.md](PRD.md) for product scope, capability ownership and delivery gates. The [PRD series](prd/) defines behavior and acceptance criteria. [AGENTS.md](AGENTS.md) defines repository working rules.
 

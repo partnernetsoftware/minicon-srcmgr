@@ -45,6 +45,83 @@ fn a_draft_survives_a_restart_and_the_lock_is_released() {
 }
 
 #[test]
+fn recents_survive_restart_reorder_and_forget_without_touching_files_or_drafts() {
+    let profile = Profile::new("recents");
+    let repo = profile.root.join("repo with space 中文");
+    fs::create_dir_all(&repo).expect("repository fixture");
+    fs::write(repo.join("keep.txt"), b"work in progress").expect("content");
+    let absent = profile.root.join("removed-worktree");
+    {
+        let mut store = ProfileStore::open(&profile.root).expect("open");
+        store.put_draft("git", "repo-id", "preserve draft").expect("draft");
+        store.remember_repository("git", &repo).expect("first");
+        store.remember_repository("git", &absent).expect("passive missing entry");
+        store.remember_repository("git", &repo).expect("reopen reorders");
+    }
+    let mut store = ProfileStore::open(&profile.root).expect("reopen");
+    let entries = store.recent_repositories().expect("recents");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].native_path().unwrap().as_os_str(), repo.as_os_str());
+    assert_eq!(entries[1].native_path().unwrap().as_os_str(), absent.as_os_str());
+    store.forget_repository(&entries[0]).expect("forget");
+    assert_eq!(fs::read(repo.join("keep.txt")).unwrap(), b"work in progress");
+    assert_eq!(store.get_draft("git", "repo-id").unwrap().as_deref(), Some("preserve draft"));
+    assert_eq!(store.recent_repositories().unwrap(), vec![entries[1].clone()]);
+}
+
+#[test]
+fn recents_are_bounded_backend_scoped_and_corrupt_records_are_not_reset() {
+    let profile = Profile::new("recent-bounds");
+    let mut store = ProfileStore::open(&profile.root).expect("open");
+    for i in 0..srcmgr_state::RECENT_REPOSITORY_LIMIT + 2 {
+        store.remember_repository("git", &profile.root.join(format!("repo-{i}"))).unwrap();
+    }
+    let entries = store.recent_repositories().unwrap();
+    assert_eq!(entries.len(), srcmgr_state::RECENT_REPOSITORY_LIMIT);
+    let latest = entries[0].native_path().unwrap();
+    store.remember_repository("contract-fixture", std::path::Path::new(latest.as_os_str())).unwrap();
+    let entries = store.recent_repositories().unwrap();
+    assert_eq!(entries[0].backend, "contract-fixture");
+    assert_eq!(entries[1].backend, "git");
+    assert_eq!(entries[0].path, entries[1].path);
+    let corrupt = "git\twindows-utf16\tfff\n";
+    store.put_setting("workspace.recents.v1", corrupt).unwrap();
+    assert!(matches!(store.remember_repository("git", &profile.root), Err(StoreError::InvalidMetadata)));
+    assert_eq!(store.get_setting("workspace.recents.v1").unwrap().as_deref(), Some(corrupt));
+    let oversized = "x".repeat(2 * 1024 * 1024 + 1);
+    store.put_setting("workspace.recents.v1", &oversized).unwrap();
+    assert!(matches!(store.recent_repositories(), Err(StoreError::InvalidMetadata)));
+    assert_eq!(store.get_setting("workspace.recents.v1").unwrap().as_deref(), Some(oversized.as_str()));
+}
+
+#[cfg(windows)]
+#[test]
+fn recent_native_paths_keep_unpaired_utf16_and_foreign_paths_remain_unavailable() {
+    use std::os::windows::ffi::OsStringExt;
+    let profile = Profile::new("recent-native-path");
+    let mut store = ProfileStore::open(&profile.root).unwrap();
+    let path = PathBuf::from(std::ffi::OsString::from_wide(&[67, 58, 92, 0xD800, 46, 103, 105, 116]));
+    store.remember_repository("git", &path).unwrap();
+    let entries = store.recent_repositories().unwrap();
+    assert_eq!(entries[0].native_path().unwrap().as_os_str(), path.as_os_str());
+    store.put_setting("workspace.recents.v1", "git\tunix-bytes\t2fff\n").unwrap();
+    assert!(store.recent_repositories().unwrap()[0].native_path().is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn recent_native_paths_keep_invalid_utf8_and_foreign_paths_remain_unavailable() {
+    use std::os::unix::ffi::OsStringExt;
+    let profile = Profile::new("recent-native-path");
+    let mut store = ProfileStore::open(&profile.root).unwrap();
+    let path = PathBuf::from(std::ffi::OsString::from_vec(b"/repo/\xff".to_vec()));
+    store.remember_repository("git", &path).unwrap();
+    assert_eq!(store.recent_repositories().unwrap()[0].native_path().unwrap().as_os_str(), path.as_os_str());
+    store.put_setting("workspace.recents.v1", "git\twindows-utf16\t43003a005c00\n").unwrap();
+    assert!(store.recent_repositories().unwrap()[0].native_path().is_err());
+}
+
+#[test]
 fn a_second_writer_is_refused_while_the_first_is_open() {
     let profile = Profile::new("lock");
     let _first = ProfileStore::open(&profile.root).expect("first open");

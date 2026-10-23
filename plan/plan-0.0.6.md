@@ -1,6 +1,6 @@
 # 0.0.6 product and delivery plan
 
-Status: `[_]` revised design; no implementation or acceptance claimed. Current package version remains **0.0.5**. This revision follows the owner's direction to reach a usable client at 0.1.0, superseding the earlier filter-only proposal. The [0.1.0 roadmap](roadmap-0.1.0.md) owns version allocation, [01](../prd/PRD_01_product.md#010-first-user-feature-tree) owns product admission, and [10](../prd/PRD_10_desktop_ux.md#first-user-workspace-and-journeys) owns UI/UX. This is not release notes or an instruction to publish.
+Status: `[-]` implementation started against source checkpoint `ccfae99`; current package version is **0.0.6**. No release or complete acceptance is claimed. This revision follows the owner's direction to reach a usable client at 0.1.0, superseding the earlier filter-only proposal. The [0.1.0 roadmap](roadmap-0.1.0.md) owns version allocation, [01](../prd/PRD_01_product.md#010-first-user-feature-tree) owns product admission, and [10](../prd/PRD_10_desktop_ux.md#first-user-workspace-and-journeys) owns UI/UX. This is not release notes or an instruction to publish.
 
 ## Product outcome
 
@@ -71,7 +71,7 @@ A Clone affordance may explain that it is unavailable in this checkpoint, but mu
 
 ## Work packages and evidence
 
-All packages start `[_]`. Inspect actual code before assigning missing work. P0 is a source review, not an automatic full test pass. Implement A → C as the first vertical slice, then B/D; carry E throughout. Change the package version only when implementation is explicitly started.
+P0 source review is complete for the initial storage slice; P1/P3 have partial storage implementation, while their GUI work and acceptance remain open. Other packages remain not started. Inspect actual code before assigning missing work. P0 is a source review, not an automatic full test pass. Implement A → C as the first vertical slice, then B/D; carry E throughout. Change the package version only when implementation is explicitly started.
 
 | Package | Change and user risk | Minimum evidence / stopping condition |
 |---|---|---|
@@ -97,3 +97,11 @@ Use the existing disposable fixtures and owned-process tools where their measure
 | L7 · readiness | First-user package/native-host/accessibility dependencies have concrete owners and next steps; no fake delivery claim | `[_]` |
 
 The handoff records source/artifact, cases, actual state oracles, reused evidence and blockers. An unmet applicable release gate remains BLOCKED, while independent work can proceed against a clearly identified source checkpoint. Release status stays under 12 and named publication authority. This plan changes neither current version metadata nor any past release claim.
+
+## Execution record · recent navigation storage
+
+The owner now authorizes development and sequential public releases of 0.0.6, 0.0.7, 0.0.8 and 0.0.9. Publication remains subject to each declared slice's applicable gates; no version is qualified by this authority alone. Remote inspection at start showed source main `31942f8`, latest release `v0.0.4`, and no 0.0.6–0.0.9 tags. 0.0.5 remains an unpublished source checkpoint, not a release invented to fill the sequence.
+
+Initial implementation adds passive, backend-tagged MRU repository metadata through the existing transactional profile settings store, with lossless platform-tagged paths and bounded decoding. Explicit GUI open records its canonical trusted worktree once; refresh does not rewrite recents. Reading/removing an entry performs no repository scan, trust grant or file/draft deletion. The Welcome/recent controls and multi-repository window are not yet implemented. Existing schema/drafts remain compatible; no database migration or new third-party dependency was introduced.
+
+Selected verification: corrupt or lossy recents could misdirect navigation or erase metadata → real SQLite reopen/reorder/forget/content/draft checks and native-path boundaries, plus affected domain/state tests and CLI/state/domain all-target Clippy. The local Windows run passed 20 selected tests and Clippy with warnings denied. Three newly added store cases cover durable recents/removal, bounds/backend isolation/corrupt retention, and native/foreign paths. No graphical, resource or release PASS follows. A path-triggered Windows/Linux CI workflow is configured for this suite; configure/run/observed-pass states must remain distinct. No full workspace/long-session replay was selected.

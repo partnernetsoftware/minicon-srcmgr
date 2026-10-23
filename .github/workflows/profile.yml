@@ -1,0 +1,41 @@
+name: Profile and identity invariants
+
+on:
+  push:
+    paths:
+      - 'crates/srcmgr-domain/**'
+      - 'crates/srcmgr-state/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.github/workflows/profile.yml'
+  pull_request:
+    paths:
+      - 'crates/srcmgr-domain/**'
+      - 'crates/srcmgr-state/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.github/workflows/profile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pinned toolchain
+        run: rustup show active-toolchain
+      - name: Identity, durable profile and native-path contracts
+        run: cargo test --locked -p srcmgr-domain -p srcmgr-state
+      - name: Affected-crate static checks
+        run: cargo clippy --locked -p srcmgr-domain -p srcmgr-state --all-targets -- -D warnings

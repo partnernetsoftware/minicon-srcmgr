@@ -68,6 +68,12 @@ Reuse evidence when its inputs, dependency contracts and relevant environment as
 
 Stop when the selected checks pass and there is no unexplained failure or residual risk in the change. A failure triggers diagnosis of that path and necessary neighbors; do not restart the full matrix by default. New edits, new failures or evidence of wider impact justify escalation. Summarize **risk → evidence → conclusion/limits** once, keep raw reports out of normal output, inspect relevant failure excerpts instead of rereading complete logs, and avoid repeated polling or enumerating routine passes. Test counts are not a quality metric. Missing required evidence remains BLOCKED/NOT-RUN; cases not selected for this change are simply outside its validation scope, not newly failed or newly passed.
 
+## Continuous suite feedback
+
+Owner instruction, 2026-10-24: maintain a suite that provides actionable feedback for continued development. The loop is change/risk → selected observable test → inspect failure evidence → distinguish product defect, harness defect and missing environment → repair → rerun the affected case and justified neighbors → proceed when those pass. Do not retry until green, lower an assertion, discard a failed attempt or expand unrelated checks to look thorough. Add a discriminating regression when fixing an actual bug; a negative control is needed when a changed loss guard or uncertain test requires it, not for every label or record setter.
+
+Local checks precede their integration check. Path-triggered CI provides repeatable independent feedback: the initial profile/identity lane runs real persistence/native-path contracts on Windows and Linux, with fail-fast disabled so a platform failure does not hide the other verdict. This is contract evidence, not native GUI certification or an instruction to run a six-cell matrix. Later Git/GUI/remote lanes follow their delivered dependency/risk scope. Keep raw native receipts/private data ignored, retain failed-run identity and concise diagnosis, and report configured, running, passed and blocked states distinctly. A new failure determines the next action; passing an unaffected check is reused instead of replayed for every continuation.
+
 ## Test layers and evidence integrity
 
 Use pure-rule tests for parsers/geometry/plans only where they guard meaningful behavior; Git integration fixtures for actual object/index/ref changes; public CLI/control and GUI journeys for user-visible effects; native accessibility and real input for platform behavior. Do not substitute mocked Git exit zero for repository-state verification. Deterministic fixtures use local remotes and synthetic identities; HTTPS/SSH/signing tests use dedicated disposable credentials, never real account secrets.
@@ -366,7 +372,7 @@ The 0.0.5 scope, work sequence, package status and execution evidence live in [p
 
 ### 0.0.6 proposed next-version design
 
-The revised [0.0.6 plan](../plan/plan-0.0.6.md) combines repository entry/context, existing local Git actions and full-index commit review; quick filtering supports that user task. The [0.1.0 roadmap](../plan/roadmap-0.1.0.md) allocates standard remotes, integrations/conflicts and everyday history/ref work before first-user beta delivery. These are product plans, not implemented or qualified releases. Current package version remains 0.0.5; existing budgets and missing qualification prerequisites are not waived.
+The revised [0.0.6 plan](../plan/plan-0.0.6.md) combines repository entry/context, existing local Git actions and full-index commit review; quick filtering supports that user task. The [0.1.0 roadmap](../plan/roadmap-0.1.0.md) allocates standard remotes, integrations/conflicts and everyday history/ref work before first-user beta delivery. These are product plans, not implemented or qualified releases. Current execution/version state lives in the active 0.0.6 plan; existing budgets and missing qualification prerequisites are not waived.
 
 ### Requirements baseline 1.5 review disposition
 
