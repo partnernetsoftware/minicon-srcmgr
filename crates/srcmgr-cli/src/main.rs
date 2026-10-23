@@ -379,11 +379,14 @@ fn open_trusted(options: &Options, worktree: &Path) -> Result<Session, String> {
 }
 
 fn probe_git(options: &Options) -> Result<GitInstallation, String> {
-    let executable = match &options.git {
+    GitInstallation::probe(selected_git(options)?).map_err(|error| error.to_string())
+}
+
+fn selected_git(options: &Options) -> Result<PathBuf, String> {
+    Ok(match &options.git {
         Some(path) => path.clone(),
         None => find_git_on_path().ok_or("no git executable was found on PATH; pass --git")?,
-    };
-    GitInstallation::probe(&executable).map_err(|error| error.to_string())
+    })
 }
 
 fn status(options: &Options) -> Result<(), String> {

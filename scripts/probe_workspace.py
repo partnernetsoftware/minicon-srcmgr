@@ -635,9 +635,18 @@ def click_review_button(hwnd, user, gdi, allow):
     try:
         found = None
         for y in range(rect.bottom - 1, rect.bottom // 2, -1):
-            columns = [x for x in range(rect.right * 40 // 100, rect.right) if gdi.GetPixel(dc, x, y) == 0xD69C56]
-            if len(columns) > 40:
-                found = columns, y
+            runs, current = [], []
+            for x in range(rect.right * 40 // 100, rect.right):
+                if gdi.GetPixel(dc, x, y) == 0xD69C56:
+                    current.append(x)
+                else:
+                    if 40 < len(current) < rect.right // 3: runs.append(current)
+                    current = []
+            if 40 < len(current) < rect.right // 3: runs.append(current)
+            if runs:
+                # A form's surrounding focus frame may be below its buttons.
+                # Match a button-width contiguous run, not that entire frame.
+                found = max(runs, key=lambda run: max(run)), y
                 break
         if found is None:
             raise RuntimeError("cannot locate rendered Cancel control")

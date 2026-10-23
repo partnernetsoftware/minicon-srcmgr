@@ -71,7 +71,7 @@ A Clone affordance may explain that it is unavailable in this checkpoint, but mu
 
 ## Work packages and evidence
 
-P0 source review is complete for the initial entry slice; P1/P3 have recents storage, Welcome/Open and bounded graphical trust approval. Init, Git/identity setup, tabs and complete acceptance remain open. Other packages remain not started. Inspect actual code before assigning missing work. P0 is a source review, not an automatic full test pass. Implement A → C as the first vertical slice, then B/D; carry E throughout. Change the package version only when implementation is explicitly started.
+P0 source review is complete for the initial entry slice; P1/P3 have recents storage, Welcome/Open/Create and bounded graphical trust approval. Git/identity setup, tabs and complete acceptance remain open. Other packages remain not started. Inspect actual code before assigning missing work. P0 is a source review, not an automatic full test pass. Implement A → C as the first vertical slice, then B/D; carry E throughout. Change the package version only when implementation is explicitly started.
 
 | Package | Change and user risk | Minimum evidence / stopping condition |
 |---|---|---|
@@ -90,7 +90,7 @@ Suite feedback follows [14's failure disposition loop](../prd/PRD_14_verificatio
 
 | Case | Required outcome | State |
 |---|---|---|
-| L1 · entry | Fresh profile opens or creates a local repository with clear Git/trust/identity guidance; existing content preserved | `[_]` |
+| L1 · entry | Fresh profile opens or creates a local repository with clear Git/trust/identity guidance; existing content preserved | `[-]` · Open/Create/trust evidence below; graphical Git/identity setup still missing |
 | L2 · commit | Pointer and keyboard can inspect/stage/compose/commit; visible full-index review matches actual committed content | `[_]` |
 | L3 · continuity | Two repositories keep independent drafts, selection, filter and scroll; close/reopen preserves acknowledged state | `[_]` |
 | L4 · find | Query/count/empty/reset are truthful; loaded history limit visible; text/IME input invokes no shortcuts | `[_]` |
@@ -120,7 +120,7 @@ Selected local checks passed: two UI routing/queue tests and one two-repository 
 
 `target/qualification/006-entry-native-v2/receipt.json` completed on optimized artifact `ba84060e23694245942dfd7eac2e60f419a76c42816869d14574308333da941f`, with its source-input hashes retained beside the frozen binary. Actual native Ctrl+O/path input opened the other owned trusted repository; its selected file was staged, its draft edited/saved, and return to the source retained independent drafts and unchanged source HEAD/index/worktree. Native title acknowledgement and target/return captures were reviewed. Owned descendant coverage is COMPLETE (143 processes, zero active at exit); exit was 0. This does not prove pointer interaction, first-run trust, tabs, init or reference latency/resources. Latency was explicitly NOT-RUN; one-second idle diagnostics are not budget qualification. No unaffected sustained journey or full workspace suite was replayed.
 
-Next work remains the complete entry task: Welcome/Open/Create/recent controls and bounded graphical trust/setup, then retained tab state and the full staged-index composer. Header compactness and path presentation need refinement as the shell evolves; do not mistake the basic Open slice for the full 0.0.6 UI/UX or publish it as complete.
+At that checkpoint, next work was the complete entry task: Welcome/Open/Create/recent controls and bounded graphical trust/setup, then retained tab state and the full staged-index composer; later records below supersede those implementation gaps. Header compactness and path presentation need refinement as the shell evolves; do not mistake the basic Open slice for the full 0.0.6 UI/UX or publish it as complete.
 
 
 ## Execution record · Welcome and explicit trust
@@ -134,3 +134,20 @@ Native attempt `006-welcome-native-v1` on artifact `2dcaf05229b3c2eb0c5cb9b6c384
 `006-welcome-native-v2` completed on the same product bytes with owned-window isolation. Reconciled process evidence reports zero Git before approval. Actual pointer Cancel preserved the path and no-grant state; actual pointer Trust and open entered the selected repository. Subsequent keyboard Open used a space/Unicode target, staging affected only its index, and independent durable drafts survived the return. Owned descendant coverage is COMPLETE (143 processes, zero active at exit); the product exited normally. Welcome, trust-review and target captures were visually reviewed: the review presents location, metadata, execution warning and distinct approval/cancel controls. Welcome's right pane still has an inappropriate Diff caption, retained as a UI correction for the next entry change. Unicode path routing is proven; broad font/IME coverage is not.
 
 Latency was explicitly NOT-RUN. Short idle diagnostics do not qualify resource budgets; this host/display does not satisfy the reference-environment requirements. Raw receipts retain their original review-status field; this execution record records the later manual capture review without rewriting them. Init, graphical Git/identity setup, tabs, full staged-index composition, filters, handoff and complete P5 qualification remain open. No 0.0.6 release is claimed.
+
+
+## Execution record · reviewed local initialization
+
+Welcome/trust source `30c2c89` passed local-client CI `40000271908` and documentation CI `40000271781`. Its frozen `2dcaf052...` artifact has a local commit binding: all 54 captured source-input hashes match committed blob bytes or their CRLF checkout representation. These are completed scoped verdicts, not new release qualification.
+
+Create now offers path and initial branch, a bounded filesystem-only review, deliberate one-use initialization approval and a separate post-init trust review. It uses the existing contained Git runner and MiniCon filesystem identity/entropy facilities, with no dependency or sibling-source change. It never reinitializes a present `.git`, copies user templates, stages content or makes an initial commit. Failed creation preserves input and warns about partial metadata; existing files are never automatically removed. Selected Git is checked outside the target before its version probe. Full-ref validation precedes directory creation.
+
+Three new actual-Git backend tests passed: cancel/expiry/missing Git/invalid branch write nothing; new and nonempty Unicode/space targets preserve existing binary/nested contents and open as unborn only after separate trust; preexisting/racing metadata and a replaced directory are refused. Three selected UI tests passed for two-field input, review/held Enter, cancellation, preserved failed input, independent trust and queue exclusion. Affected CLI/UI/Git all-target Clippy and optimized build passed. The local-client CI now tracks the Git adapter dependency and retains the new cases through `entry::tests`; its next remote result must be observed separately.
+
+The `.git` reservation has a discriminating negative control retained under `target/qualification/006-init-reservation-negative`: removing only that atomic creation lets a competing repository be reinitialized and fails the named stale/racing-metadata case. Exact source bytes were restored and that case passed. No repeated broad fault catalogue was selected.
+
+`006-create-native-v1` on optimized artifact `4588ed54924f9e72a2b5fe6a20e82acc5cb47d2856a6ba18d6eaa47d07aa0118` stopped before initialization: the existing button locator mistook the form's full-width focus border for its default-Cancel button. It exited normally, with COMPLETE two-process coverage. The corrected harness selects a contiguous button-width border; input/foreground/point-ownership guards and repository-state assertions remain intact. The failed receipt is retained, not converted to a pass.
+
+`006-create-native-v2` passed on the same product bytes. Actual Unicode input and pointer Review/Back/Create preserved the entered path/branch and preexisting binary/nested files. Before explicit creation approval, reconciled owned-process evidence shows zero Git and no `.git`. Enter could approve neither initialization nor trust. Initialization used the requested `feature/start`, SHA-1/files format and an empty template despite conflicting disposable user defaults and template canaries. No index or initial commit appeared. Separate trust Cancel retained the created repository without saving a grant; subsequent pointer approval opened it with two untracked rows and no commits. Actual Git symbolic-ref/index/HEAD oracles and final file bytes agreed. Descendant coverage is COMPLETE (35 processes, zero active at exit), exit 0. Form, creation review, trust and opened captures were reviewed; the form capture from the first attempt uses the same bytes. The Welcome Diff caption was corrected to Welcome. Raw receipts keep their original manual-review field; this record carries the later visual verdict.
+
+The native run used isolation of its owned window only; latency and resource qualification were explicitly NOT-RUN. No long/session/workspace replay or native matrix was selected. Git selection/identity UI, retained tabs/close durability, full staged-index composer, filters, handoff and P5/readiness remain required before completing 0.0.6. Version metadata remains 0.0.6; no release or later-version advancement is claimed.

@@ -129,7 +129,7 @@ impl WindowBackend {
 
     fn perform(&mut self, job: Job, ticket: Option<&str>) -> Result<Reply, String> {
         Ok(match job {
-            Job::LoadWelcome | Job::ForgetRecent { .. } | Job::GrantRepositoryTrust(_) | Job::CancelEntry => return Err("repository entry requires the application entry boundary".into()),
+            Job::PrepareCreate { .. } | Job::ExecuteCreate(_) | Job::LoadWelcome | Job::ForgetRecent { .. } | Job::GrantRepositoryTrust(_) | Job::CancelEntry => return Err("repository entry requires the application entry boundary".into()),
             Job::OpenRepository(_) => return Err("repository entry must use its isolated worker path".to_owned()),
             Job::StashAction { id, expected, operation } => {
                 let session = open_trusted(&self.options, &self.worktree)?;

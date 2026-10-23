@@ -77,6 +77,15 @@ pub struct Prompt {
     submitted: Option<PromptAction>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateForm {
+    pub path: String,
+    pub branch: String,
+    pub branch_focus: bool,
+    pub submitted: bool,
+    pub review: Option<(String, Vec<String>)>,
+}
+
 impl Prompt {
     #[must_use]
     pub const fn kind(&self) -> PromptKind {
@@ -185,6 +194,7 @@ pub struct Workspace {
     trust: Option<crate::model::TrustReview>,
     trust_scroll: usize,
     trust_limit: usize,
+    create: Option<CreateForm>,
 }
 
 impl Workspace {
@@ -215,6 +225,7 @@ impl Workspace {
             trust: None,
             trust_scroll: 0,
             trust_limit: 0,
+            create: None,
         }
     }
 
@@ -228,6 +239,74 @@ impl Workspace {
     }
 
     pub fn is_welcome(&self) -> bool { self.snapshot.repository.is_none() }
+    pub fn create_form(&self) -> Option<&CreateForm> { self.create.as_ref() }
+    pub fn focus_create_field(&mut self, branch: bool) -> Effect {
+        if let Some(form) = self.create.as_mut() && !form.submitted && form.review.is_none() { form.branch_focus = branch; }
+        Effect::Nothing
+    }
+    pub fn request_create(&mut self) -> Effect {
+        if !self.modal() {
+            self.notice = None;
+            self.create = Some(CreateForm { path: String::new(), branch: "main".into(), branch_focus: false, submitted: false, review: None });
+        }
+        Effect::Nothing
+    }
+
+    pub fn answer_create(&mut self, allow: bool) -> Effect {
+        let Some(form) = self.create.as_mut() else { return Effect::Nothing; };
+        if form.submitted || form.review.is_none() { return Effect::Nothing; }
+        if allow {
+            form.submitted = true;
+            Effect::Send(Job::ExecuteCreate(form.review.as_ref().unwrap().0.clone()))
+        } else {
+            form.review = None;
+            self.notice = Some("Creation cancelled; no directory or metadata was created".into());
+            Effect::Send(Job::CancelEntry)
+        }
+    }
+
+    fn create_key(&mut self, key: Key) -> Effect {
+        let form = self.create.as_mut().unwrap();
+        if form.submitted { return Effect::Nothing; }
+        if form.review.is_some() {
+            return match key {
+                Key::Char('y') => self.answer_create(true),
+                Key::Char('n') | Key::Escape | Key::CtrlC => self.answer_create(false),
+                Key::Up => self.scroll_trust(-1),
+                Key::Down => self.scroll_trust(1),
+                Key::PageUp => self.scroll_trust(-(PAGE_LINES as isize)),
+                Key::PageDown => self.scroll_trust(PAGE_LINES as isize),
+                _ => Effect::Nothing,
+            };
+        }
+        match key {
+            Key::Escape | Key::CtrlC => { self.create = None; Effect::Send(Job::CancelEntry) }
+            Key::Tab | Key::BackTab => { form.branch_focus = !form.branch_focus; Effect::Nothing }
+            Key::Enter => {
+                if form.path.is_empty() || form.branch.is_empty() { return Effect::Nothing; }
+                form.submitted = true;
+                Effect::Send(Job::PrepareCreate { path: NativePath::new(form.path.clone()), branch: form.branch.clone() })
+            }
+            key => {
+                let limit = if form.branch_focus { 255 } else { 32 * 1024 };
+                let field = if form.branch_focus { &mut form.branch } else { &mut form.path };
+                let incoming = match key {
+                    Key::Backspace => { field.pop(); return Effect::Nothing; }
+                    Key::Space => " ".into(),
+                    Key::Char(ch) => ch.to_string(),
+                    Key::Text(text) => text,
+                    _ => return Effect::Nothing,
+                };
+                if field.len().saturating_add(incoming.len()) > limit {
+                    self.notice = Some(format!("Field limit is {limit} UTF-8 bytes; input was not appended"));
+                } else {
+                    field.push_str(&incoming);
+                    self.notice = None;
+                }
+                Effect::Nothing
+            }
+        }
+    }
     pub fn trust_review(&self) -> Option<&crate::model::TrustReview> { self.trust.as_ref() }
     pub fn trust_scroll(&self) -> usize { self.trust_scroll }
     pub fn set_trust_scroll_limit(&mut self, limit: usize) {
@@ -248,7 +327,7 @@ impl Workspace {
         } else {
             self.trust = None;
             if let Some(prompt) = self.prompt.as_mut() { prompt.submitted = None; }
-            self.notice = Some("Trust cancelled; no repository command was requested".into());
+            self.notice = Some("Trust cancelled; repository opening was not requested".into());
             Effect::Send(Job::CancelEntry)
         }
     }
@@ -381,7 +460,7 @@ impl Workspace {
     /// waits until it closes.
     #[must_use]
     pub const fn modal(&self) -> bool {
-        self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some()
+        self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some()
     }
 
     /// Tells the workspace how many main-panel lines are visible, so the cursor
@@ -392,6 +471,7 @@ impl Workspace {
     }
 
     pub fn key(&mut self, key: Key) -> Effect {
+        if self.create.is_some() { return self.create_key(key); }
         if self.trust.is_some() {
             return match key {
                 Key::Down | Key::Char('j') => self.scroll_trust(1),
@@ -423,6 +503,7 @@ impl Workspace {
         }
         if self.is_welcome() {
             return match key {
+                Key::Char('N') => self.request_create(),
                 Key::Char('O') | Key::CtrlO => self.request_open(),
                 Key::Char('q') | Key::CtrlC => Effect::Quit,
                 Key::Char('r') => Effect::Send(Job::LoadWelcome),
@@ -545,6 +626,25 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::CreateReview { ticket, path, branch, new_directory, entries, more_entries } => {
+                if let Some(form) = self.create.as_mut() && form.submitted {
+                    let mut lines = vec![format!("Location: {}", path.display_label()), format!("Initial branch: {branch}"),
+                        if new_directory { "Create a new directory and .git metadata.".into() } else { "Create .git metadata inside the existing directory.".into() },
+                        "Existing contents are preserved. Nothing is staged or committed.".into(),
+                        "Use an empty template (no copied template hooks). SHA-1 objects, files refs.".into(),
+                        "Installed Git runs under inherited user configuration.".into(),
+                        "After init, review repository trust separately before opening.".into(),
+                        "Failure may leave partial metadata for inspection; no automatic deletion or retry.".into(),
+                        "Review expires after 60 seconds.".into(), String::new(), "Existing top-level entries (up to 50; not traversed):".into()];
+                    lines.extend(entries);
+                    if more_entries { lines.push("More entries exist; preview is incomplete. Existing content will not be staged.".into()); }
+                    lines.push("y: Create repository   n/Esc: Back   Enter does not approve".into());
+                    form.review = Some((ticket, lines));
+                    form.submitted = false;
+                    self.trust_scroll = 0;
+                }
+                Effect::Nothing
+            }
             Reply::Welcome(entries) => {
                 if self.is_welcome() {
                     self.snapshot.recents = entries;
@@ -555,6 +655,12 @@ impl Workspace {
                 Effect::Nothing
             }
             Reply::TrustReview(review) => {
+                if self.create.as_ref().is_some_and(|form| form.submitted && form.review.is_some()) {
+                    let path = review.worktree.as_os_str().to_str().unwrap_or_default().to_owned();
+                    self.create = None;
+                    self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: path, submitted: Some(PromptAction::OpenRepository) });
+                    self.notice = Some("Repository created. Review trust before opening; existing files remain unstaged.".into());
+                }
                 if self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(PromptAction::OpenRepository)) {
                     self.trust = Some(review);
                     self.trust_scroll = 0;
@@ -651,6 +757,10 @@ impl Workspace {
                 Effect::Nothing
             }
             Reply::PromptFailed { action, text } => {
+                if action == PromptAction::CreateRepository && let Some(form) = self.create.as_mut() {
+                    form.submitted = false;
+                    form.review = None;
+                }
                 if action == PromptAction::OpenRepository { self.trust = None; }
                 self.notice = Some(text);
                 if let Some(prompt) = self.prompt.as_mut() && prompt.submitted == Some(action) {
@@ -1124,6 +1234,46 @@ fn clamp_index(index: usize, length: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn create_repository_fields_review_and_failure_preserve_explicit_input() {
+        let mut workspace = Workspace::new(Snapshot::welcome());
+        workspace.key(Key::Char('N'));
+        assert!(workspace.modal());
+        workspace.key(Key::Text("new project 中文".into()));
+        workspace.key(Key::Tab);
+        for _ in 0..4 { workspace.key(Key::Backspace); }
+        workspace.key(Key::Text("feature/start".into()));
+        assert_eq!(workspace.key(Key::Enter), Effect::Send(Job::PrepareCreate { path: NativePath::new("new project 中文"), branch: "feature/start".into() }));
+        workspace.reply(Reply::CreateReview { ticket: "create-once".into(), path: NativePath::new("canonical target"), branch: "feature/start".into(), new_directory: false, entries: vec!["keep.bin".into()], more_entries: false });
+        assert_eq!(workspace.key(Key::Enter), Effect::Nothing, "held Enter must not initialize");
+        assert_eq!(workspace.key(Key::Escape), Effect::Send(Job::CancelEntry));
+        assert_eq!(workspace.create_form().unwrap().path, "new project 中文");
+        assert_eq!(workspace.key(Key::Enter), Effect::Send(Job::PrepareCreate { path: NativePath::new("new project 中文"), branch: "feature/start".into() }));
+        workspace.reply(Reply::CreateReview { ticket: "new-ticket".into(), path: NativePath::new("canonical target"), branch: "feature/start".into(), new_directory: false, entries: vec![], more_entries: false });
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Send(Job::ExecuteCreate("new-ticket".into())));
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Nothing);
+        assert_eq!(workspace.key(Key::Escape), Effect::Nothing, "cannot claim cancellation after submission");
+        workspace.reply(Reply::PromptFailed { action: PromptAction::CreateRepository, text: "Git missing".into() });
+        assert_eq!(workspace.create_form().unwrap().branch, "feature/start");
+        assert!(workspace.create_form().unwrap().review.is_none());
+        assert!(!workspace.create_form().unwrap().submitted);
+    }
+
+    #[test]
+    fn create_repository_success_stops_at_separate_trust_and_cancel_keeps_new_path() {
+        let mut workspace = Workspace::new(Snapshot::welcome());
+        workspace.request_create();
+        workspace.key(Key::Text("chosen target".into()));
+        workspace.key(Key::Enter);
+        workspace.reply(Reply::CreateReview { ticket: "create".into(), path: NativePath::new("chosen target"), branch: "main".into(), new_directory: true, entries: vec![], more_entries: false });
+        workspace.answer_create(true);
+        workspace.reply(Reply::TrustReview(crate::model::TrustReview { ticket: "trust".into(), worktree: NativePath::new("canonical chosen target"), git_directory: NativePath::new("metadata"), fingerprint: "digest".into(), submitted: false }));
+        assert!(workspace.create_form().is_none());
+        assert_eq!(workspace.key(Key::Enter), Effect::Nothing);
+        assert_eq!(workspace.key(Key::Escape), Effect::Send(Job::CancelEntry));
+        assert_eq!(workspace.prompt().unwrap().text(), "canonical chosen target");
+        assert!(workspace.is_welcome());
+    }
     use srcmgr_domain::NativePath;
 
     use super::*;

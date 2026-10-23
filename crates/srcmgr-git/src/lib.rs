@@ -5,12 +5,14 @@
 //! only, and reports what the product can do with it.
 //!
 //! Callers must reach [`repository::locate`] only after the repository's trust
-//! decision (PRD 11). That decision is not implemented yet (M0-C), so the CLI
-//! currently requires an explicit per-invocation approval flag.
+//! decision (PRD 11), enforced by the application's durable trust boundary.
+//! Initialization separately consumes an explicitly reviewed target, without
+//! discovering or reinitializing an existing repository.
 
 mod error;
 mod hunks;
 mod installation;
+mod initialization;
 mod index_summary;
 mod repository;
 mod runner;
@@ -23,6 +25,7 @@ use srcmgr_domain::{BackendKind, Capability, CapabilityState, VcsBackend};
 
 pub use error::GitError;
 pub use installation::{GitInstallation, MINIMUM_GIT, parse_version};
+pub use initialization::InitializationTarget;
 pub use index_summary::{IndexSummary, index_summary};
 pub use repository::{reference_target, retain_recovery_ref};
 pub use repository::{

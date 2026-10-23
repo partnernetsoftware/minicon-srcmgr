@@ -211,6 +211,8 @@ pub enum MainRequest {
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Job {
+    PrepareCreate { path: NativePath, branch: String },
+    ExecuteCreate(String),
     LoadWelcome,
     ForgetRecent { backend: String, path: EncodedPath },
     GrantRepositoryTrust(String),
@@ -278,6 +280,7 @@ pub enum Job {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reply {
+    CreateReview { ticket: String, path: NativePath, branch: String, new_directory: bool, entries: Vec<String>, more_entries: bool },
     Welcome(Vec<RecentRow>),
     TrustReview(TrustReview),
     RepositoryOpened(Snapshot),
@@ -303,6 +306,7 @@ pub enum Reply {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PromptAction {
+    CreateRepository,
     OpenRepository,
     Commit,
     CreateBranch,

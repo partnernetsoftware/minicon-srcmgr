@@ -37,6 +37,7 @@ pub enum GitError {
     UnrepresentableName,
     /// The name is not a valid branch name under Git's rules.
     InvalidName,
+    InitializationTarget(&'static str),
     /// The revision is not a hexadecimal object id.
     InvalidRevision,
     /// The diff has no text hunks (for example a binary change or no change).
@@ -76,6 +77,7 @@ impl fmt::Display for GitError {
                 write!(formatter, "Git status output record {record} did not match the expected format")
             }
             Self::InvalidName => formatter.write_str("the branch name is not valid"),
+            Self::InitializationTarget(reason) => formatter.write_str(reason),
             Self::InvalidRevision => formatter.write_str("the commit id is not valid"),
             Self::NoHunks => formatter.write_str("this change has no text hunks to stage"),
             Self::HunkOutOfRange => formatter.write_str("no hunk has that number"),

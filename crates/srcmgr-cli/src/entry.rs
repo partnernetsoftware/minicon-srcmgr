@@ -18,10 +18,18 @@ struct PendingTrust {
     expires: Instant,
 }
 
+struct PendingCreate {
+    ticket: String,
+    target: srcmgr_git::InitializationTarget,
+    branch: String,
+    expires: Instant,
+}
+
 pub struct ApplicationBackend {
     options: Options,
     active: Option<WindowBackend>,
     trust: Option<PendingTrust>,
+    create: Option<PendingCreate>,
 }
 
 impl ApplicationBackend {
@@ -30,6 +38,7 @@ impl ApplicationBackend {
             options,
             active: None,
             trust: None,
+            create: None,
         }
     }
 
@@ -61,13 +70,18 @@ impl ApplicationBackend {
     }
 
     fn open(&mut self, path: NativePath) -> Result<Reply, String> {
+        self.open_mode(path, false)
+    }
+
+    fn open_mode(&mut self, path: NativePath, force_review: bool) -> Result<Reply, String> {
+        self.create = None;
         self.trust = None;
         let worktree = canonical_worktree(std::path::Path::new(path.as_os_str()))?;
         let git_directory = git_dir_of(&worktree)?;
         let (_, grants) = trust_store(&self.options)?;
         match grants.verify(&git_directory, &worktree) {
-            Ok(()) => self.activate(worktree),
-            Err(TrustError::Untrusted | TrustError::Changed) => {
+            Ok(()) if !force_review => self.activate(worktree),
+            Ok(()) | Err(TrustError::Untrusted | TrustError::Changed) => {
                 let digest = fingerprint(&git_directory, &worktree).map_err(|e| e.to_string())?;
                 let bytes = minicon_platform::entropy::secure_random_array::<16>()
                     .map_err(|e| format!("cannot prepare trust review: {e:?}"))?;
@@ -97,6 +111,39 @@ impl ApplicationBackend {
         Ok(Reply::RepositoryOpened(snapshot))
     }
 
+    fn prepare_create(&mut self, path: NativePath, branch: String) -> Result<Reply, String> {
+        self.trust = None;
+        self.create = None;
+        let target = srcmgr_git::InitializationTarget::prepare(std::path::Path::new(path.as_os_str())).map_err(|e| e.to_string())?;
+        if branch.is_empty() || branch.starts_with('-') || branch == "HEAD" || branch.len() > 255 {
+            return Err("Choose a valid initial branch name (up to 255 UTF-8 bytes)".into());
+        }
+        let bytes = minicon_platform::entropy::secure_random_array::<16>().map_err(|e| format!("cannot prepare creation review: {e:?}"))?;
+        let ticket: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let reply = Reply::CreateReview {
+            ticket: ticket.clone(), path: NativePath::new(target.path().as_os_str()), branch: branch.clone(),
+            new_directory: target.is_new_directory(),
+            entries: target.entries().iter().map(|name| NativePath::new(name).display_label()).collect(),
+            more_entries: target.has_more_entries(),
+        };
+        self.create = Some(PendingCreate { ticket, target, branch, expires: Instant::now() + Duration::from_secs(60) });
+        Ok(reply)
+    }
+
+    fn create(&mut self, ticket: &str) -> Result<Reply, String> {
+        let pending = self.create.take().ok_or("Creation review is missing or already consumed; review again")?;
+        if pending.ticket != ticket || Instant::now() >= pending.expires {
+            return Err("Creation review expired or changed; review again".into());
+        }
+        let executable = std::fs::canonicalize(crate::selected_git(&self.options)?).map_err(|_| "Selected Git is unavailable; choose an installed Git")?;
+        if executable.starts_with(pending.target.path()) {
+            return Err("Select an installed Git outside the initialization target".into());
+        }
+        let git = srcmgr_git::GitInstallation::probe(executable).map_err(|error| error.to_string())?;
+        let path = pending.target.execute(&git, &pending.branch).map_err(|error| format!("Create did not complete: {error}. Inspect the target before retrying; partial metadata may remain. Existing files were not staged or committed."))?;
+        self.open_mode(NativePath::new(path.into_os_string()), true).map_err(|error| format!("Repository was created; opening is unavailable: {error}"))
+    }
+
     fn grant(&mut self, ticket: &str) -> Result<Reply, String> {
         let pending = self
             .trust
@@ -123,6 +170,8 @@ impl ApplicationBackend {
 impl Backend for ApplicationBackend {
     fn run(&mut self, job: Job) -> Reply {
         match job {
+            Job::PrepareCreate { path, branch } => self.prepare_create(path, branch).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::CreateRepository, text }),
+            Job::ExecuteCreate(ticket) => self.create(&ticket).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::CreateRepository, text }),
             Job::LoadWelcome => self.recent().unwrap_or_else(Reply::Notice),
             Job::ForgetRecent { backend, path } => (|| {
                 open_profile_store(&self.options)?
@@ -146,6 +195,7 @@ impl Backend for ApplicationBackend {
             }
             Job::CancelEntry => {
                 self.trust = None;
+                self.create = None;
                 Reply::NoChange
             }
             job => self.active.as_mut().map_or_else(
@@ -160,6 +210,101 @@ impl Backend for ApplicationBackend {
 mod tests {
     use super::*;
     use crate::window_backend::tests::{Scratch, fixture_git, git_executable, repository};
+
+    fn creation(app: &mut ApplicationBackend, path: &std::path::Path, branch: &str) -> String {
+        match app.run(Job::PrepareCreate { path: NativePath::new(path.as_os_str()), branch: branch.into() }) {
+            Reply::CreateReview { ticket, .. } => ticket,
+            other => panic!("expected filesystem-only creation preview: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn entry_create_preview_cancel_expiry_and_invalid_branch_write_nothing() {
+        let root = Scratch::new("entry-create-no-write");
+        let target = root.0.join("new repo");
+        let mut app = app(&root.0);
+        let cancelled = creation(&mut app, &target, "main");
+        assert!(!target.exists(), "preview must not create directories or run missing Git");
+        app.run(Job::CancelEntry);
+        assert!(matches!(app.run(Job::ExecuteCreate(cancelled)), Reply::PromptFailed { action: PromptAction::CreateRepository, .. }));
+        let expired = creation(&mut app, &target, "main");
+        app.create.as_mut().unwrap().expires = Instant::now() - Duration::from_secs(1);
+        assert!(matches!(app.run(Job::ExecuteCreate(expired)), Reply::PromptFailed { .. }));
+        let missing_git = creation(&mut app, &target, "main");
+        assert!(matches!(app.run(Job::ExecuteCreate(missing_git)), Reply::PromptFailed { .. }));
+        app.options.git = Some(git_executable());
+        for branch in ["bad..branch", "@{-1}", "refs/../escape"] {
+            let ticket = creation(&mut app, &target, branch);
+            assert!(matches!(app.run(Job::ExecuteCreate(ticket)), Reply::PromptFailed { .. }));
+            assert!(!target.exists(), "invalid branch must be refused before writes");
+        }
+        assert!(!target.exists());
+        assert!(!root.0.join("profile/trust.v1").exists());
+    }
+
+    #[test]
+    fn entry_create_preserves_existing_files_and_requires_separate_trust() {
+        let root = Scratch::new("entry-create-preserve");
+        let mut app = app(&root.0);
+        app.options.git = Some(git_executable());
+        for (name, existing) in [("new repo 中文", false), ("existing project", true)] {
+            let target = root.0.join(name);
+            if existing {
+                std::fs::create_dir(&target).unwrap();
+                std::fs::write(target.join("keep.bin"), [0, 255, 13, 10]).unwrap();
+                std::fs::create_dir(target.join("nested")).unwrap();
+                std::fs::write(target.join("nested/keep.txt"), b"untouched").unwrap();
+            }
+            let ticket = creation(&mut app, &target, "feature/start");
+            let Reply::TrustReview(review) = app.run(Job::ExecuteCreate(ticket.clone())) else { panic!("creation must end at separate trust review"); };
+            assert_eq!(std::fs::read(target.join(".git/HEAD")).unwrap(), b"ref: refs/heads/feature/start\n");
+            assert!(!target.join(".git/index").exists());
+            assert!(!target.join(".git/hooks").exists(), "empty template must not copy hooks");
+            assert!(!target.join(".git/refs/heads/feature/start").exists(), "no automatic commit");
+            if existing {
+                assert_eq!(std::fs::read(target.join("keep.bin")).unwrap(), [0, 255, 13, 10]);
+                assert_eq!(std::fs::read(target.join("nested/keep.txt")).unwrap(), b"untouched");
+            }
+            assert!(matches!(app.run(Job::ExecuteCreate(ticket)), Reply::PromptFailed { .. }), "creation authority is one-use");
+            let Reply::RepositoryOpened(snapshot) = app.run(Job::GrantRepositoryTrust(review.ticket)) else { panic!("explicit trust should open unborn repository"); };
+            assert!(snapshot.commits.is_empty());
+            assert_eq!(snapshot.files.len(), if existing { 2 } else { 0 });
+        }
+    }
+
+    #[test]
+    fn entry_create_refuses_existing_or_racing_metadata_and_replaced_directory() {
+        let root = Scratch::new("entry-create-stale");
+        let mut app = app(&root.0);
+        app.options.git = Some(git_executable());
+        let repo = repository(&root.0, "already-repo");
+        let config = std::fs::read(repo.join(".git/config")).unwrap();
+        assert!(matches!(app.run(Job::PrepareCreate { path: NativePath::new(repo.as_os_str()), branch: "main".into() }), Reply::PromptFailed { .. }));
+        assert_eq!(std::fs::read(repo.join(".git/config")).unwrap(), config);
+        let target = root.0.join("existing");
+        std::fs::create_dir(&target).unwrap();
+        let ticket = creation(&mut app, &target, "main");
+        std::fs::write(target.join(".git"), b"external marker").unwrap();
+        assert!(matches!(app.run(Job::ExecuteCreate(ticket)), Reply::PromptFailed { .. }));
+        assert_eq!(std::fs::read(target.join(".git")).unwrap(), b"external marker");
+        let raced = root.0.join("racing-init");
+        std::fs::create_dir(&raced).unwrap();
+        let ticket = creation(&mut app, &raced, "main");
+        fixture_git(&raced, &["init", "-q", "-b", "external"]);
+        let head = std::fs::read(raced.join(".git/HEAD")).unwrap();
+        let config = std::fs::read(raced.join(".git/config")).unwrap();
+        assert!(matches!(app.run(Job::ExecuteCreate(ticket)), Reply::PromptFailed { .. }), "must refuse concurrent initialization, never reinitialize");
+        assert_eq!(std::fs::read(raced.join(".git/HEAD")).unwrap(), head);
+        assert_eq!(std::fs::read(raced.join(".git/config")).unwrap(), config);
+        let swapped = root.0.join("swapped");
+        std::fs::create_dir(&swapped).unwrap();
+        let ticket = creation(&mut app, &swapped, "main");
+        std::fs::rename(&swapped, root.0.join("original")).unwrap();
+        std::fs::create_dir(&swapped).unwrap();
+        assert!(matches!(app.run(Job::ExecuteCreate(ticket)), Reply::PromptFailed { .. }));
+        assert!(!swapped.join(".git").exists());
+        assert!(app.active.is_none());
+    }
 
     fn app(root: &std::path::Path) -> ApplicationBackend {
         ApplicationBackend::welcome(Options {
