@@ -38,6 +38,8 @@ pub enum GitError {
     /// The name is not a valid branch name under Git's rules.
     InvalidName,
     InitializationTarget(&'static str),
+    InvalidIdentity,
+    IdentityConfigChanged,
     /// The revision is not a hexadecimal object id.
     InvalidRevision,
     /// The diff has no text hunks (for example a binary change or no change).
@@ -78,6 +80,8 @@ impl fmt::Display for GitError {
             }
             Self::InvalidName => formatter.write_str("the branch name is not valid"),
             Self::InitializationTarget(reason) => formatter.write_str(reason),
+            Self::InvalidIdentity => formatter.write_str("name and email must be nonempty, at most 1024 UTF-8 bytes, with no controls, angle brackets or surrounding whitespace; email cannot contain whitespace"),
+            Self::IdentityConfigChanged => formatter.write_str("repository config changed, is not a plain bounded file, or no longer matches this identity preview; reload and review again"),
             Self::InvalidRevision => formatter.write_str("the commit id is not valid"),
             Self::NoHunks => formatter.write_str("this change has no text hunks to stage"),
             Self::HunkOutOfRange => formatter.write_str("no hunk has that number"),

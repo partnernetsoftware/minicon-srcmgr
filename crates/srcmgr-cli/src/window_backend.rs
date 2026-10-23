@@ -86,7 +86,9 @@ impl Backend for WindowBackend {
 impl WindowBackend {
     pub fn open_target(options: &Options, path: &std::path::Path) -> Result<(Self, Snapshot), String> {
         let worktree = crate::canonical_worktree(path)?;
-        let candidate = Self { options: options.clone(), worktree, prepared: None };
+        let mut selected = options.clone();
+        if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
+        let candidate = Self { options: selected, worktree, prepared: None };
         let mut snapshot = candidate.snapshot()?;
         if let Err(error) = open_profile_store(options)?.remember_repository(BACKEND_GIT, &candidate.worktree) {
             snapshot.stage_result = Some(format!("Recent list not updated: {error}; repository data was not changed"));
@@ -129,7 +131,7 @@ impl WindowBackend {
 
     fn perform(&mut self, job: Job, ticket: Option<&str>) -> Result<Reply, String> {
         Ok(match job {
-            Job::PrepareCreate { .. } | Job::ExecuteCreate(_) | Job::LoadWelcome | Job::ForgetRecent { .. } | Job::GrantRepositoryTrust(_) | Job::CancelEntry => return Err("repository entry requires the application entry boundary".into()),
+            Job::LoadIdentity | Job::SaveIdentity { .. } | Job::LoadGitSettings | Job::ConfigureGit(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_) | Job::LoadWelcome | Job::ForgetRecent { .. } | Job::GrantRepositoryTrust(_) | Job::CancelEntry => return Err("repository entry requires the application entry boundary".into()),
             Job::OpenRepository(_) => return Err("repository entry must use its isolated worker path".to_owned()),
             Job::StashAction { id, expected, operation } => {
                 let session = open_trusted(&self.options, &self.worktree)?;

@@ -62,6 +62,7 @@ pub enum Effect {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PromptKind {
+    GitSettings,
     OpenRepository,
     Commit,
     NewBranch,
@@ -86,7 +87,19 @@ pub struct CreateForm {
     pub review: Option<(String, Vec<String>)>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IdentityForm {
+    pub name: String,
+    pub email: String,
+    pub email_focus: bool,
+    pub submitted: bool,
+    pub ticket: Option<String>,
+    pub detail: String,
+    keep_input: bool,
+}
+
 impl Prompt {
+    pub fn pending(&self) -> bool { self.submitted.is_some() }
     #[must_use]
     pub const fn kind(&self) -> PromptKind {
         self.kind
@@ -103,6 +116,12 @@ impl Prompt {
             return (Effect::Nothing, true);
         }
         match (self.kind, key) {
+            (PromptKind::GitSettings, Key::Escape | Key::CtrlC) => (Effect::Nothing, false),
+            (PromptKind::GitSettings, Key::Enter) => {
+                self.submitted = Some(PromptAction::GitSettings);
+                let path = (!self.text.is_empty()).then(|| NativePath::new(self.text.clone()));
+                (Effect::Send(Job::ConfigureGit(path)), true)
+            }
             (PromptKind::OpenRepository, Key::Escape | Key::CtrlC) => (Effect::Nothing, false),
             (PromptKind::OpenRepository, Key::Enter) => {
                 if self.text.is_empty() { return (Effect::Nothing, true); }
@@ -195,6 +214,8 @@ pub struct Workspace {
     trust_scroll: usize,
     trust_limit: usize,
     create: Option<CreateForm>,
+    git_detail: String,
+    identity: Option<IdentityForm>,
 }
 
 impl Workspace {
@@ -226,6 +247,8 @@ impl Workspace {
             trust_scroll: 0,
             trust_limit: 0,
             create: None,
+            git_detail: String::new(),
+            identity: None,
         }
     }
 
@@ -240,6 +263,64 @@ impl Workspace {
 
     pub fn is_welcome(&self) -> bool { self.snapshot.repository.is_none() }
     pub fn create_form(&self) -> Option<&CreateForm> { self.create.as_ref() }
+    pub fn git_detail(&self) -> &str { &self.git_detail }
+    pub fn identity_form(&self) -> Option<&IdentityForm> { self.identity.as_ref() }
+    pub fn request_identity(&mut self) -> Effect {
+        if self.modal() || self.is_welcome() { return Effect::Nothing; }
+        self.notice = None;
+        self.trust_scroll = 0;
+        self.identity = Some(IdentityForm { name: String::new(), email: String::new(), email_focus: false, submitted: true, ticket: None, detail: "Loading trusted repository identity...".into(), keep_input: false });
+        Effect::Send(Job::LoadIdentity)
+    }
+
+    pub fn focus_identity_field(&mut self, email: bool) -> Effect {
+        if let Some(form) = self.identity.as_mut() && !form.submitted { form.email_focus = email; }
+        Effect::Nothing
+    }
+
+    fn identity_key(&mut self, key: Key) -> Effect {
+        let form = self.identity.as_mut().unwrap();
+        if form.submitted {
+            if form.ticket.is_none() && matches!(key, Key::Escape | Key::CtrlC) {
+                self.identity = None;
+                return Effect::Send(Job::CancelEntry);
+            }
+            return Effect::Nothing;
+        }
+        match key {
+            Key::Escape | Key::CtrlC => { self.identity = None; Effect::Send(Job::CancelEntry) }
+            Key::Tab | Key::BackTab => { form.email_focus = !form.email_focus; Effect::Nothing }
+            Key::Up => self.scroll_trust(-1),
+            Key::Down => self.scroll_trust(1),
+            Key::PageUp => self.scroll_trust(-(PAGE_LINES as isize)),
+            Key::PageDown => self.scroll_trust(PAGE_LINES as isize),
+            Key::Enter => {
+                form.submitted = true;
+                match form.ticket.as_ref() {
+                    Some(ticket) => Effect::Send(Job::SaveIdentity { ticket: ticket.clone(), name: form.name.clone(), email: form.email.clone() }),
+                    None => Effect::Send(Job::LoadIdentity),
+                }
+            }
+            key => {
+                let field = if form.email_focus { &mut form.email } else { &mut form.name };
+                let incoming = match key {
+                    Key::Backspace => { field.pop(); return Effect::Nothing; }
+                    Key::Space => " ".into(), Key::Char(ch) => ch.to_string(), Key::Text(text) => text,
+                    _ => return Effect::Nothing,
+                };
+                if field.len().saturating_add(incoming.len()) > 1024 { self.notice = Some("Identity field limit is 1024 UTF-8 bytes; input was not appended".into()); }
+                else { field.push_str(&incoming); self.notice = None; }
+                Effect::Nothing
+            }
+        }
+    }
+    pub fn request_git_settings(&mut self) -> Effect {
+        if self.modal() { return Effect::Nothing; }
+        self.notice = None;
+        self.git_detail = "Loading application settings; no executable is being run.".into();
+        self.prompt = Some(Prompt { kind: PromptKind::GitSettings, text: String::new(), submitted: Some(PromptAction::GitSettings) });
+        Effect::Send(Job::LoadGitSettings)
+    }
     pub fn focus_create_field(&mut self, branch: bool) -> Effect {
         if let Some(form) = self.create.as_mut() && !form.submitted && form.review.is_none() { form.branch_focus = branch; }
         Effect::Nothing
@@ -460,7 +541,7 @@ impl Workspace {
     /// waits until it closes.
     #[must_use]
     pub const fn modal(&self) -> bool {
-        self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some()
+        self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some()
     }
 
     /// Tells the workspace how many main-panel lines are visible, so the cursor
@@ -471,6 +552,7 @@ impl Workspace {
     }
 
     pub fn key(&mut self, key: Key) -> Effect {
+        if self.identity.is_some() { return self.identity_key(key); }
         if self.create.is_some() { return self.create_key(key); }
         if self.trust.is_some() {
             return match key {
@@ -486,7 +568,21 @@ impl Workspace {
             };
         }
         if let Some(mut prompt) = self.prompt.take() {
+            if prompt.kind == PromptKind::GitSettings {
+                let extra = match &key { Key::Text(text) => text.len(), Key::Char(ch) => ch.len_utf8(), Key::Space => 1, _ => 0 };
+                if extra > 0 && prompt.text.len().saturating_add(extra) > 32 * 1024 {
+                    self.notice = Some("Git path limit is 32 KiB UTF-8; input was not appended".into());
+                    self.prompt = Some(prompt);
+                    return Effect::Nothing;
+                }
+                if !prompt.pending() && self.git_detail.starts_with("Saved and applied.") && matches!(&key, Key::Text(_) | Key::Char(_) | Key::Space | Key::Backspace) {
+                    self.git_detail.insert_str(0, "Unsaved selection. Previously applied choice:\n");
+                }
+            }
             let (effect, stays_open) = prompt.handle(key);
+            if matches!(&effect, Effect::Send(Job::ConfigureGit(_))) {
+                self.git_detail = "Testing selection. Previous choice remains active until a successful save.".into();
+            }
             if stays_open {
                 self.prompt = Some(prompt);
             }
@@ -503,6 +599,7 @@ impl Workspace {
         }
         if self.is_welcome() {
             return match key {
+                Key::Char('G') => self.request_git_settings(),
                 Key::Char('N') => self.request_create(),
                 Key::Char('O') | Key::CtrlO => self.request_open(),
                 Key::Char('q') | Key::CtrlC => Effect::Quit,
@@ -517,6 +614,8 @@ impl Workspace {
             };
         }
         match key {
+            Key::Char('I') => self.request_identity(),
+            Key::Char('G') => self.request_git_settings(),
             Key::Char('O') | Key::CtrlO => self.request_open(),
             Key::Char('q') | Key::CtrlC => Effect::Quit,
             Key::Char('?') => {
@@ -626,6 +725,40 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::IdentitySettings { ticket, name, email, detail } => {
+                if let Some(form) = self.identity.as_mut() && form.submitted {
+                    if !form.keep_input { form.name = name; form.email = email; }
+                    form.ticket = Some(ticket);
+                    form.detail = detail;
+                    form.submitted = false;
+                    self.trust_scroll = 0;
+                }
+                Effect::Nothing
+            }
+            Reply::IdentitySaved { path, review, detail } => {
+                if self.identity.is_some() {
+                    self.identity = None;
+                    self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: path.as_os_str().to_str().unwrap_or_default().into(), submitted: review.as_ref().map(|_| PromptAction::OpenRepository) });
+                    self.trust = review;
+                    self.trust_scroll = 0;
+                    self.notice = Some(detail);
+                }
+                Effect::Nothing
+            }
+            Reply::GitSettings { path, detail } => {
+                if let Some(prompt) = self.prompt.as_mut() && prompt.kind == PromptKind::GitSettings && prompt.submitted == Some(PromptAction::GitSettings) {
+                    match path {
+                        Some(path) => match path.as_os_str().to_str() {
+                            Some(text) => prompt.text = text.into(),
+                            None => { self.notice = Some("Saved native Git path cannot be edited as UTF-8; it was preserved. Enter a replacement explicitly or cancel.".into()); }
+                        },
+                        None => prompt.text.clear(),
+                    }
+                    prompt.submitted = None;
+                    self.git_detail = detail;
+                }
+                Effect::Nothing
+            }
             Reply::CreateReview { ticket, path, branch, new_directory, entries, more_entries } => {
                 if let Some(form) = self.create.as_mut() && form.submitted {
                     let mut lines = vec![format!("Location: {}", path.display_label()), format!("Initial branch: {branch}"),
@@ -757,6 +890,12 @@ impl Workspace {
                 Effect::Nothing
             }
             Reply::PromptFailed { action, text } => {
+                if action == PromptAction::GitSettings { self.git_detail = "Selection was not saved or applied. Correct the path and retry, or close to keep the previous choice.".into(); }
+                if action == PromptAction::IdentitySettings && let Some(form) = self.identity.as_mut() {
+                    form.submitted = false;
+                    form.ticket = None;
+                    form.keep_input = true;
+                }
                 if action == PromptAction::CreateRepository && let Some(form) = self.create.as_mut() {
                     form.submitted = false;
                     form.review = None;
@@ -1234,6 +1373,46 @@ fn clamp_index(index: usize, length: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn identity_fields_preserve_refused_edits_and_require_explicit_save_after_reload() {
+        let mut workspace = Workspace::new(snapshot(None));
+        assert_eq!(workspace.key(Key::Char('I')), Effect::Send(Job::LoadIdentity));
+        assert_eq!(workspace.key(Key::Escape), Effect::Send(Job::CancelEntry), "a pending read can be dismissed");
+        workspace.reply(Reply::IdentitySettings { ticket: "late".into(), name: "Late".into(), email: "late@example.invalid".into(), detail: "late source".into() });
+        assert!(workspace.identity_form().is_none(), "a late read cannot reopen the dismissed form");
+        assert_eq!(workspace.key(Key::Char('I')), Effect::Send(Job::LoadIdentity));
+        workspace.reply(Reply::IdentitySettings { ticket: "first".into(), name: "Old".into(), email: "old@example.invalid".into(), detail: "local source".into() });
+        for _ in 0..3 { workspace.key(Key::Backspace); }
+        workspace.key(Key::Text("New Name 中文".into()));
+        assert_eq!(workspace.key(Key::Enter), Effect::Send(Job::SaveIdentity { ticket: "first".into(), name: "New Name 中文".into(), email: "old@example.invalid".into() }));
+        assert_eq!(workspace.key(Key::Escape), Effect::Nothing, "cannot claim cancellation after write submission");
+        workspace.reply(Reply::PromptFailed { action: PromptAction::IdentitySettings, text: "config changed".into() });
+        assert_eq!(workspace.key(Key::Enter), Effect::Send(Job::LoadIdentity));
+        workspace.reply(Reply::IdentitySettings { ticket: "fresh".into(), name: "External".into(), email: "external@example.invalid".into(), detail: "new source".into() });
+        assert_eq!(workspace.identity_form().unwrap().name, "New Name 中文");
+        assert_eq!(workspace.identity_form().unwrap().email, "old@example.invalid");
+        assert_eq!(workspace.key(Key::Enter), Effect::Send(Job::SaveIdentity { ticket: "fresh".into(), name: "New Name 中文".into(), email: "old@example.invalid".into() }));
+        workspace.reply(Reply::IdentitySaved { path: NativePath::new("repo"), review: Some(crate::model::TrustReview { ticket: "trust".into(), worktree: NativePath::new("repo"), git_directory: NativePath::new("metadata"), fingerprint: "digest".into(), submitted: false }), detail: "Identity saved".into() });
+        assert!(workspace.identity_form().is_none());
+        assert_eq!(workspace.key(Key::Enter), Effect::Nothing, "identity Save must not approve changed configuration trust");
+        assert_eq!(workspace.key(Key::Escape), Effect::Send(Job::CancelEntry));
+    }
+    #[test]
+    fn git_settings_preserve_failed_input_and_do_not_turn_text_into_repo_shortcuts() {
+        let mut workspace = Workspace::new(Snapshot::welcome());
+        assert_eq!(workspace.key(Key::Char('G')), Effect::Send(Job::LoadGitSettings));
+        workspace.reply(Reply::GitSettings { path: Some(NativePath::new("old Git")), detail: "Saved preference".into() });
+        for _ in 0..7 { workspace.key(Key::Backspace); }
+        assert_eq!(workspace.key(Key::Text("new git 中文".into())), Effect::Nothing);
+        assert_eq!(workspace.key(Key::Enter), Effect::Send(Job::ConfigureGit(Some(NativePath::new("new git 中文")))));
+        assert_eq!(workspace.key(Key::Enter), Effect::Nothing);
+        workspace.reply(Reply::PromptFailed { action: PromptAction::GitSettings, text: "not saved".into() });
+        assert_eq!(workspace.prompt().unwrap().text(), "new git 中文");
+        assert_eq!(workspace.key(Key::Escape), Effect::Nothing);
+        assert!(workspace.prompt().is_none());
+        assert!(workspace.is_welcome());
+        assert!(workspace.git_detail().contains("not saved or applied"));
+    }
     #[test]
     fn create_repository_fields_review_and_failure_preserve_explicit_input() {
         let mut workspace = Workspace::new(Snapshot::welcome());

@@ -11,6 +11,50 @@ use srcmgr_state::{ProfileStore, SCHEMA_VERSION, StoreError};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn git_preference_survives_restart_in_native_units_and_clear_preserves_other_state() {
+    use srcmgr_domain::NativePath;
+    let profile = Profile::new("git-preference-native");
+    #[cfg(windows)]
+    let path = {
+        use std::os::windows::ffi::OsStringExt;
+        NativePath::new(std::ffi::OsString::from_wide(&[67, 58, 92, 0xd800, 92, 103, 105, 116]))
+    };
+    #[cfg(unix)]
+    let path = {
+        use std::os::unix::ffi::OsStringExt;
+        NativePath::new(std::ffi::OsString::from_vec(b"/missing/\xff/git".to_vec()))
+    };
+    {
+        let mut store = ProfileStore::open(&profile.root).unwrap();
+        store.set_git_executable(Some(&path)).unwrap();
+        store.put_draft("git", "repo", "keep draft").unwrap();
+        store.remember_repository("git", &profile.root.join("missing repo")).unwrap();
+    }
+    let mut store = ProfileStore::open(&profile.root).unwrap();
+    assert_eq!(store.git_executable().unwrap(), Some(path));
+    store.set_git_executable(None).unwrap();
+    assert!(store.git_executable().unwrap().is_none());
+    assert_eq!(store.get_draft("git", "repo").unwrap().as_deref(), Some("keep draft"));
+    assert_eq!(store.recent_repositories().unwrap().len(), 1);
+    assert!(!profile.root.join("missing repo").exists());
+}
+
+#[test]
+fn git_preference_refuses_foreign_corrupt_and_oversized_records_without_reset() {
+    let profile = Profile::new("git-preference-invalid");
+    let mut store = ProfileStore::open(&profile.root).unwrap();
+    #[cfg(windows)]
+    let foreign = "unix-bytes\t2f676974";
+    #[cfg(unix)]
+    let foreign = "windows-utf16\t670069007400";
+    for value in [foreign.to_owned(), "windows-utf16\tff".into(), "unknown\t00".into(), "unix-bytes\tzz".into(), "x".repeat(132_001)] {
+        store.put_setting("git.executable.v1", &value).unwrap();
+        assert!(matches!(store.git_executable(), Err(StoreError::InvalidMetadata)));
+        assert_eq!(store.get_setting("git.executable.v1").unwrap().as_deref(), Some(value.as_str()));
+    }
+}
+
 struct Profile {
     root: PathBuf,
 }

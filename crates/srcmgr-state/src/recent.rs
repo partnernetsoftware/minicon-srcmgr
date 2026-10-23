@@ -44,17 +44,7 @@ impl ProfileStore {
             if fields.len() != 3 || !valid_backend(fields[0]) {
                 return Err(StoreError::InvalidMetadata);
             }
-            let bytes = unhex(fields[2])?;
-            let path = match fields[1] {
-                "unix-bytes" => EncodedPath::UnixBytes(bytes),
-                "windows-utf16" if bytes.len().is_multiple_of(2) => EncodedPath::WindowsUtf16(
-                    bytes
-                        .chunks_exact(2)
-                        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                        .collect(),
-                ),
-                _ => return Err(StoreError::InvalidMetadata),
-            };
+            let path = decode_path(fields[1], fields[2])?;
             let entry = RecentRepository {
                 backend: fields[0].to_owned(),
                 path,
@@ -102,25 +92,33 @@ impl ProfileStore {
     fn write_recents(&mut self, entries: &[RecentRepository]) -> Result<(), StoreError> {
         let mut value = String::new();
         for entry in entries {
-            let bytes = match &entry.path {
-                EncodedPath::UnixBytes(bytes) => bytes.clone(),
-                EncodedPath::WindowsUtf16(units) => {
-                    units.iter().flat_map(|unit| unit.to_le_bytes()).collect()
-                }
-            };
-            if bytes.is_empty() || bytes.len() > MAX_PATH_BYTES {
-                return Err(StoreError::InvalidMetadata);
-            }
-            write!(value, "{}\t{}\t", entry.backend, entry.path.tag()).expect("write String");
-            for byte in bytes {
-                write!(value, "{byte:02x}").expect("write String");
-            }
+            write!(value, "{}\t{}", entry.backend, encode_path(&entry.path)?).expect("write String");
             value.push('\n');
             if value.len() > MAX_BYTES {
                 return Err(StoreError::InvalidMetadata);
             }
         }
         self.put_setting(KEY, &value)
+    }
+}
+
+pub(crate) fn encode_path(path: &EncodedPath) -> Result<String, StoreError> {
+    let bytes = match path {
+        EncodedPath::UnixBytes(bytes) => bytes.clone(),
+        EncodedPath::WindowsUtf16(units) => units.iter().flat_map(|unit| unit.to_le_bytes()).collect(),
+    };
+    if bytes.is_empty() || bytes.len() > MAX_PATH_BYTES { return Err(StoreError::InvalidMetadata); }
+    let mut value = format!("{}\t", path.tag());
+    for byte in bytes { write!(value, "{byte:02x}").expect("write String"); }
+    Ok(value)
+}
+
+pub(crate) fn decode_path(tag: &str, value: &str) -> Result<EncodedPath, StoreError> {
+    let bytes = unhex(value)?;
+    match tag {
+        "unix-bytes" => Ok(EncodedPath::UnixBytes(bytes)),
+        "windows-utf16" if bytes.len().is_multiple_of(2) => Ok(EncodedPath::WindowsUtf16(bytes.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect())),
+        _ => Err(StoreError::InvalidMetadata),
     }
 }
 

@@ -13,6 +13,7 @@ mod error;
 mod hunks;
 mod installation;
 mod initialization;
+mod identity_config;
 mod index_summary;
 mod repository;
 mod runner;
@@ -26,6 +27,7 @@ use srcmgr_domain::{BackendKind, Capability, CapabilityState, VcsBackend};
 pub use error::GitError;
 pub use installation::{GitInstallation, MINIMUM_GIT, parse_version};
 pub use initialization::InitializationTarget;
+pub use identity_config::{IdentityConfig, IdentityValue};
 pub use index_summary::{IndexSummary, index_summary};
 pub use repository::{reference_target, retain_recovery_ref};
 pub use repository::{

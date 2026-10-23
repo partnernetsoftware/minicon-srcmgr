@@ -362,15 +362,14 @@ fn open_trusted(options: &Options, worktree: &Path) -> Result<Session, String> {
         .verify(&git_dir, &worktree)
         .map_err(|error| format!("{error}; run `minicon-srcmgr trust grant <worktree>` after review"))?;
 
-    let installation = probe_git(options)?;
+    let executable = refuse_repository_local_executable(&selected_git(options)?, &worktree)?;
+    let installation = GitInstallation::probe(executable).map_err(|e| e.to_string())?;
     let backend = GitBackend::new(installation.clone());
     if let CapabilityState::Unavailable { reason } | CapabilityState::Unsupported { reason } =
         backend.capability(Capability::ReadStatus)
     {
         return Err(format!("status is unavailable: {reason}"));
     }
-    refuse_repository_local_executable(&installation, &worktree)?;
-
     let identity = locate(&installation, &worktree).map_err(|error| error.to_string())?;
     if identity.common_dir != git_dir {
         return Err("the repository identity changed after the trust check; nothing was run".to_owned());
@@ -378,15 +377,12 @@ fn open_trusted(options: &Options, worktree: &Path) -> Result<Session, String> {
     Ok(Session { installation, identity })
 }
 
-fn probe_git(options: &Options) -> Result<GitInstallation, String> {
-    GitInstallation::probe(selected_git(options)?).map_err(|error| error.to_string())
-}
-
 fn selected_git(options: &Options) -> Result<PathBuf, String> {
-    Ok(match &options.git {
-        Some(path) => path.clone(),
-        None => find_git_on_path().ok_or("no git executable was found on PATH; pass --git")?,
-    })
+    if let Some(path) = &options.git { return Ok(path.clone()); }
+    if let Some(path) = open_profile_store(options)?.git_executable().map_err(|e| e.to_string())? {
+        return Ok(PathBuf::from(path.as_os_str()));
+    }
+    find_git_on_path().ok_or("No installed Git was found. Open Git settings to select Git 2.43 or newer, or pass --git".into())
 }
 
 fn status(options: &Options) -> Result<(), String> {
@@ -559,15 +555,14 @@ fn draft_command(options: &Options) -> Result<(), String> {
     Ok(())
 }
 
-fn refuse_repository_local_executable(installation: &GitInstallation, worktree: &Path) -> Result<(), String> {
-    let executable = installation
-        .executable()
+fn refuse_repository_local_executable(path: &Path, worktree: &Path) -> Result<PathBuf, String> {
+    let executable = path
         .canonicalize()
         .map_err(|error| format!("cannot resolve the git executable: {error}"))?;
     if executable.starts_with(worktree) {
         return Err("the selected git executable lies inside the repository being inspected; choose an installed Git".to_owned());
     }
-    Ok(())
+    Ok(executable)
 }
 
 /// Finds the first `git` on PATH. Only the process environment is consulted;
@@ -575,7 +570,7 @@ fn refuse_repository_local_executable(installation: &GitInstallation, worktree: 
 fn find_git_on_path() -> Option<PathBuf> {
     let names: &[&str] = if cfg!(windows) { &["git.exe"] } else { &["git"] };
     let path = env::var_os("PATH")?;
-    env::split_paths(&path).find_map(|directory| {
+    env::split_paths(&path).filter(|directory| directory.is_absolute()).find_map(|directory| {
         names
             .iter()
             .map(|name| directory.join(name))

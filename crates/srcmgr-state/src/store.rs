@@ -43,7 +43,7 @@ impl fmt::Display for StoreError {
             ),
             Self::Sql(_) => formatter.write_str("the profile database could not be read or written"),
             Self::Io(_) => formatter.write_str("the profile directory could not be prepared"),
-            Self::InvalidMetadata => formatter.write_str("the recent repository metadata is invalid or exceeds its supported limits; existing records were preserved"),
+            Self::InvalidMetadata => formatter.write_str("stored navigation or preference metadata is invalid, foreign to this platform, or exceeds supported limits; existing records were preserved"),
         }
     }
 }
@@ -155,6 +155,13 @@ impl ProfileStore {
             .connection
             .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| row.get(0))
             .optional()?)
+    }
+
+    pub(crate) fn delete_setting(&mut self, key: &str) -> Result<(), StoreError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Check byte length inside SQLite before materializing bounded metadata.

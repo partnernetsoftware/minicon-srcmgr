@@ -211,6 +211,10 @@ pub enum MainRequest {
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Job {
+    LoadIdentity,
+    SaveIdentity { ticket: String, name: String, email: String },
+    LoadGitSettings,
+    ConfigureGit(Option<NativePath>),
     PrepareCreate { path: NativePath, branch: String },
     ExecuteCreate(String),
     LoadWelcome,
@@ -280,6 +284,9 @@ pub enum Job {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reply {
+    IdentitySettings { ticket: String, name: String, email: String, detail: String },
+    IdentitySaved { path: NativePath, review: Option<TrustReview>, detail: String },
+    GitSettings { path: Option<NativePath>, detail: String },
     CreateReview { ticket: String, path: NativePath, branch: String, new_directory: bool, entries: Vec<String>, more_entries: bool },
     Welcome(Vec<RecentRow>),
     TrustReview(TrustReview),
@@ -306,6 +313,8 @@ pub enum Reply {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PromptAction {
+    IdentitySettings,
+    GitSettings,
     CreateRepository,
     OpenRepository,
     Commit,
