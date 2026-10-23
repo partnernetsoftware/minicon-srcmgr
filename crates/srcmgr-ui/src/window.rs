@@ -152,6 +152,11 @@ impl StatusWindow {
     }
 
     fn sync_title(&mut self, window: &PixelWindow) {
+        if let Some(issue) = self.workspace.navigation_issue() {
+            let title = format!("MiniCon SrcMgr - Saved view recovery | {} | {}", if issue.submitted { "Working" } else { "Ready" }, issue.path.display_label());
+            if self.native_title != title { window.set_title(&title); self.native_title = title; }
+            return;
+        }
         if let Some(form) = self.workspace.filter_editor() {
             let title = format!("MiniCon SrcMgr - Filter | {} | {} matches", pane_label(form.pane), self.workspace.visible_rows(form.pane).len());
             if self.native_title != title { window.set_title(&title); self.native_title = title; }
@@ -171,6 +176,10 @@ impl StatusWindow {
             if self.native_title != title { window.set_title(title); self.native_title = title.into(); }
         } else if let Some(review) = self.workspace.trust_review() {
             let title = format!("MiniCon SrcMgr - Trust review | {}", review.worktree.display_label());
+            if self.native_title != title { window.set_title(&title); self.native_title = title; }
+        } else if let Some((kind, id, ready)) = self.workspace.history_context() {
+            let path = self.workspace.snapshot().repository.as_ref().map(|p| p.display_label()).unwrap_or_default();
+            let title = format!("MiniCon SrcMgr - History | {kind} | {} | {} | {path}", if ready { "Ready" } else { "Loading" }, short(id));
             if self.native_title != title { window.set_title(&title); self.native_title = title; }
         } else if self.native_title != self.workspace.snapshot().title {
             self.native_title.clone_from(&self.workspace.snapshot().title);
@@ -243,6 +252,14 @@ impl StatusWindow {
         let py = (y * scale).round() as i64;
         if matches!(gesture, Gesture::Click) && let Some(hit) = tab_hit(&self.workspace, surface, px, py) {
             let effect = match hit { Hit::Repository(index) => self.workspace.select_repository(index), Hit::CloseRepository => self.workspace.close_repository(), Hit::NextRepository => self.workspace.key(Key::NextRepository), Hit::PreviousRepository => self.workspace.key(Key::PreviousRepository), _ => Effect::Nothing };
+            let directive = self.dispatch(effect);
+            self.sync_title(window);
+            window.request_redraw();
+            return Ok(directive);
+        }
+        if self.workspace.navigation_issue().is_some() {
+            let (allow, cancel) = trust_buttons(layout(surface.width, surface.height, surface.grid).main, surface.grid);
+            let effect = match gesture { Gesture::Click if contains(allow, px, py) => self.workspace.answer_navigation(true), Gesture::Click if contains(cancel, px, py) => self.workspace.answer_navigation(false), _ => Effect::Nothing };
             let directive = self.dispatch(effect);
             self.sync_title(window);
             window.request_redraw();
@@ -397,6 +414,7 @@ impl StatusWindow {
             (Gesture::Click, Hit::GitSettings) => self.workspace.request_git_settings(),
             (Gesture::Click, Hit::IdentitySettings) => self.workspace.request_identity(),
             (Gesture::Click, Hit::Commit) => self.workspace.request_commit(),
+            (Gesture::Click, Hit::Back) => self.workspace.key(Key::Escape),
             (Gesture::Click, Hit::Filter(pane)) => self.workspace.request_filter(pane),
             (Gesture::Click, Hit::ClearFilter(pane)) => self.workspace.clear_filter(pane),
             (Gesture::Click, Hit::Repository(index)) => self.workspace.select_repository(index),
@@ -450,7 +468,7 @@ impl StatusWindow {
             Effect::Quit if self.pending != 0 || !self.queued.is_empty() => { let _ = self.workspace.reply(Reply::Notice("Wait for current repository work before closing".into())); PixelWindowDirective::Continue }
             Effect::Quit => PixelWindowDirective::Exit,
             Effect::Send(job) => {
-                if matches!(job, Job::EnterRepository { .. } | Job::LoadIdentity | Job::SaveIdentity { .. } | Job::ConfigureGit(_) | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_)) && (self.pending != 0 || !self.queued.is_empty()) {
+                if matches!(job, Job::ResetNavigation(_) | Job::EnterRepository { .. } | Job::LoadIdentity | Job::SaveIdentity { .. } | Job::ConfigureGit(_) | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_)) && (self.pending != 0 || !self.queued.is_empty()) {
                     let _ = self.workspace.reply(job_failure(&job, "Wait for current repository work to finish, then retry entry"));
                     return PixelWindowDirective::Continue;
                 }
@@ -526,7 +544,7 @@ fn job_failure(job: &Job, message: &str) -> Reply {
         Job::LoadIdentity | Job::SaveIdentity { .. } => Reply::PromptFailed { action: PromptAction::IdentitySettings, text },
         Job::LoadGitSettings | Job::ConfigureGit(_) => Reply::PromptFailed { action: PromptAction::GitSettings, text },
         Job::PrepareCreate { .. } | Job::ExecuteCreate(_) => Reply::PromptFailed { action: PromptAction::CreateRepository, text },
-        Job::EnterRepository { .. } | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) => Reply::PromptFailed { action: PromptAction::OpenRepository, text },
+        Job::ResetNavigation(_) | Job::EnterRepository { .. } | Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) => Reply::PromptFailed { action: PromptAction::OpenRepository, text },
         Job::Main { generation, .. } => Reply::MainFailed { generation: *generation, text },
         Job::Prepare { generation, .. } => Reply::ConfirmationFailed { generation: *generation, text },
         Job::Commit { .. } | Job::LoadCommitReview { .. } => Reply::PromptFailed { action: PromptAction::Commit, text },
@@ -1077,6 +1095,7 @@ struct Surface {
 /// What a pointer position is over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Hit {
+    Back,
     Filter(Pane),
     ClearFilter(Pane),
     Repository(usize),
@@ -1182,6 +1201,7 @@ fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
         return Hit::Row(pane, offset + ((y - inner.top) / grid.row) as usize);
     }
     if contains(panels.main, x, y) {
+        if workspace.can_back() && contains(back_control(panels.main, grid), x, y) { return Hit::Back; }
         let inner = inner_of(panels.main, grid);
         if y < inner.top || y >= inner.top + inner.rows * grid.row {
             return Hit::Main(None);
@@ -1200,7 +1220,7 @@ const fn pane_of(hit: Hit) -> Option<Pane> {
         Hit::Panel(pane) | Hit::Row(pane, _) => Some(pane),
         Hit::Main(_) => Some(Pane::Main),
         Hit::Recent(_) => Some(Pane::Files),
-        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::RecentOpen | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository | Hit::Filter(_) | Hit::ClearFilter(_) => None,
+        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::RecentOpen | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository | Hit::Filter(_) | Hit::ClearFilter(_) | Hit::Back => None,
     }
 }
 
@@ -1324,7 +1344,18 @@ fn list_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, panel: Panel<'_>, r
 
 /// The main panel shows the editor while a prompt is open, the key help while
 /// help is open, and otherwise the diff or detail of the source list.
+fn back_control(rect: Rect, grid: Grid) -> Rect { Rect { x: rect.x + rect.width - grid.gap - (grid.advance * 10.0) as i64, y: rect.y + edge(grid), width: (grid.advance * 10.0) as i64, height: grid.row + grid.gap / 2 } }
+
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
+    if let Some(issue) = workspace.navigation_issue() {
+        let (body, _) = trust_content(rect, grid);
+        let text = format!("Repository: {}\n\n{}\n\nArchive the reviewed saved view and open with the default layout.\nThe archive is retained in this profile; no automatic deletion.\nDrafts, repository trust, source files, index and refs are preserved.\n\nChanged or expired records require a fresh review.\nIf entry later fails, the archive remains available.\nAutomatic recovery review is limited to 1 MiB.\n\ny: Archive view and open   n/Esc: Cancel\nEnter does not approve this change.", issue.path.display_label(), issue.reason);
+        text_panel(draws, body, grid, true, "Saved view needs recovery", &wrapped_lines(&text, inner_of(body, grid).cols), 0, None);
+        let (allow, cancel) = trust_buttons(rect, grid);
+        button_draw(draws, allow, grid, if issue.submitted { "Working..." } else { "Archive view and open" }, BORDER);
+        button_draw(draws, cancel, grid, "Cancel", FOCUS_BORDER);
+        return;
+    }
     if workspace.filter_editor().is_some() { filter_scene(draws, rect, grid, workspace); return; }
     if let Some(form) = workspace.identity_form() {
         let (body, _) = trust_content(rect, grid);
@@ -1432,13 +1463,14 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
     }
     let main = workspace.main();
     let title = if workspace.is_welcome() { "Welcome" } else { match workspace.source() {
-        Pane::Commits => "Commit",
+        Pane::Commits => match workspace.history_context() { Some(("Files", _, _)) => "Committed files", Some(("File Diff", _, _)) => "Committed file Diff", _ => "Commit details" },
         Pane::Branches => "Branch",
         Pane::Stashes => "Selected stash",
         Pane::Status | Pane::Files | Pane::Main => "Diff",
     }};
     let highlight = if focused { Some(workspace.selection()) } else { None };
     text_panel(draws, rect, grid, focused, title, &main.lines, workspace.scroll(), highlight);
+    if workspace.can_back() { button_draw(draws, back_control(rect, grid), grid, "Back [Esc]", BORDER); }
 }
 
 fn trust_buttons(rect: Rect, grid: Grid) -> (Rect, Rect) {
@@ -1585,6 +1617,7 @@ fn window_start(selected: usize, length: usize, rows: i64) -> usize {
 
 /// Keys the window shows for the current state, most useful first.
 fn hints(workspace: &Workspace) -> String {
+    if workspace.navigation_issue().is_some() { return "y Archive view and open   n/Esc Cancel   Enter does not approve".into(); }
     if workspace.filter_editor().is_some() { return "Enter Apply   Esc Restore   Tab Change pane   Up/Down Preview   Ctrl+A/C/V Edit".into(); }
     if let Some(form) = workspace.identity_form() { return if form.submitted { "Working; fields are read-only until completion. Esc cancels a read, not a submitted save." } else { "Tab Switch field   Enter Save local/reload   Page/Up/Down Scroll sources   Esc Cancel" }.into(); }
     if workspace.help() {
@@ -1726,6 +1759,22 @@ mod tests {
         let labels = texts(&draws);
         assert!(labels.contains(&"Welcome"));
         assert!(!labels.contains(&"Diff"));
+    }
+
+    #[test]
+    fn ctrl_tab_after_navigation_repair_enters_the_other_raw_repository() {
+        use minicon_platform::contract::input::{ModifierState, PhysicalKeyCode};
+        let event = NormalizedKeyEvent { logical: LogicalKey::Named(NamedKey::Tab), physical: PhysicalKeyCode::Tab, text: None, state: KeyPressState::Pressed, repeat: false, modifiers: ModifierState { control: true, shift: false, alt: false, meta: false } };
+        assert_eq!(key_of(&event), Some(Key::NextRepository));
+        let mut workspace = Workspace::new(snapshot(1));
+        workspace.request_open(); workspace.key(Key::Text("other".into())); workspace.key(Key::Enter);
+        workspace.reply(Reply::NavigationIssue(crate::NavigationIssue { ticket: "repair".into(), path: NativePath::new("other"), reason: "Unknown version".into(), submitted: false }));
+        workspace.answer_navigation(true);
+        let mut other = snapshot(0); other.repository = Some(NativePath::new("other"));
+        workspace.reply(Reply::NavigationReset { archive: "retained".into(), detail: "Archived".into(), next: Box::new(Reply::RepositoryOpened(other)) });
+        assert_eq!(workspace.tabs().len(), 2);
+        assert!(!workspace.modal());
+        assert!(matches!(workspace.key(key_of(&event).unwrap()), Effect::Send(Job::EnterRepository { path: Some(path), .. }) if path == NativePath::new("fixture-repository")));
     }
 
     #[test]

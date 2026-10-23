@@ -104,6 +104,24 @@ impl ProfileStore {
         self.get_setting_bounded(&navigation_key(repository)?, 256 * 1024)
     }
 
+    /// Recovery review is separately bounded; normal navigation reads remain 256 KiB.
+    pub fn navigation_for_repair(&self, repository: &srcmgr_domain::NativePath) -> Result<Option<String>, StoreError> {
+        self.get_setting_bounded(&navigation_key(repository)?, 1024 * 1024)
+    }
+
+    /// Move exactly the reviewed record to an immutable recovery key. A stale
+    /// review or archive collision rolls back; drafts and other settings stay put.
+    pub fn archive_navigation(&mut self, repository: &srcmgr_domain::NativePath, expected: &str, nonce: &str) -> Result<String, StoreError> {
+        if expected.len() > 1024 * 1024 || nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) { return Err(StoreError::InvalidMetadata); }
+        let key = navigation_key(repository)?;
+        let archive = format!("git.navigation.archive.v1.{}.{}", key.strip_prefix("git.navigation.v1.").ok_or(StoreError::InvalidMetadata)?, nonce);
+        let transaction = self.connection.transaction()?;
+        let changed = transaction.execute("UPDATE settings SET key = ?1 WHERE key = ?2 AND value = ?3 COLLATE BINARY", (&archive, &key, expected))?;
+        if changed != 1 { return Err(StoreError::InvalidMetadata); }
+        transaction.commit()?;
+        Ok(archive)
+    }
+
     /// Persist the exact submitted draft and pending operation atomically,
     /// before launching Git. The profile writer remains held by the caller.
     pub fn begin_git_commit(&mut self, repository: &str, message: &str, before: Option<&str>) -> Result<(), StoreError> {

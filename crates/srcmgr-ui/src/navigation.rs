@@ -4,6 +4,8 @@ use crate::{MainRequest, Pane};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Navigation {
+    pub back: Vec<NavigationFrame>,
+    pub detail_file: Option<NativePath>,
     pub queries: [String; 3],
     pub anchors: [Option<NavigationSelection>; 3],
     pub anchor_positions: [(usize, usize); 3],
@@ -22,38 +24,71 @@ pub struct Navigation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NavigationSelection { File(NativePath), Branch(String), Commit(String) }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NavigationFrame {
+    pub request: MainRequest,
+    pub cursor: usize,
+    pub scroll: usize,
+    pub file: Option<NativePath>,
+}
+
+fn history_id(value: &MainRequest) -> Option<&str> { match value { MainRequest::Commit { id } | MainRequest::CommitFiles { id } | MainRequest::CommitFile { id, .. } => Some(id), _ => None } }
+
 impl Navigation {
     pub fn encode(&self) -> String {
-        let mut fields = vec!["2".into(), pane(self.focus).into(), pane(self.source).into(), self.file.as_ref().map(path).unwrap_or_default(),
+        let mut fields = vec!["3".into(), pane(self.focus).into(), pane(self.source).into(), self.file.as_ref().map(path).unwrap_or_default(),
             self.branch.as_deref().map(hex).unwrap_or_default(), self.commit.as_deref().map(hex).unwrap_or_default(),
             self.stash.as_deref().map(hex).unwrap_or_default(), u8::from(self.stash_mode).to_string(), self.cursor.to_string(), self.scroll.to_string(),
             self.request.as_ref().map(request).unwrap_or_default(), hex(&self.queries[0]), hex(&self.queries[1]), hex(&self.queries[2])];
         fields.extend(self.anchors.iter().map(|a| a.as_ref().map(selection).unwrap_or_default()));
         fields.extend(self.anchor_positions.iter().map(|(cursor, scroll)| format!("{cursor},{scroll}")));
+        fields.push(self.detail_file.as_ref().map(path).unwrap_or_default());
+        fields.push(self.back.len().to_string());
+        fields.extend(self.back.iter().map(|frame| format!("{}\t{}\t{}\t{}", frame.cursor, frame.scroll, frame.file.as_ref().map(path).unwrap_or_default(), request(&frame.request))));
         fields.join("\n")
     }
 
     pub fn decode(value: &str) -> Result<Self, &'static str> {
         if value.len() > 256 * 1024 { return Err("Navigation metadata exceeds its limit; stored record retained"); }
         let f: Vec<_> = value.split('\n').collect();
-        if !((f.len() == 11 && f[0] == "1") || (f.len() == 20 && f[0] == "2")) { return Err("Unsupported navigation record; stored record retained"); }
-        let queries = if f[0] == "2" { [unhex(f[11])?, unhex(f[12])?, unhex(f[13])?] } else { Default::default() };
+        if !((f.len() == 11 && f[0] == "1") || (f.len() == 20 && f[0] == "2") || ((22..=24).contains(&f.len()) && f[0] == "3")) { return Err("Unsupported navigation record; stored record retained"); }
+        let queries = if f[0] != "1" { [unhex(f[11])?, unhex(f[12])?, unhex(f[13])?] } else { Default::default() };
         if queries.iter().any(|q| q.chars().count() > 256 || q.contains(['\n', '\r'])) { return Err("Invalid saved query; stored record retained"); }
         let optional_text = |value: &str| if value.is_empty() { Ok(None) } else { unhex(value).map(Some) };
         let index = |value: &str| value.parse::<usize>().ok().filter(|n| *n <= 10_000_000).ok_or("Invalid navigation offset; stored record retained");
         let mut anchors = [None, None, None];
         let mut anchor_positions = [(0, 0); 3];
-        if f[0] == "2" {
+        if f[0] != "1" {
             for i in 0..3 {
                 anchors[i] = if f[14+i].is_empty() { None } else { Some(read_selection(f[14+i])?) };
                 let (cursor, scroll) = f[17+i].split_once(',').ok_or("Invalid filter anchor offset")?;
                 anchor_positions[i] = (index(cursor)?, index(scroll)?);
             }
         }
-        Ok(Self { queries, anchors, anchor_positions, focus: read_pane(f[1])?, source: read_pane(f[2])?, file: if f[3].is_empty() { None } else { Some(read_path(f[3])?) },
+        let request = if f[10].is_empty() { None } else { Some(read_request(f[10])?) };
+        let detail_file = if f[0] == "3" && !f[20].is_empty() { Some(read_path(f[20])?) } else { None };
+        let mut back = Vec::new();
+        if f[0] == "3" {
+            if index(f[21])? != f.len() - 22 { return Err("Invalid history return depth; stored record retained"); }
+            for encoded in &f[22..] {
+                let fields: Vec<_> = encoded.splitn(4, '\t').collect();
+                if fields.len() != 4 { return Err("Invalid history return frame"); }
+                back.push(NavigationFrame { request: read_request(fields[3])?, cursor: index(fields[0])?, scroll: index(fields[1])?, file: if fields[2].is_empty() { None } else { Some(read_path(fields[2])?) } });
+            }
+        } else if let Some(MainRequest::CommitFiles { id } | MainRequest::CommitFile { id, .. }) = &request {
+            back.push(NavigationFrame { request: MainRequest::Commit { id: id.clone() }, cursor: 0, scroll: 0, file: None });
+            if let Some(MainRequest::CommitFile { file, .. }) = &request { back.push(NavigationFrame { request: MainRequest::CommitFiles { id: id.clone() }, cursor: 2, scroll: 0, file: Some(file.path.clone()) }); }
+        }
+        for (level, frame) in back.iter().enumerate() {
+            if history_id(&frame.request) != request.as_ref().and_then(history_id) || !matches!((level, &frame.request), (0, MainRequest::Commit { .. }) | (1, MainRequest::CommitFiles { .. })) { return Err("History return path does not belong to this commit"); }
+        }
+        if f[0] == "3" && back.len() != match &request { Some(MainRequest::CommitFiles { .. }) => 1, Some(MainRequest::CommitFile { .. }) => 2, _ => 0 } { return Err("Incomplete history return path"); }
+        if request.as_ref().and_then(history_id).is_some() && read_pane(f[2])? != Pane::Commits { return Err("History context belongs to a different source pane"); }
+        if detail_file.is_some() && !matches!(request, Some(MainRequest::CommitFiles { .. })) { return Err("Committed file selection has no file list"); }
+        Ok(Self { back, detail_file, queries, anchors, anchor_positions, focus: read_pane(f[1])?, source: read_pane(f[2])?, file: if f[3].is_empty() { None } else { Some(read_path(f[3])?) },
             branch: optional_text(f[4])?, commit: optional_text(f[5])?, stash: optional_text(f[6])?,
             stash_mode: match f[7] { "0" => false, "1" => true, _ => return Err("Invalid navigation flag") },
-            cursor: index(f[8])?, scroll: index(f[9])?, request: if f[10].is_empty() { None } else { Some(read_request(f[10])?) } })
+            cursor: index(f[8])?, scroll: index(f[9])?, request })
     }
 }
 

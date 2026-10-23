@@ -234,12 +234,15 @@ pub struct FilterEditor {
     origin: FilterAnchor,
     previous_view: Option<MainView>,
     previous_request: Option<MainRequest>,
+    previous_back: Vec<crate::NavigationFrame>,
+    previous_focus: Pane,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TabAction { Select(NativePath), Close, Quit }
 
 pub struct Workspace {
+    navigation_issue: Option<crate::NavigationIssue>,
     filters: [crate::filter::FilterIndex; 3],
     filter_anchors: [Option<FilterAnchor>; 3],
     filter_editor: Option<FilterEditor>,
@@ -278,7 +281,8 @@ pub struct Workspace {
     prepared_ticket: Option<String>,
     confirmation_lines: Vec<String>,
     help: bool,
-    detail_back: Option<(MainView, usize, usize)>,
+    history_back: Vec<crate::NavigationFrame>,
+    restore_detail_file: Option<NativePath>,
     trust: Option<crate::model::TrustReview>,
     trust_scroll: usize,
     trust_limit: usize,
@@ -293,6 +297,7 @@ impl Workspace {
     pub fn new(snapshot: Snapshot) -> Self {
         let tabs = snapshot.repository.as_ref().map(|path| RepositoryTab { path: path.clone(), head: snapshot.head.clone() }).into_iter().collect();
         let mut workspace = Self {
+            navigation_issue: None,
             filters: std::array::from_fn(|_| Default::default()), filter_anchors: [None, None, None], filter_editor: None, next_position: None,
             tabs, closing_tab: false, tab_entry: false, tab_action: None, last_request: None, restore_position: None,
             snapshot,
@@ -316,7 +321,8 @@ impl Workspace {
             prepared_ticket: None,
             confirmation_lines: Vec::new(),
             help: false,
-            detail_back: None,
+            history_back: Vec::new(),
+            restore_detail_file: None,
             trust: None,
             trust_scroll: 0,
             trust_limit: 0,
@@ -340,6 +346,18 @@ impl Workspace {
     }
 
     pub fn tabs(&self) -> &[RepositoryTab] { &self.tabs }
+    pub fn navigation_issue(&self) -> Option<&crate::NavigationIssue> { self.navigation_issue.as_ref() }
+    pub fn answer_navigation(&mut self, approve: bool) -> Effect {
+        let Some(issue) = self.navigation_issue.as_mut() else { return Effect::Nothing; };
+        if issue.submitted { return Effect::Nothing; }
+        if approve { issue.submitted = true; return Effect::Send(Job::ResetNavigation(issue.ticket.clone())); }
+        self.navigation_issue = None;
+        self.closing_tab = false;
+        if self.tab_entry { self.prompt = None; self.tab_entry = false; }
+        else if let Some(prompt) = self.prompt.as_mut() { prompt.submitted = None; }
+        self.notice = Some("Opening cancelled; saved view was retained".into());
+        Effect::Send(Job::CancelEntry)
+    }
 
     fn filter_slot(pane: Pane) -> Option<usize> { match pane { Pane::Files => Some(0), Pane::Branches => Some(1), Pane::Commits => Some(2), _ => None } }
     pub fn filter_query(&self, pane: Pane) -> &str { Self::filter_slot(pane).map_or("", |i| self.filters[i].query.as_str()) }
@@ -377,6 +395,7 @@ impl Workspace {
         if self.modal() || self.is_welcome() { return Effect::Nothing; }
         let Some(slot) = Self::filter_slot(pane) else { return Effect::Nothing; };
         let same_source = self.source == pane;
+        let previous_focus = self.focus;
         self.focus = pane;
         self.source = pane;
         self.generation += 1;
@@ -386,7 +405,8 @@ impl Workspace {
         editor.caret = editor.text.len();
         let previous_view = std::mem::replace(&mut self.main, MainView::note("Filter loaded items; Enter applies, Esc restores the previous query"));
         let previous_request = self.last_request.take();
-        self.filter_editor = Some(FilterEditor { pane, editor, id: self.generation, previous_query: self.filters[slot].query.clone(), previous_anchor: self.filter_anchors[slot].clone(), origin, previous_view: (self.main_ready && same_source).then_some(previous_view), previous_request: if self.main_ready && same_source { previous_request } else { None } });
+        let previous_back = std::mem::take(&mut self.history_back);
+        self.filter_editor = Some(FilterEditor { pane, editor, id: self.generation, previous_query: self.filters[slot].query.clone(), previous_anchor: self.filter_anchors[slot].clone(), origin, previous_view: (self.main_ready && same_source).then_some(previous_view), previous_request: if self.main_ready && same_source { previous_request } else { None }, previous_back, previous_focus });
         self.main_ready = false;
         self.notice = None;
         Effect::Nothing
@@ -421,6 +441,8 @@ impl Workspace {
                 self.main = view;
                 self.main_ready = true;
                 self.last_request = form.previous_request;
+                self.history_back = form.previous_back;
+                self.focus = form.previous_focus;
                 self.cursor = form.origin.cursor;
                 self.scroll = form.origin.scroll;
             }
@@ -449,7 +471,8 @@ impl Workspace {
         self.generation += 1;
         self.last_request = None;
         self.anchor = None;
-        self.detail_back = None;
+        self.history_back.clear();
+        self.restore_detail_file = None;
         self.main = MainView::note("Filter cleared. Enter or select a row to inspect current content.");
         Effect::Nothing
     }
@@ -500,7 +523,7 @@ impl Workspace {
     }
 
     pub fn navigation(&self) -> crate::Navigation {
-        crate::Navigation { queries: std::array::from_fn(|i| self.filters[i].query.clone()), anchors: std::array::from_fn(|i| self.filter_anchors[i].as_ref().and_then(|a| a.identity.clone())), anchor_positions: std::array::from_fn(|i| self.filter_anchors[i].as_ref().map_or((0, 0), |a| (a.cursor, a.scroll))), focus: self.focus, source: self.source,
+        crate::Navigation { back: self.history_back.clone(), detail_file: self.selected_detail_file().or_else(|| self.restore_detail_file.clone()), queries: std::array::from_fn(|i| self.filters[i].query.clone()), anchors: std::array::from_fn(|i| self.filter_anchors[i].as_ref().and_then(|a| a.identity.clone())), anchor_positions: std::array::from_fn(|i| self.filter_anchors[i].as_ref().map_or((0, 0), |a| (a.cursor, a.scroll))), focus: self.focus, source: self.source,
             file: self.snapshot.files.get(self.files).map(|f| f.path.clone()), branch: self.snapshot.branches.get(self.branches).map(|b| b.name.clone()),
             commit: self.snapshot.commits.get(self.commits).map(|c| c.id.clone()), stash: self.snapshot.stashes.get(self.stashes).map(|s| s.id.clone()),
             stash_mode: self.stash_mode, cursor: self.cursor, scroll: self.scroll, request: self.last_request.clone() }
@@ -521,12 +544,19 @@ impl Workspace {
         self.commits = navigation.commit.as_ref().and_then(|id| self.snapshot.commits.iter().position(|c| &c.id == id)).unwrap_or(0);
         self.stashes = navigation.stash.as_ref().and_then(|id| self.snapshot.stashes.iter().position(|s| &s.id == id)).unwrap_or(0);
         self.reconcile_filter_selection();
+        let had_request = navigation.request.is_some();
         let request = navigation.request.filter(|request| match request {
             MainRequest::File { path, staged_view, .. } => self.snapshot.files.get(self.files).is_some_and(|f| &f.path == path && if *staged_view { f.has_staged } else { f.has_unstaged }),
             MainRequest::Stash { id } => self.snapshot.stashes.iter().any(|s| &s.id == id),
             MainRequest::Commit { id } | MainRequest::CommitFiles { id } | MainRequest::CommitFile { id, .. } => self.snapshot.commits.get(self.commits).is_some_and(|c| &c.id == id),
         });
-        let Some(request) = request else { return self.show_source(); };
+        let Some(request) = request else {
+            let effect = self.show_source();
+            if had_request { self.notice = Some("Saved detail is outside the current loaded/filter state or changed side; current selection was refreshed".into()); }
+            return effect;
+        };
+        self.history_back = navigation.back;
+        self.restore_detail_file = navigation.detail_file;
         self.generation += 1;
         self.restore_position = Some((self.generation, navigation.cursor, navigation.scroll));
         self.last_request = Some(request.clone());
@@ -590,6 +620,34 @@ impl Workspace {
     }
 
     pub fn request_quit(&mut self) -> Effect { self.repository_action(TabAction::Quit) }
+
+    fn selected_detail_file(&self) -> Option<NativePath> {
+        self.main.committed.as_ref().and_then(|list| self.cursor.checked_sub(2).and_then(|i| list.files.get(i))).map(|file| file.path.clone())
+    }
+
+    pub fn can_back(&self) -> bool { !self.history_back.is_empty() }
+    pub fn history_context(&self) -> Option<(&'static str, &str, bool)> {
+        match self.last_request.as_ref()? {
+            MainRequest::Commit { id } => Some(("Commit", id, self.main_ready)),
+            MainRequest::CommitFiles { id } => Some(("Files", id, self.main_ready)),
+            MainRequest::CommitFile { id, .. } => Some(("File Diff", id, self.main_ready)),
+            _ => None,
+        }
+    }
+
+    fn return_history(&mut self) -> Effect {
+        let Some(frame) = self.history_back.pop() else { return Effect::Nothing; };
+        self.focus = if matches!(frame.request, MainRequest::Commit { .. }) { Pane::Commits } else { Pane::Main };
+        self.source = Pane::Commits;
+        self.generation += 1;
+        self.restore_position = Some((self.generation, frame.cursor, frame.scroll));
+        self.restore_detail_file = frame.file;
+        self.main = MainView::note("Reading previous history view...");
+        self.main_ready = false;
+        self.last_request = Some(frame.request.clone());
+        self.anchor = None;
+        Effect::Send(Job::Main { generation: self.generation, request: frame.request })
+    }
 
     pub fn is_welcome(&self) -> bool { self.snapshot.repository.is_none() }
     pub fn create_form(&self) -> Option<&CreateForm> { self.create.as_ref() }
@@ -1102,7 +1160,7 @@ impl Workspace {
     /// waits until it closes.
     #[must_use]
     pub const fn modal(&self) -> bool {
-        self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some()
+        self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some() || self.navigation_issue.is_some()
     }
 
     /// Tells the workspace how many main-panel lines are visible, so the cursor
@@ -1122,6 +1180,7 @@ impl Workspace {
             }
             _ => {}
         }
+        if self.navigation_issue.is_some() { return match key { Key::Char('y') => self.answer_navigation(true), Key::Char('n') | Key::Escape | Key::CtrlC => self.answer_navigation(false), _ => Effect::Nothing }; }
         if self.filter_editor.is_some() { return self.filter_key(key); }
         if self.composer.is_some() { return self.commit_key(key); }
         if self.identity.is_some() { return self.identity_key(key); }
@@ -1208,11 +1267,8 @@ impl Workspace {
             Key::BackTab => self.cycle(false),
             Key::Escape => {
                 self.notice = None;
-                if let Some((view, cursor, scroll)) = self.detail_back.take() {
-                    self.generation += 1;
-                    self.main = view;
-                    self.cursor = cursor;
-                    self.scroll = scroll;
+                if !self.history_back.is_empty() {
+                    return self.return_history();
                 } else if self.main.committed.is_some() {
                     self.focus = Pane::Commits;
                     return self.show_source();
@@ -1231,7 +1287,8 @@ impl Workspace {
                 if self.focus == Pane::Commits {
                     let Some(commit) = self.snapshot.commits.get(self.commits) else { return Effect::Nothing; };
                     let request = MainRequest::CommitFiles { id: commit.id.clone() };
-                    self.detail_back = None;
+                    self.history_back = vec![crate::NavigationFrame { request: MainRequest::Commit { id: commit.id.clone() }, cursor: self.cursor, scroll: self.scroll, file: None }];
+                    self.restore_detail_file = None;
                     self.focus = Pane::Main;
                     self.generation += 1;
                     self.main = MainView::note("Loading committed files...");
@@ -1245,7 +1302,7 @@ impl Workspace {
                 if self.focus == Pane::Main && let Some(list) = &self.main.committed {
                         let Some(file) = self.cursor.checked_sub(2).and_then(|i| list.files.get(i)) else { return Effect::Nothing; };
                         let request = MainRequest::CommitFile { id: list.id.clone(), file: file.clone() };
-                        self.detail_back = Some((self.main.clone(), self.cursor, self.scroll));
+                        self.history_back.push(crate::NavigationFrame { request: MainRequest::CommitFiles { id: list.id.clone() }, cursor: self.cursor, scroll: self.scroll, file: Some(file.path.clone()) });
                         self.generation += 1;
                         self.main = MainView::note("Loading committed file diff...");
                         self.main_ready = false;
@@ -1298,6 +1355,18 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::NavigationIssue(issue) => {
+                if self.prompt.as_ref().is_some_and(|p| p.submitted == Some(PromptAction::OpenRepository)) { self.navigation_issue = Some(issue); self.notice = None; }
+                Effect::Nothing
+            }
+            Reply::NavigationReset { detail, next, .. } => {
+                if !self.navigation_issue.as_ref().is_some_and(|i| i.submitted) { return Effect::Nothing; }
+                self.navigation_issue = None;
+                let entry_failed = matches!(*next, Reply::PromptFailed { action: PromptAction::OpenRepository, .. });
+                let effect = self.reply(*next);
+                if !entry_failed { self.notice = Some(detail); }
+                effect
+            }
             Reply::RepositoryClosed(recents) => {
                 if !self.prompt.as_ref().is_some_and(|p| p.submitted == Some(PromptAction::OpenRepository)) { return Effect::Nothing; }
                 let quit = self.tab_action.take() == Some(TabAction::Quit);
@@ -1509,6 +1578,10 @@ impl Workspace {
                         self.scroll = scroll.min(self.main.lines.len().saturating_sub(self.view_rows.max(1)));
                         self.follow();
                     }
+                    if let Some(path) = self.restore_detail_file.take() && let Some(list) = &self.main.committed {
+                        if let Some(index) = list.files.iter().position(|f| f.path == path) { self.cursor = index + 2; self.follow(); }
+                        else { self.notice = Some("Previous committed file is unavailable in this comparison; current list is displayed".into()); }
+                    }
                 }
                 Effect::Nothing
             }
@@ -1537,6 +1610,7 @@ impl Workspace {
                     form.review = None;
                 }
                 if action == PromptAction::OpenRepository {
+                    self.navigation_issue = None;
                     self.trust = None;
                     self.closing_tab = false;
                     self.tab_action = None;
@@ -1556,7 +1630,8 @@ impl Workspace {
                 self.cursor = 0;
                 self.scroll = 0;
                 self.anchor = None;
-                self.detail_back = None;
+                self.history_back.clear();
+        self.restore_detail_file = None;
                 self.notice = Some(text.lines().next().unwrap_or(&text).to_owned());
                 Effect::Nothing
             }
@@ -1964,7 +2039,8 @@ impl Workspace {
         let position = self.next_position.take().filter(|(pane, identity, _, _)| *pane == self.source && *identity == self.selected_identity(self.source));
         self.last_request = None;
         self.restore_position = None;
-        self.detail_back = None;
+        self.history_back.clear();
+        self.restore_detail_file = None;
         self.generation += 1;
         self.scroll = 0;
         self.cursor = 0;
@@ -2044,6 +2120,83 @@ fn clamp_index(index: usize, length: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn history_return_path_roundtrips_without_cached_diffs_and_back_precedes_filter_clear() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.set_view_rows(6);
+        workspace.request_filter(Pane::Commits);
+        workspace.key(Key::Text("subject 2".into()));
+        let Job::Main { generation, .. } = sent(workspace.key(Key::Enter)) else { panic!() };
+        let summary = MainView::text(&(0..100).map(|i| format!("summary {i}\n")).collect::<String>());
+        workspace.reply(Reply::Main { generation, view: summary.clone() });
+        workspace.click_main(Some(42));
+        workspace.focus = Pane::Commits;
+        let summary_position = (workspace.cursor, workspace.scroll);
+        let Job::Main { generation, .. } = sent(workspace.key(Key::Enter)) else { panic!() };
+        let files: Vec<_> = (0..30).map(|i| crate::CommittedFile { status: "A".into(), old_mode: "000000".into(), new_mode: "100644".into(), path: NativePath::new(format!("f{i}.txt")), old_path: None }).collect();
+        let mut list = MainView::text(&format!("Commit 2\nBase: root\n{}", (0..30).map(|i| format!("f{i}.txt\n")).collect::<String>()));
+        list.committed = Some(crate::CommittedFiles { id: "2".into(), base: "root".into(), files });
+        workspace.reply(Reply::Main { generation, view: list.clone() });
+        workspace.key(Key::End);
+        let list_position = (workspace.cursor, workspace.scroll);
+        let Job::Main { generation, .. } = sent(workspace.key(Key::Enter)) else { panic!() };
+        let diff = MainView::text(&(0..80).map(|i| format!("diff {i}\n")).collect::<String>());
+        workspace.reply(Reply::Main { generation, view: diff.clone() });
+        workspace.click_main(Some(50));
+        let navigation = workspace.navigation();
+        assert_eq!(navigation.back.len(), 2);
+        let encoded = navigation.encode();
+        let mut broken = navigation.clone();
+        broken.back[0].request = MainRequest::Commit { id: "wrong commit".into() };
+        assert!(crate::Navigation::decode(&broken.encode()).is_err());
+        let mut broken = navigation.clone();
+        broken.source = Pane::Files;
+        assert!(crate::Navigation::decode(&broken.encode()).is_err(), "restored history cannot expose worktree actions from another pane");
+        let mut restored = snapshot(None);
+        restored.navigation = Some(crate::Navigation::decode(&encoded).unwrap());
+        let mut resumed = Workspace::new(restored);
+        resumed.set_view_rows(6);
+        let Job::Main { generation: first, request: MainRequest::CommitFile { id, file } } = sent(resumed.open()) else { panic!() };
+        assert_eq!((id.as_str(), file.path.as_os_str()), ("2", NativePath::new("f29.txt").as_os_str()));
+        resumed.reply(Reply::Main { generation: first, view: diff });
+        let Job::Main { generation, request: MainRequest::CommitFiles { id } } = sent(resumed.key(Key::Escape)) else { panic!() };
+        assert_eq!(id, "2");
+        resumed.reply(Reply::Main { generation: first, view: MainView::text("obsolete diff") });
+        resumed.reply(Reply::Main { generation, view: list });
+        assert_eq!((resumed.cursor, resumed.scroll), list_position);
+        assert_eq!(resumed.selected_detail_file(), Some(NativePath::new("f29.txt")));
+        assert_eq!(resumed.filter_query(Pane::Commits), "subject 2");
+        let Job::Main { generation, request: MainRequest::Commit { id } } = sent(resumed.key(Key::Escape)) else { panic!() };
+        assert_eq!(id, "2");
+        resumed.reply(Reply::Main { generation, view: summary });
+        assert_eq!(resumed.focus, Pane::Commits);
+        assert_eq!((resumed.cursor, resumed.scroll), summary_position);
+        assert_eq!(resumed.filter_query(Pane::Commits), "subject 2");
+        assert_eq!(resumed.key(Key::Escape), Effect::Nothing);
+        assert!(resumed.filter_query(Pane::Commits).is_empty());
+    }
+
+    #[test]
+    fn navigation_recovery_requires_explicit_approval_and_preserves_cancelled_input() {
+        let mut workspace = Workspace::new(Snapshot::welcome());
+        workspace.request_open();
+        workspace.key(Key::Text("owned repo".into()));
+        workspace.key(Key::Enter);
+        let issue = crate::NavigationIssue { ticket: "reviewed view".into(), path: NativePath::new("owned repo"), reason: "Future version".into(), submitted: false };
+        workspace.reply(Reply::NavigationIssue(issue.clone()));
+        assert_eq!(workspace.key(Key::Enter), Effect::Nothing);
+        assert_eq!(workspace.key(Key::Escape), Effect::Send(Job::CancelEntry));
+        assert_eq!(workspace.prompt().unwrap().text(), "owned repo");
+        workspace.key(Key::Enter);
+        workspace.reply(Reply::NavigationIssue(issue));
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Send(Job::ResetNavigation("reviewed view".into())));
+        assert_eq!(workspace.key(Key::Escape), Effect::Nothing, "submitted archive is not silently cancelled");
+        workspace.reply(Reply::PromptFailed { action: PromptAction::OpenRepository, text: "View changed; reopen for a fresh review".into() });
+        assert!(workspace.navigation_issue().is_none());
+        assert!(workspace.is_welcome());
+        assert_eq!(workspace.prompt().unwrap().text(), "owned repo");
+    }
+
     #[test]
     fn quick_filter_cancel_during_a_pending_detail_keeps_an_explicit_reload_path() {
         let mut workspace = Workspace::new(snapshot(None));
@@ -2775,7 +2928,8 @@ mod tests {
         workspace.reply(Reply::MainFailed { generation, text: "Commit 1\nBase: unavailable\nObject missing".into() });
         assert_eq!((workspace.cursor(), workspace.scroll()), (0, 0));
         assert_eq!(workspace.main().lines.len(), 3);
-        workspace.key(Key::Escape);
+        let Job::Main { generation, request: MainRequest::CommitFiles { .. } } = sent(workspace.key(Key::Escape)) else { panic!("Back must reread the prior view"); };
+        workspace.reply(Reply::Main { generation, view: list.clone() });
         assert_eq!(workspace.main(), &list);
         assert_eq!((workspace.cursor(), workspace.scroll()), before);
     }
@@ -2799,7 +2953,8 @@ mod tests {
             assert_eq!(workspace.key(key), Effect::Nothing, "history is read-only");
             assert!(workspace.confirm().is_none());
         }
-        workspace.key(Key::Escape);
+        let Job::Main { generation, request: MainRequest::CommitFiles { .. } } = sent(workspace.key(Key::Escape)) else { panic!("Back must reread the prior view"); };
+        workspace.reply(Reply::Main { generation, view: list.clone() });
         assert_eq!(workspace.main(), &list);
         assert_eq!(workspace.cursor(), 2);
         workspace.reply(Reply::Main { generation: diff_generation, view: MainView::note("late diff") });

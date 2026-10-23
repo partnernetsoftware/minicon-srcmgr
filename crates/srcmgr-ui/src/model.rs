@@ -90,6 +90,14 @@ pub struct TrustReview {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NavigationIssue {
+    pub ticket: String,
+    pub path: NativePath,
+    pub reason: String,
+    pub submitted: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Snapshot {
     pub history_limit: usize,
     pub navigation: Option<crate::Navigation>,
@@ -217,6 +225,7 @@ pub enum MainRequest {
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Job {
+    ResetNavigation(String),
     EnterRepository { path: Option<NativePath>, current: Option<(NativePath, Box<crate::Navigation>)> },
     LoadCommitReview { generation: u64 },
     CommitDiff { ticket: String, generation: u64, index: usize },
@@ -293,6 +302,8 @@ pub enum Job {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reply {
+    NavigationIssue(NavigationIssue),
+    NavigationReset { archive: String, detail: String, next: Box<Reply> },
     RepositoryClosed(Vec<RecentRow>),
     CommitReview { generation: u64, review: CommitReview },
     CommitDiff { generation: u64, view: MainView },

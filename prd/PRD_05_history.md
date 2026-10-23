@@ -41,6 +41,12 @@ The local [0.0.6 slice](../plan/plan-0.0.6.md) filters only the commits already 
 
 Filter edits do not load more commits, run revision queries or fetch objects. Full OIDs bind details; changing query/ref generation invalidates obsolete details. Returning from commit files/diff restores the active query, selected full OID and viewport where still valid. A moved HEAD refreshes and labels the actual new scope rather than mixing old and new histories. General text-input, clear and selection behavior is owned by [10](PRD_10_desktop_ux.md#quick-filter-interaction).
 
+## Local historical return path
+
+For the current loaded-history slice, commit details → committed files → committed file Diff has a named Back action and equivalent Escape path. Back takes precedence over clearing an applied query. Retain the selected full OID, query, each level's cursor/viewport and the raw committed-file path across repository departure and an acknowledged graceful restart checkpoint. Store at most two small return frames under 13; do not retain full historical Diff views in background tabs.
+
+Back and reopened detail issue fresh generation-bound reads. Loading is distinct from Ready; obsolete replies cannot replace the current target. Resolve raw file selection against the fresh list and clamp positions. Missing/hidden commits or files leave a truthful inspection/reload route and explanation rather than an old actionable view. Older checkpoint bodies without prior positions derive a minimal return route; they cannot promise positions never saved. This contract does not deliver graph paging, arbitrary navigation stacks, blame or all-history search. Scoped implementation evidence belongs to the active version plan.
+
 ## Delivery contracts
 
 | ID / leaf | Invariant | Observable evidence | Safe failure | Dependencies | Non-goal |

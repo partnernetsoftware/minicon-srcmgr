@@ -32,7 +32,15 @@ struct PendingIdentity {
     expires: Instant,
 }
 
+struct PendingNavigation {
+    ticket: String,
+    worktree: PathBuf,
+    expected: String,
+    expires: Instant,
+}
+
 pub struct ApplicationBackend {
+    navigation: Option<PendingNavigation>,
     options: Options,
     active: Option<WindowBackend>,
     trust: Option<PendingTrust>,
@@ -43,6 +51,7 @@ pub struct ApplicationBackend {
 impl ApplicationBackend {
     pub fn welcome(options: Options) -> Self {
         Self {
+            navigation: None,
             options,
             active: None,
             trust: None,
@@ -83,6 +92,7 @@ impl ApplicationBackend {
     }
 
     fn open_mode(&mut self, path: NativePath, force_review: bool) -> Result<Reply, String> {
+        self.navigation = None;
         self.identity = None;
         self.create = None;
         self.trust = None;
@@ -116,9 +126,34 @@ impl ApplicationBackend {
     }
 
     fn activate(&mut self, worktree: PathBuf) -> Result<Reply, String> {
+        let path = NativePath::new(worktree.as_os_str());
+        let needs_repair = match open_profile_store(&self.options)?.navigation(&path) {
+            Ok(Some(record)) => srcmgr_ui::Navigation::decode(&record).err().map(str::to_owned),
+            Ok(None) => None,
+            Err(srcmgr_state::StoreError::InvalidMetadata) => Some("Saved navigation is larger than its supported limit".into()),
+            Err(error) => return Err(error.to_string()),
+        };
+        if let Some(reason) = needs_repair {
+            let expected = open_profile_store(&self.options)?.navigation_for_repair(&path).map_err(|e| format!("Saved view cannot be safely reviewed (recovery limit 1 MiB). Preserve the profile database for manual recovery: {e}"))?.ok_or("Saved view changed; retry opening")?;
+            if srcmgr_ui::Navigation::decode(&expected).is_ok() { return Err("Saved view changed; retry opening to load the current record".into()); }
+            let random = minicon_platform::entropy::secure_random_array::<16>().map_err(|e| format!("Cannot prepare navigation recovery: {e:?}"))?;
+            let ticket: String = random.iter().map(|b| format!("{b:02x}")).collect();
+            self.navigation = Some(PendingNavigation { ticket: ticket.clone(), worktree, expected, expires: Instant::now() + Duration::from_secs(60) });
+            return Ok(Reply::NavigationIssue(srcmgr_ui::NavigationIssue { ticket, path, reason, submitted: false }));
+        }
         let (candidate, snapshot) = WindowBackend::open_target(&self.options, &worktree)?;
         self.active = Some(candidate);
         Ok(Reply::RepositoryOpened(snapshot))
+    }
+
+    fn reset_navigation(&mut self, ticket: &str) -> Result<Reply, String> {
+        let pending = self.navigation.take().ok_or("Navigation recovery is missing or consumed; open again to review")?;
+        if pending.ticket != ticket || Instant::now() >= pending.expires { return Err("Navigation recovery changed or expired; review again".into()); }
+        let path = NativePath::new(pending.worktree.into_os_string());
+        let archive = open_profile_store(&self.options)?.archive_navigation(&path, &pending.expected, &pending.ticket).map_err(|e| format!("Saved view changed or could not be archived; no reset was published. Reopen to review: {e}"))?;
+        let detail = format!("Saved view archived as {archive}. Defaults were selected; drafts and Git data were retained.");
+        let next = self.open(path).unwrap_or_else(|e| Reply::PromptFailed { action: PromptAction::OpenRepository, text: format!("Saved view archived. Repository was not opened: {e}. The archive remains in this profile; retry Open explicitly.") });
+        Ok(Reply::NavigationReset { archive, detail, next: Box::new(next) })
     }
 
     fn prepare_create(&mut self, path: NativePath, branch: String) -> Result<Reply, String> {
@@ -255,6 +290,7 @@ impl ApplicationBackend {
 impl Backend for ApplicationBackend {
     fn run(&mut self, job: Job) -> Reply {
         match job {
+            Job::ResetNavigation(ticket) => self.reset_navigation(&ticket).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::OpenRepository, text }),
             Job::EnterRepository { path, current } => (|| {
                 if let Some((source, navigation)) = current {
                     let active = self.active.as_ref().ok_or("No active repository for navigation save")?;
@@ -265,6 +301,7 @@ impl Backend for ApplicationBackend {
                 else {
                     let Reply::Welcome(recents) = self.recent()? else { return Err("Recent list unavailable".into()); };
                     self.active = None;
+                    self.navigation = None;
                     self.trust = None;
                     self.create = None;
                     self.identity = None;
@@ -299,6 +336,7 @@ impl Backend for ApplicationBackend {
                     })
             }
             Job::CancelEntry => {
+                self.navigation = None;
                 self.identity = None;
                 self.trust = None;
                 self.create = None;
@@ -344,6 +382,117 @@ mod tests {
         let approved = review(&mut app, repo);
         assert!(matches!(app.run(Job::GrantRepositoryTrust(approved.ticket)), Reply::RepositoryOpened(_)));
         app
+    }
+
+    #[test]
+    fn entry_navigation_recovery_cancel_stale_approval_and_known_archive_outcomes() {
+        use srcmgr_ui::Workspace;
+        for fail_after_archive in [false, true] {
+            let root = Scratch::new(if fail_after_archive { "navigation-after-archive" } else { "navigation-archive" });
+            let left = repository(&root.0, "left");
+            let right = repository(&root.0, "right 中文");
+            let mut app = trusted_app(&root.0, &left);
+            let _ = trusted_app(&root.0, &right);
+            let path = NativePath::new(std::fs::canonicalize(&right).unwrap().into_os_string());
+            let options = app.options.clone();
+            let navigation = Workspace::new(app.active.as_ref().unwrap().snapshot().unwrap()).navigation();
+            let source = NativePath::new(app.active.as_ref().unwrap().worktree.as_os_str());
+            let open = || Job::EnterRepository { path: Some(path.clone()), current: Some((source.clone(), Box::new(navigation.clone()))) };
+            let before = std::fs::read(right.join(".git/HEAD")).unwrap();
+            let index = std::fs::read(right.join(".git/index")).unwrap();
+            {
+                let mut store = crate::open_profile_store(&options).unwrap();
+                store.put_navigation(&path, "unknown-view-1").unwrap();
+                store.put_draft("git", &crate::repository_key(&right).unwrap(), "retained right draft").unwrap();
+            }
+            let Reply::NavigationIssue(issue) = app.run(open()) else { panic!("invalid view must offer bounded recovery"); };
+            app.run(Job::CancelEntry);
+            assert!(matches!(app.run(Job::ResetNavigation(issue.ticket)), Reply::PromptFailed { .. }));
+            assert_eq!(crate::open_profile_store(&options).unwrap().navigation(&path).unwrap().as_deref(), Some("unknown-view-1"));
+            let Reply::NavigationIssue(issue) = app.run(open()) else { panic!() };
+            crate::open_profile_store(&options).unwrap().put_navigation(&path, "unknown-view-2").unwrap();
+            let stale = app.run(Job::ResetNavigation(issue.ticket));
+            assert_eq!(crate::open_profile_store(&options).unwrap().navigation(&path).unwrap().as_deref(), Some("unknown-view-2"));
+            assert!(matches!(stale, Reply::PromptFailed { .. }));
+            assert_eq!(app.active.as_ref().unwrap().worktree, std::fs::canonicalize(&left).unwrap());
+            let Reply::NavigationIssue(issue) = app.run(open()) else { panic!() };
+            if fail_after_archive { app.options.git = Some(root.0.join("missing-git")); }
+            let Reply::NavigationReset { archive, next, .. } = app.run(Job::ResetNavigation(issue.ticket.clone())) else { panic!("known metadata publication must be acknowledged"); };
+            if fail_after_archive {
+                assert!(matches!(*next, Reply::PromptFailed { action: PromptAction::OpenRepository, ref text } if text.contains("Saved view archived") && text.contains("not opened")));
+                assert_eq!(app.active.as_ref().unwrap().worktree, std::fs::canonicalize(&left).unwrap());
+            } else {
+                let Reply::RepositoryOpened(snapshot) = *next else { panic!("default view must open"); };
+                assert!(snapshot.navigation.is_none());
+                assert_eq!(snapshot.draft.as_deref(), Some("retained right draft"));
+            }
+            let store = crate::open_profile_store(&options).unwrap();
+            assert_eq!(store.get_setting(&archive).unwrap().as_deref(), Some("unknown-view-2"));
+            assert!(store.navigation(&path).unwrap().is_none());
+            assert_eq!(store.get_draft("git", &crate::repository_key(&right).unwrap()).unwrap().as_deref(), Some("retained right draft"));
+            assert_eq!(std::fs::read(right.join(".git/HEAD")).unwrap(), before);
+            assert_eq!(std::fs::read(right.join(".git/index")).unwrap(), index);
+            assert_eq!(std::fs::read(right.join("a.txt")).unwrap(), b"two\n");
+            drop(store);
+            assert!(matches!(app.run(Job::ResetNavigation(issue.ticket)), Reply::PromptFailed { .. }), "one-use approval cannot archive a later record");
+        }
+    }
+
+    #[test]
+    fn entry_history_return_survives_repository_departure_and_a_new_backend() {
+        use srcmgr_ui::{Workspace, Pane, Key, Effect};
+        fn drive(ui: &mut Workspace, app: &mut ApplicationBackend, mut effect: Effect) {
+            for _ in 0..16 { match effect { Effect::Nothing => return, Effect::Send(job) => effect = ui.reply(app.run(job)), _ => panic!("unexpected effect") } }
+            panic!("work did not settle");
+        }
+        fn git(repo: &std::path::Path, args: &[&str]) -> Vec<u8> {
+            let output = std::process::Command::new(git_executable()).current_dir(repo).args(args).output().unwrap();
+            assert!(output.status.success()); output.stdout
+        }
+        let root = Scratch::new("history-return");
+        let left = repository(&root.0, "left");
+        let right = repository(&root.0, "right");
+        for i in 0..20 { std::fs::write(left.join(format!("f{i:02} 中文.txt")), (0..80).map(|n| format!("line {n}\n")).collect::<String>()).unwrap(); }
+        fixture_git(&left, &["add", "."]);
+        let message = format!("history target\n\n{}", (0..80).map(|n| format!("body {n}\n")).collect::<String>());
+        fixture_git(&left, &["commit", "-qm", &message]);
+        std::fs::write(left.join("a.txt"), b"uncommitted survives\n").unwrap();
+        let mut app = trusted_app(&root.0, &left);
+        let _ = trusted_app(&root.0, &right);
+        let options = app.options.clone();
+        let before = [git(&left, &["rev-parse", "HEAD"]), git(&left, &["write-tree"]), git(&right, &["rev-parse", "HEAD"]), git(&right, &["write-tree"])];
+        let snapshot = app.active.as_ref().unwrap().snapshot().unwrap();
+        let left_path = snapshot.repository.clone().unwrap();
+        let mut ui = Workspace::new(snapshot);
+        ui.set_view_rows(6);
+        ui.request_filter(Pane::Commits); ui.key(Key::Text("history target".into()));
+        let effect = ui.key(Key::Enter); drive(&mut ui, &mut app, effect);
+        ui.click_main(Some(35)); ui.key(Key::Escape);
+        let summary_position = (ui.cursor(), ui.scroll());
+        let effect = ui.key(Key::Enter); drive(&mut ui, &mut app, effect);
+        let selected = ui.main().committed.as_ref().unwrap().files.iter().position(|f| f.path.as_os_str() == "f19 中文.txt").unwrap() + 2;
+        ui.click_main(Some(selected));
+        let file_position = (ui.cursor(), ui.scroll());
+        let effect = ui.key(Key::Enter); drive(&mut ui, &mut app, effect);
+        ui.click_main(Some(30));
+        let navigation = ui.navigation();
+        assert_eq!(navigation.back.len(), 2);
+        let Reply::RepositoryOpened(snapshot) = app.run(Job::EnterRepository { path: Some(NativePath::new(right.as_os_str())), current: Some((left_path.clone(), Box::new(navigation))) }) else { panic!() };
+        let other = Workspace::new(snapshot).navigation();
+        app.run(Job::EnterRepository { path: None, current: Some((NativePath::new(std::fs::canonicalize(&right).unwrap().into_os_string()), Box::new(other))) });
+        let mut restarted = ApplicationBackend::welcome(options);
+        let Reply::RepositoryOpened(snapshot) = restarted.run(Job::OpenRepository(left_path)) else { panic!() };
+        let mut resumed = Workspace::new(snapshot); resumed.set_view_rows(6);
+        let effect = resumed.open(); drive(&mut resumed, &mut restarted, effect);
+        assert!(resumed.main().file.is_none(), "committed Diff remains read-only after restart");
+        let effect = resumed.key(Key::Escape); drive(&mut resumed, &mut restarted, effect);
+        assert_eq!((resumed.cursor(), resumed.scroll()), file_position);
+        assert_eq!(resumed.main().committed.as_ref().unwrap().files[resumed.cursor()-2].path.as_os_str(), "f19 中文.txt");
+        let effect = resumed.key(Key::Escape); drive(&mut resumed, &mut restarted, effect);
+        assert_eq!((resumed.cursor(), resumed.scroll()), summary_position);
+        assert_eq!(resumed.filter_query(Pane::Commits), "history target");
+        assert_eq!(before, [git(&left, &["rev-parse", "HEAD"]), git(&left, &["write-tree"]), git(&right, &["rev-parse", "HEAD"]), git(&right, &["write-tree"])]);
+        assert_eq!(std::fs::read(left.join("a.txt")).unwrap(), b"uncommitted survives\n");
     }
 
     #[test]

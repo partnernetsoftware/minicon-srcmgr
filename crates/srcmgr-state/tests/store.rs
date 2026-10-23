@@ -12,6 +12,57 @@ use srcmgr_state::{ProfileStore, SCHEMA_VERSION, StoreError};
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn navigation_archive_preserves_exact_data_and_refuses_stale_or_colliding_moves() {
+    use srcmgr_domain::NativePath;
+    let profile = Profile::new("navigation-archive");
+    let path = NativePath::new("owned repo 中文");
+    let nonce = "1234567890abcdef1234567890abcdef";
+    let mut store = ProfileStore::open(&profile.root).unwrap();
+    store.put_navigation(&path, "old-invalid-view\0retained").unwrap();
+    store.put_draft("git", "repo", "draft stays").unwrap();
+    store.put_setting("unrelated", "keep").unwrap();
+    store.put_navigation(&path, "new-invalid-view\0retained").unwrap();
+    let stale = store.archive_navigation(&path, "old-invalid-view\0retained", nonce);
+    assert_eq!(store.navigation(&path).unwrap().as_deref(), Some("new-invalid-view\0retained"));
+    assert!(stale.is_err());
+    let archive = store.archive_navigation(&path, "new-invalid-view\0retained", nonce).unwrap();
+    assert!(store.navigation(&path).unwrap().is_none());
+    store.put_navigation(&path, "another view").unwrap();
+    assert!(store.archive_navigation(&path, "another view", nonce).is_err(), "an archive collision must never replace the first record");
+    drop(store);
+    let store = ProfileStore::open(&profile.root).unwrap();
+    assert_eq!(store.get_setting(&archive).unwrap().as_deref(), Some("new-invalid-view\0retained"));
+    assert_eq!(store.navigation(&path).unwrap().as_deref(), Some("another view"));
+    assert_eq!(store.get_draft("git", "repo").unwrap().as_deref(), Some("draft stays"));
+    assert_eq!(store.get_setting("unrelated").unwrap().as_deref(), Some("keep"));
+}
+
+#[test]
+fn navigation_recovery_read_is_bounded_and_can_archive_a_small_oversized_record() {
+    use srcmgr_domain::NativePath;
+    let profile = Profile::new("navigation-archive-bound");
+    let path = NativePath::new("repo");
+    ProfileStore::open(&profile.root).unwrap().put_navigation(&path, "placeholder").unwrap();
+    let connection = rusqlite::Connection::open(profile.root.join("profile.sqlite3")).unwrap();
+    let value = "x".repeat(300 * 1024);
+    connection.execute("UPDATE settings SET value=?1 WHERE key LIKE 'git.navigation.v1.%'", [&value]).unwrap();
+    drop(connection);
+    let mut store = ProfileStore::open(&profile.root).unwrap();
+    assert!(store.navigation(&path).is_err());
+    let reviewed = store.navigation_for_repair(&path).unwrap().unwrap();
+    assert_eq!(reviewed, value);
+    let archive = store.archive_navigation(&path, &reviewed, "00000000000000000000000000000000").unwrap();
+    assert_eq!(store.get_setting(&archive).unwrap().unwrap(), value);
+    store.put_navigation(&path, "placeholder").unwrap();
+    drop(store);
+    let connection = rusqlite::Connection::open(profile.root.join("profile.sqlite3")).unwrap();
+    connection.execute("UPDATE settings SET value=?1 WHERE key LIKE 'git.navigation.v1.%'", ["x".repeat(1024 * 1024 + 1)]).unwrap();
+    drop(connection);
+    let store = ProfileStore::open(&profile.root).unwrap();
+    assert!(store.navigation_for_repair(&path).is_err(), "unsupported recovery size remains preserved rather than allocated or discarded");
+}
+
+#[test]
 fn navigation_roundtrip_is_native_scoped_bounded_and_independent_of_drafts() {
     use srcmgr_domain::NativePath;
     let profile = Profile::new("navigation");

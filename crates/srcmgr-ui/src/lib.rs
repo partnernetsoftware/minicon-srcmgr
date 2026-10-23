@@ -5,7 +5,8 @@
 mod model;
 mod filter;
 mod navigation;
-pub use navigation::{Navigation, NavigationSelection};
+pub use navigation::{Navigation, NavigationSelection, NavigationFrame};
+pub use model::NavigationIssue;
 mod window;
 mod workspace;
 mod timing_receipt;

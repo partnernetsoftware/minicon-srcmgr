@@ -221,7 +221,7 @@ def main():
                 rows = db.execute("SELECT value FROM settings WHERE key LIKE 'git.navigation.v1.%'").fetchall()
             assert len(rows) == 1
             fields = rows[0][0].split("\n")
-            assert fields[0] == "2" and [bytes.fromhex(s).decode() for s in fields[11:14]] == ["a.txt", "(x)", before.decode().strip()[:8]]
+            assert fields[0] in ("2", "3") and [bytes.fromhex(s).decode() for s in fields[11:14]] == ["a.txt", "(x)", before.decode().strip()[:8]]
             receipt["cases"].append("PASS: all three queries are durably bound to the worktree before native restart")
         # Restage an explicit fixture path so the second review is usable.
         run("add", "a.txt")
