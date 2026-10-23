@@ -23,6 +23,7 @@ use srcmgr_state::{TrustStore, default_root, fingerprint};
 
 mod window_backend;
 mod confirmation;
+mod entry;
 
 const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] status <worktree> [--json]
@@ -31,7 +32,7 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] unstage <worktree> <path>...
   minicon-srcmgr [--profile DIR] [--git EXE] commit <worktree> [-m <message>]
   minicon-srcmgr [--profile DIR] draft <worktree> save -m <message> | show | clear
-  minicon-srcmgr [--profile DIR] [--git EXE] gui <worktree>
+  minicon-srcmgr [--profile DIR] [--git EXE] gui [worktree]
   minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> list|create|switch <name>
   minicon-srcmgr [--profile DIR] [--git EXE] history <worktree> [--skip N] [--limit N]
@@ -63,6 +64,7 @@ fn main() -> ExitCode {
 
 fn run(arguments: Vec<OsString>) -> Result<(), String> {
     let options = parse(arguments)?;
+    if options.positional.is_empty() { return gui(&options); }
     let command = options.positional.first().and_then(|word| word.to_str()).ok_or(USAGE)?;
     match command {
         "status" => status(&options),
@@ -86,29 +88,22 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
 /// so the window never shows a repository that is not granted; every later
 /// action passes the gate again on the worker.
 fn gui(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let backend = window_backend::WindowBackend {
-        options: options.clone(),
-        worktree: worktree.to_path_buf(),
-        prepared: None,
-    };
-    let mut snapshot = backend.snapshot()?;
-    let recent = open_profile_store(options)?.remember_repository(BACKEND_GIT, &canonical_worktree(worktree)?);
-    if let Err(error) = recent {
-        snapshot.stage_result = Some(format!("Recent list not updated: {error}; repository data was not changed"));
-    }
+    let initial = options.positional.get(1).map(|path| NativePath::new(path.clone()));
     let timing = if env::var_os("SRCMGR_MEASURE_UI").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        drop(open_profile_store(options)?);
         let profile = std::fs::canonicalize(profile_root(options)?).map_err(|e| e.to_string())?;
-        let repository = canonical_worktree(worktree)?;
-        if profile.starts_with(&repository) {
-            return Err("UI qualification receipts require a profile outside the repository".to_owned());
+        if let Some(path) = &initial {
+            let repository = canonical_worktree(Path::new(path.as_os_str()))?;
+            if profile.starts_with(repository) {
+                return Err("UI qualification receipts require a profile outside the repository".into());
+            }
         }
         Some(std::fs::OpenOptions::new().write(true).create_new(true)
             .open(profile.join(format!("timing-{}.json", std::process::id())))
             .map_err(|e| format!("cannot create exclusive UI timing receipt: {e}"))?)
     } else { None };
-    srcmgr_ui::show_with_timing(snapshot, Box::new(backend), timing)
-        .map_err(|error| format!("the status window could not be shown: {error}"))
+    srcmgr_ui::show_entry(initial, Box::new(entry::ApplicationBackend::welcome(options.clone())), timing)
+        .map_err(|error| format!("the workspace window could not be shown: {error}"))
 }
 
 /// `branch <worktree> create <name>` or `branch <worktree> switch <name>`.

@@ -44,5 +44,7 @@ jobs:
           & $env:SRCMGR_TEST_GIT --version
           cargo test --locked -p srcmgr-cli --bin minicon-srcmgr open_repository
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p srcmgr-cli --bin minicon-srcmgr entry::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Affected client static checks
         run: cargo clippy --locked -p srcmgr-cli -p srcmgr-ui --all-targets -- -D warnings

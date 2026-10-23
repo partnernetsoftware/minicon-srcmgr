@@ -36,6 +36,8 @@ Trust grants name canonical repository/common-dir identity and capabilities (rep
 
 Execution-config checks include reviewed include dependencies, hook content/targets and executable definitions. Check before launch and invalidate on observed changes; this is not a guarantee against a malicious same-user race after authorization. An already trusted repository with authorized executable content is inside that execution trust boundary. Never describe trusted hooks/filters as confined merely because their Git parent was launched without a shell.
 
+The partial 0.0.6 graphical entry supports plain `.git` directories through a metadata-only review bound to canonical worktree, metadata location and execution-config fingerprint. A one-use random ticket expires after 60 seconds; approval consumes it before rechecking identity/fingerprint and saving trust. Cancel consumes pending authority without saving; Enter cannot approve. A grant saved before a later opening failure is reported as recorded, rather than misrepresented as a cancelled grant. This slice does not qualify pointer-file/linked-worktree discovery, revocation UI or init/clone authority. Scoped implementation evidence remains in [the active plan](../plan/plan-0.0.6.md).
+
 ## Credentials and signing
 
 Delegate HTTPS credentials to configured trusted Git helpers and SSH to the trusted agent/client. The baseline does not store passwords/tokens in its own workspace database. Prompted secrets are transient memory through a private job-scoped askpass channel, not argv, environment value logs, URL query strings, crash reports or clipboard. Never echo a masked field into console output. A future remember-secret feature requires an OS-vault design and separate requirement review; it is excluded here.

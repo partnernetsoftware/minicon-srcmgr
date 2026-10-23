@@ -85,6 +85,15 @@ pub fn show_with_timing(snapshot: Snapshot, backend: Box<dyn Backend>, timing: O
     run_pixel_window(options, Box::new(application))
 }
 
+pub fn show_entry(initial_path: Option<srcmgr_domain::NativePath>, backend: Box<dyn Backend>, timing: Option<std::fs::File>) -> Result<(), PixelWindowError> {
+    let snapshot = Snapshot::welcome();
+    let options = PixelWindowOptions::new(snapshot.title.clone(), LogicalSize { width: 1040.0, height: 680.0 });
+    let mut application = StatusWindow::new(snapshot, backend);
+    application.initial_path = initial_path;
+    application.timing = timing.map(TimingReceipt::new);
+    run_pixel_window(options, Box::new(application))
+}
+
 struct StatusWindow {
     workspace: Workspace,
     backend: Option<Box<dyn Backend>>,
@@ -101,10 +110,13 @@ struct StatusWindow {
     /// The size and grid of the last frame, so pointer positions can be mapped to panels.
     surface: Option<Surface>,
     timing: Option<TimingReceipt>,
+    native_title: String,
+    initial_path: Option<srcmgr_domain::NativePath>,
 }
 
 impl StatusWindow {
     fn new(snapshot: Snapshot, backend: Box<dyn Backend>) -> Self {
+        let native_title = snapshot.title.clone();
         Self {
             workspace: Workspace::new(snapshot),
             backend: Some(backend),
@@ -116,6 +128,18 @@ impl StatusWindow {
             pointer: None,
             surface: None,
             timing: None,
+            native_title,
+            initial_path: None,
+        }
+    }
+
+    fn sync_title(&mut self, window: &PixelWindow) {
+        if let Some(review) = self.workspace.trust_review() {
+            let title = format!("MiniCon SrcMgr - Trust review | {}", review.worktree.display_label());
+            if self.native_title != title { window.set_title(&title); self.native_title = title; }
+        } else if self.native_title != self.workspace.snapshot().title {
+            self.native_title.clone_from(&self.workspace.snapshot().title);
+            window.set_title(&self.native_title);
         }
     }
 
@@ -134,12 +158,31 @@ impl StatusWindow {
         let Some(surface) = self.surface else {
             return Ok(PixelWindowDirective::Continue);
         };
+        if self.workspace.trust_review().is_some() {
+            let scale = window.scale_factor()?;
+            let main = layout(surface.width, surface.height, surface.grid).main;
+            let (allow, cancel) = trust_buttons(main, surface.grid);
+            let px = (x * scale).round() as i64;
+            let py = (y * scale).round() as i64;
+            let effect = match gesture {
+                Gesture::Click if contains(allow, px, py) => self.workspace.answer_trust(true),
+                Gesture::Click if contains(cancel, px, py) => self.workspace.answer_trust(false),
+                Gesture::Wheel(delta) => self.workspace.scroll_trust(wheel_lines(delta, surface.grid.row, scale)),
+                _ => Effect::Nothing,
+            };
+            let directive = self.dispatch(effect);
+            self.sync_title(window);
+            window.request_redraw();
+            return Ok(directive);
+        }
         if self.workspace.modal() {
             return Ok(PixelWindowDirective::Continue);
         }
         let scale = window.scale_factor()?;
         let hit = hit_test(&self.workspace, surface, (x * scale).round() as i64, (y * scale).round() as i64);
         let effect = match (gesture, hit) {
+            (Gesture::Click, Hit::Recent(index)) => self.workspace.select_recent(index),
+            (Gesture::Click, Hit::RecentOpen) => self.workspace.open_recent(),
             (Gesture::Click, Hit::Open) => self.workspace.request_open(),
             (Gesture::Click, Hit::Panel(pane)) => self.workspace.click_row(pane, usize::MAX),
             (Gesture::Click, Hit::Row(pane, index)) => self.workspace.click_row(pane, index),
@@ -184,14 +227,14 @@ impl StatusWindow {
             Effect::Nothing => PixelWindowDirective::Continue,
             Effect::Quit => PixelWindowDirective::Exit,
             Effect::Send(job) => {
-                if matches!(job, Job::OpenRepository(_)) && (self.pending != 0 || !self.queued.is_empty()) {
+                if matches!(job, Job::OpenRepository(_) | Job::GrantRepositoryTrust(_)) && (self.pending != 0 || !self.queued.is_empty()) {
                     let _ = self.workspace.reply(job_failure(&job, "Wait for current repository work to finish, then retry Open"));
                     return PixelWindowDirective::Continue;
                 }
                 if (matches!(job, Job::Main { .. }) && self.queued.back().is_some_and(|last| matches!(last, Job::Main { .. })))
                     || (matches!(job, Job::CancelPrepared) && self.queued.back() == Some(&Job::CancelPrepared)) {
                     *self.queued.back_mut().unwrap() = job;
-                } else if self.queued.len() < 16 || matches!(job, Job::CancelPrepared) {
+                } else if self.queued.len() < 16 || matches!(job, Job::CancelPrepared | Job::CancelEntry) {
                     self.queued.push_back(job);
                 } else {
                     let reply = job_failure(&job, "Work queue is full; wait for the current work, then retry");
@@ -256,7 +299,7 @@ impl StatusWindow {
 fn job_failure(job: &Job, message: &str) -> Reply {
     let text = message.to_owned();
     match job {
-        Job::OpenRepository(_) => Reply::PromptFailed { action: PromptAction::OpenRepository, text },
+        Job::OpenRepository(_) | Job::GrantRepositoryTrust(_) => Reply::PromptFailed { action: PromptAction::OpenRepository, text },
         Job::Main { generation, .. } => Reply::MainFailed { generation: *generation, text },
         Job::Prepare { generation, .. } => Reply::ConfirmationFailed { generation: *generation, text },
         Job::Commit(_) => Reply::PromptFailed { action: PromptAction::Commit, text },
@@ -359,16 +402,18 @@ impl PixelWindowApplication for StatusWindow {
                 let mut directive = PixelWindowDirective::Continue;
                 for reply in replies {
                     self.pending = self.pending.saturating_sub(1);
-                    let opened = matches!(&reply, Reply::RepositoryOpened(_));
                     let effect = self.workspace.reply(reply);
-                    if opened {
-                        window.set_title(&self.workspace.snapshot().title);
-                    }
                     if matches!(self.dispatch(effect), PixelWindowDirective::Exit) {
                         directive = PixelWindowDirective::Exit;
                     }
                 }
+                if self.pending == 0 && self.queued.is_empty()
+                    && let Some(path) = self.initial_path.take() && !self.workspace.modal() {
+                    let effect = self.workspace.open_path(path);
+                    self.dispatch(effect);
+                }
                 self.pump();
+                self.sync_title(window);
                 window.request_redraw();
                 Ok(directive)
             }
@@ -378,6 +423,7 @@ impl PixelWindowApplication for StatusWindow {
                 };
                 let effect = self.workspace.key(key);
                 let directive = self.dispatch(effect);
+                self.sync_title(window);
                 window.request_redraw();
                 Ok(directive)
             }
@@ -431,6 +477,13 @@ impl PixelWindowApplication for StatusWindow {
         };
         let width = frame.width();
         let height = frame.height();
+        if let Some(review) = self.workspace.trust_review() {
+            let main = layout(i64::from(width), i64::from(height), grid).main;
+            let (body, _) = trust_content(main, grid);
+            let inner = inner_of(body, grid);
+            let count = trust_lines(review, inner.cols).len();
+            self.workspace.set_trust_scroll_limit(count.saturating_sub(inner.rows.max(0) as usize));
+        }
         self.surface = Some(Surface { width: i64::from(width), height: i64::from(height), grid });
         // The main panel's visible rows, so the cursor stays on screen after a resize.
         let main_rows = inner_of(layout(i64::from(width), i64::from(height), grid).main, grid).rows;
@@ -530,6 +583,21 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         text: "Open [O]".to_owned(),
         colour: colour(Tone::Heading),
     });
+
+    if workspace.is_welcome() {
+        let panels = layout(width, height, grid);
+        let recents = Rect { x: margin, y: panels.main.y, width: panels.files.width, height: panels.main.height };
+        let rows: Vec<Line> = snapshot.recents.iter().map(|entry| Line { tone: Tone::Text, text: format!("{}  {}", entry.backend, entry.label) }).collect();
+        list_panel(&mut draws, recents, grid, Panel { focused: !workspace.modal(), title: "Recent repositories", empty: "No recent repositories" }, &rows, workspace.selected(Pane::Files));
+        main_panel(&mut draws, panels.main, grid, workspace);
+        if !workspace.modal() && !snapshot.recents.is_empty() {
+            let (button, _) = trust_buttons(panels.main, grid);
+            button_draw(&mut draws, button, grid, "Open selected", FOCUS_BORDER);
+        }
+        draws.push(Draw::Text { x: margin, baseline: panels.footer_top + ascent, text: fit(workspace.notice().unwrap_or(&snapshot.head), grid.columns(width - 2 * margin)), colour: colour(Tone::Changed) });
+        draws.push(Draw::Text { x: margin, baseline: panels.footer_top + row + ascent, text: "Ctrl+O Open path   Enter Open selected   d Remove record   r Refresh   q Quit".into(), colour: MUTED_TEXT });
+        return draws;
+    }
 
     let Layout {
         footer_top,
@@ -676,6 +744,8 @@ struct Surface {
 /// What a pointer position is over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Hit {
+    Recent(usize),
+    RecentOpen,
     Open,
     /// A list's frame, title or the blank part of a list.
     Panel(Pane),
@@ -700,6 +770,17 @@ fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
         return Hit::Open;
     }
     let panels = layout(surface.width, surface.height, grid);
+    if workspace.is_welcome() {
+        let recents = Rect { x: grid.margin, y: panels.main.y, width: panels.files.width, height: panels.main.height };
+        let inner = inner_of(recents, grid);
+        let (open, _) = trust_buttons(panels.main, grid);
+        if contains(open, x, y) && !workspace.snapshot().recents.is_empty() { return Hit::RecentOpen; }
+        if contains(recents, x, y) && y >= inner.top && y < inner.top + inner.rows * grid.row {
+            let offset = window_start(workspace.selected(Pane::Files), workspace.snapshot().recents.len(), inner.rows);
+            return Hit::Recent(offset + ((y - inner.top) / grid.row) as usize);
+        }
+        return Hit::Nothing;
+    }
     let snapshot = workspace.snapshot();
     let lists = [
         (Pane::Status, panels.status, 1),
@@ -736,7 +817,8 @@ const fn pane_of(hit: Hit) -> Option<Pane> {
     match hit {
         Hit::Panel(pane) | Hit::Row(pane, _) => Some(pane),
         Hit::Main(_) => Some(Pane::Main),
-        Hit::Nothing | Hit::Open => None,
+        Hit::Recent(_) => Some(Pane::Files),
+        Hit::Nothing | Hit::Open | Hit::RecentOpen => None,
     }
 }
 
@@ -790,6 +872,15 @@ fn list_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, panel: Panel<'_>, r
 /// The main panel shows the editor while a prompt is open, the key help while
 /// help is open, and otherwise the diff or detail of the source list.
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
+    if let Some(review) = workspace.trust_review() {
+        let (body, _) = trust_content(rect, grid);
+        let lines = trust_lines(review, inner_of(body, grid).cols);
+        text_panel(draws, body, grid, true, "Review repository trust", &lines, workspace.trust_scroll(), None);
+        let (allow, cancel) = trust_buttons(rect, grid);
+        button_draw(draws, allow, grid, if review.submitted { "Opening..." } else { "Trust and open" }, if review.submitted { MUTED_TEXT } else { BORDER });
+        button_draw(draws, cancel, grid, "Cancel", if review.submitted { MUTED_TEXT } else { FOCUS_BORDER });
+        return;
+    }
     let focused = workspace.focus() == Pane::Main || workspace.prompt().is_some();
     if workspace.help() {
         let lines: Vec<Line> =
@@ -847,6 +938,37 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
     };
     let highlight = if focused { Some(workspace.selection()) } else { None };
     text_panel(draws, rect, grid, focused, title, &main.lines, workspace.scroll(), highlight);
+}
+
+fn trust_buttons(rect: Rect, grid: Grid) -> (Rect, Rect) {
+    let height = (grid.row + 2 * grid.gap).max(2 * grid.margin);
+    let width = ((grid.advance * 17.0) as i64 + 2 * grid.gap).min((rect.width - 3 * grid.gap).max(0) / 2);
+    let first = Rect { x: rect.x + grid.gap, y: rect.y + rect.height - height - grid.gap, width, height };
+    (first, Rect { x: first.x + width + grid.gap, ..first })
+}
+
+fn trust_content(rect: Rect, grid: Grid) -> (Rect, i64) {
+    let (button, _) = trust_buttons(rect, grid);
+    (Rect { height: (button.y - rect.y - grid.gap).max(0), ..rect }, button.height)
+}
+
+fn button_draw(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, text: &str, border: u32) {
+    draws.push(Draw::Rect { rect, colour: border });
+    draws.push(Draw::Rect { rect: Rect { x: rect.x + 1, y: rect.y + 1, width: (rect.width - 2).max(0), height: (rect.height - 2).max(0) }, colour: BACKGROUND });
+    draws.push(Draw::Text { x: rect.x + grid.gap, baseline: rect.y + (rect.height - grid.row) / 2 + grid.ascent, text: fit(text, grid.columns(rect.width - 2 * grid.gap)), colour: colour(Tone::Text) });
+}
+
+fn trust_lines(review: &crate::model::TrustReview, columns: usize) -> Vec<Line> {
+    let text = format!("Location: {}\nGit metadata: {}\n\nRepository config, attributes and hooks can run programs as you.\nInherited Git helper settings remain your authority.\nOnly this location and its reviewed metadata are granted.\nNo repository Git command ran for this review.\n\nFingerprint: {}\nReview expires after 60 seconds; changes require a new review.\n\ny: Trust and open   n/Esc: Cancel\nUp/Down/Page keys scroll this review.", review.worktree.display_label(), review.git_directory.display_label(), review.fingerprint);
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        let chars: Vec<_> = line.chars().collect();
+        if chars.is_empty() { lines.push(Line { tone: Tone::Text, text: String::new() }); }
+        for chunk in chars.chunks(columns.max(1)) {
+            lines.push(Line { tone: Tone::Text, text: chunk.iter().collect() });
+        }
+    }
+    lines
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1052,6 +1174,8 @@ mod tests {
 
     fn snapshot(files: usize) -> Snapshot {
         Snapshot {
+            repository: Some(NativePath::new("fixture-repository")),
+            recents: Vec::new(),
             title: "MiniCon SrcMgr - demo".to_owned(),
             head: "On branch main (0123456789ab)".to_owned(),
             files: (0..files)

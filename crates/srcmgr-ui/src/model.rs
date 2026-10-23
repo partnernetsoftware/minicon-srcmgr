@@ -2,7 +2,7 @@
 //! side. The window never runs Git and the backend never draws; everything
 //! crossing the boundary is one of these types.
 
-use srcmgr_domain::{ChangeEntry, ChangeKind, HeadState, NativePath, StatusSnapshot};
+use srcmgr_domain::{ChangeEntry, ChangeKind, EncodedPath, HeadState, NativePath, StatusSnapshot};
 
 /// Semantic colour role. The window maps roles to pixels; the model never does.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,7 +74,26 @@ pub struct StashRow {
 
 /// Everything the lists show. Main-panel content is requested separately.
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecentRow {
+    pub backend: String,
+    pub path: EncodedPath,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrustReview {
+    pub ticket: String,
+    pub worktree: NativePath,
+    pub git_directory: NativePath,
+    pub fingerprint: String,
+    pub submitted: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Snapshot {
+    /// None is an explicit Welcome state, not a guessed Git repository.
+    pub repository: Option<NativePath>,
+    pub recents: Vec<RecentRow>,
     pub title: String,
     pub head: String,
     pub files: Vec<FileRow>,
@@ -89,6 +108,7 @@ pub struct Snapshot {
 impl Snapshot {
     #[must_use]
     pub fn new(
+        repository: NativePath,
         title: impl Into<String>,
         status: &StatusSnapshot,
         branches: Vec<BranchRow>,
@@ -96,6 +116,8 @@ impl Snapshot {
         draft: Option<String>,
     ) -> Self {
         Self {
+            repository: Some(repository),
+            recents: Vec::new(),
             title: title.into(),
             head: head_text(&status.head),
             files: status.entries.iter().map(FileRow::from_entry).collect(),
@@ -104,6 +126,15 @@ impl Snapshot {
             draft,
             stage_result: None,
             stashes: Vec::new(),
+        }
+    }
+
+    pub fn welcome() -> Self {
+        Self {
+            repository: None, recents: Vec::new(), title: "MiniCon SrcMgr".into(),
+            head: "Open a local repository. No account required.".into(),
+            files: Vec::new(), branches: Vec::new(), commits: Vec::new(),
+            draft: None, stage_result: None, stashes: Vec::new(),
         }
     }
 }
@@ -180,6 +211,10 @@ pub enum MainRequest {
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Job {
+    LoadWelcome,
+    ForgetRecent { backend: String, path: EncodedPath },
+    GrantRepositoryTrust(String),
+    CancelEntry,
     OpenRepository(NativePath),
     StashAction { id: String, expected: Vec<String>, operation: String },
     /// Prepare a target-bound, expiring confirmation on the worker.
@@ -243,6 +278,8 @@ pub enum Job {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reply {
+    Welcome(Vec<RecentRow>),
+    TrustReview(TrustReview),
     RepositoryOpened(Snapshot),
     Committed(Snapshot),
     BranchCreated(Snapshot),

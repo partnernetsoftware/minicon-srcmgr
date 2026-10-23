@@ -182,6 +182,9 @@ pub struct Workspace {
     confirmation_lines: Vec<String>,
     help: bool,
     detail_back: Option<(MainView, usize, usize)>,
+    trust: Option<crate::model::TrustReview>,
+    trust_scroll: usize,
+    trust_limit: usize,
 }
 
 impl Workspace {
@@ -209,12 +212,75 @@ impl Workspace {
             confirmation_lines: Vec::new(),
             help: false,
             detail_back: None,
+            trust: None,
+            trust_scroll: 0,
+            trust_limit: 0,
         }
     }
 
     /// Requests the main-panel content for the first list. Call once after `new`.
     pub fn open(&mut self) -> Effect {
+        if self.is_welcome() {
+            self.main = MainView::text("Open a repository by path, or select a recent location.\nRecent locations are not trusted automatically.\nNo repository commands run while browsing this screen.\n\nCtrl+O: Open path\nEnter: Open selected recent location\nd: Remove selected recent record only\nr: Reload recent records");
+            return Effect::Send(Job::LoadWelcome);
+        }
         self.show_source()
+    }
+
+    pub fn is_welcome(&self) -> bool { self.snapshot.repository.is_none() }
+    pub fn trust_review(&self) -> Option<&crate::model::TrustReview> { self.trust.as_ref() }
+    pub fn trust_scroll(&self) -> usize { self.trust_scroll }
+    pub fn set_trust_scroll_limit(&mut self, limit: usize) {
+        self.trust_limit = limit;
+        self.trust_scroll = self.trust_scroll.min(limit);
+    }
+    pub fn scroll_trust(&mut self, delta: isize) -> Effect {
+        self.trust_scroll = self.trust_scroll.saturating_add_signed(delta).min(self.trust_limit);
+        Effect::Nothing
+    }
+
+    pub fn answer_trust(&mut self, allow: bool) -> Effect {
+        let Some(review) = self.trust.as_mut() else { return Effect::Nothing; };
+        if review.submitted { return Effect::Nothing; }
+        if allow {
+            review.submitted = true;
+            Effect::Send(Job::GrantRepositoryTrust(review.ticket.clone()))
+        } else {
+            self.trust = None;
+            if let Some(prompt) = self.prompt.as_mut() { prompt.submitted = None; }
+            self.notice = Some("Trust cancelled; no repository command was requested".into());
+            Effect::Send(Job::CancelEntry)
+        }
+    }
+
+    pub fn select_recent(&mut self, index: usize) -> Effect {
+        if !self.is_welcome() || index >= self.snapshot.recents.len() { return Effect::Nothing; }
+        self.files = index;
+        let entry = &self.snapshot.recents[index];
+        self.main = MainView::text(&format!("Recent location ({})\n{}\n\nNot checked or trusted by listing it.\nPress Enter to open.\nPress d to remove this navigation record only.", entry.backend, entry.label));
+        Effect::Nothing
+    }
+
+    pub fn open_recent(&mut self) -> Effect {
+        let Some(entry) = self.snapshot.recents.get(self.files) else { return self.request_open(); };
+        if entry.backend != "git" {
+            self.notice = Some("This backend is not available; the record was preserved".into());
+            return Effect::Nothing;
+        }
+        let Ok(path) = NativePath::from_encoded(entry.path.clone()) else {
+            self.notice = Some("This location belongs to another platform; select a local path".into());
+            return Effect::Nothing;
+        };
+        self.open_path(path)
+    }
+
+    pub fn open_path(&mut self, path: NativePath) -> Effect {
+        let Some(text) = path.as_os_str().to_str() else {
+            self.notice = Some("This native path is unavailable with the current Git adapter; no lossy conversion was used".into());
+            return Effect::Nothing;
+        };
+        self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: text.into(), submitted: Some(PromptAction::OpenRepository) });
+        Effect::Send(Job::OpenRepository(path))
     }
 
     #[must_use]
@@ -315,7 +381,7 @@ impl Workspace {
     /// waits until it closes.
     #[must_use]
     pub const fn modal(&self) -> bool {
-        self.help || self.prompt.is_some() || self.confirm.is_some()
+        self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some()
     }
 
     /// Tells the workspace how many main-panel lines are visible, so the cursor
@@ -326,6 +392,19 @@ impl Workspace {
     }
 
     pub fn key(&mut self, key: Key) -> Effect {
+        if self.trust.is_some() {
+            return match key {
+                Key::Down | Key::Char('j') => self.scroll_trust(1),
+                Key::Up | Key::Char('k') => self.scroll_trust(-1),
+                Key::PageDown => self.scroll_trust(PAGE_LINES as isize),
+                Key::PageUp => self.scroll_trust(-(PAGE_LINES as isize)),
+                Key::Home => { self.trust_scroll = 0; Effect::Nothing }
+                Key::End => { self.trust_scroll = self.trust_limit; Effect::Nothing }
+                Key::Char('y') => self.answer_trust(true),
+                Key::Char('n') | Key::Escape | Key::CtrlC => self.answer_trust(false),
+                _ => Effect::Nothing,
+            };
+        }
         if let Some(mut prompt) = self.prompt.take() {
             let (effect, stays_open) = prompt.handle(key);
             if stays_open {
@@ -341,6 +420,20 @@ impl Workspace {
                 self.help = false;
             }
             return Effect::Nothing;
+        }
+        if self.is_welcome() {
+            return match key {
+                Key::Char('O') | Key::CtrlO => self.request_open(),
+                Key::Char('q') | Key::CtrlC => Effect::Quit,
+                Key::Char('r') => Effect::Send(Job::LoadWelcome),
+                Key::Enter => self.open_recent(),
+                Key::Up | Key::Char('k') => self.select_recent(self.files.saturating_sub(1)),
+                Key::Down | Key::Char('j') => self.select_recent((self.files + 1).min(self.snapshot.recents.len().saturating_sub(1))),
+                Key::Home => self.select_recent(0),
+                Key::End => self.select_recent(self.snapshot.recents.len().saturating_sub(1)),
+                Key::Char('d') => self.snapshot.recents.get(self.files).map_or(Effect::Nothing, |entry| Effect::Send(Job::ForgetRecent { backend: entry.backend.clone(), path: entry.path.clone() })),
+                _ => Effect::Nothing,
+            };
         }
         match key {
             Key::Char('O') | Key::CtrlO => self.request_open(),
@@ -452,6 +545,22 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::Welcome(entries) => {
+                if self.is_welcome() {
+                    self.snapshot.recents = entries;
+                    self.files = clamp_index(self.files, self.snapshot.recents.len());
+                    if !self.snapshot.recents.is_empty() { return self.select_recent(self.files); }
+                    self.main = MainView::text("Welcome to MiniCon SrcMgr\nOpen a local Git repository with Ctrl+O or Open.\nThere are no recent repositories yet.\nAn installed Git is needed only when opening a repository.\nNo account or network is required for local work.");
+                }
+                Effect::Nothing
+            }
+            Reply::TrustReview(review) => {
+                if self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(PromptAction::OpenRepository)) {
+                    self.trust = Some(review);
+                    self.trust_scroll = 0;
+                }
+                Effect::Nothing
+            }
             Reply::RepositoryOpened(snapshot) => {
                 if !self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(PromptAction::OpenRepository)) {
                     return Effect::Nothing;
@@ -542,6 +651,7 @@ impl Workspace {
                 Effect::Nothing
             }
             Reply::PromptFailed { action, text } => {
+                if action == PromptAction::OpenRepository { self.trust = None; }
                 self.notice = Some(text);
                 if let Some(prompt) = self.prompt.as_mut() && prompt.submitted == Some(action) {
                     prompt.submitted = None;
@@ -624,6 +734,10 @@ impl Workspace {
     /// pointer rather than switching panels. Over the main panel it scrolls the
     /// content and focuses it.
     pub fn wheel(&mut self, pane: Pane, lines: isize) -> Effect {
+        if self.is_welcome() && pane == Pane::Files {
+            let index = self.files.saturating_add_signed(lines).min(self.snapshot.recents.len().saturating_sub(1));
+            return self.select_recent(index);
+        }
         if pane == Pane::Main {
             self.focus = Pane::Main;
             return self.scroll_by(lines);
@@ -1036,6 +1150,8 @@ mod tests {
 
     fn snapshot(draft: Option<&str>) -> Snapshot {
         Snapshot {
+            repository: Some(NativePath::new("fixture-repository")),
+            recents: Vec::new(),
             title: "t".to_owned(),
             head: "On branch main (0123456789ab)".to_owned(),
             files: vec![file("a.txt", false, true), file("b.txt", true, false), file("c.txt", true, true)],
@@ -1075,6 +1191,43 @@ mod tests {
         assert_eq!(workspace.snapshot().draft.as_deref(), Some("other durable draft"));
         assert!(workspace.main().lines.iter().all(|line| !line.text.contains("old repository detail")));
         assert!(workspace.prompt().is_none());
+    }
+
+    #[test]
+    fn welcome_never_dispatches_repository_writes_and_recent_identity_is_not_its_label() {
+        let mut workspace = Workspace::new(Snapshot::welcome());
+        assert_eq!(workspace.open(), Effect::Send(Job::LoadWelcome));
+        for key in [Key::Space, Key::Char('a'), Key::Char('c'), Key::Char('s')] {
+            assert_eq!(workspace.key(key), Effect::Nothing);
+        }
+        let raw = NativePath::new("actual repository");
+        workspace.reply(Reply::Welcome(vec![crate::model::RecentRow { backend: "git".into(), path: raw.encoded(), label: "unrelated display label".into() }]));
+        assert_eq!(workspace.key(Key::Enter), Effect::Send(Job::OpenRepository(raw.clone())));
+        let review = crate::model::TrustReview { ticket: "one-use".into(), worktree: raw, git_directory: NativePath::new("metadata"), fingerprint: "digest".into(), submitted: false };
+        workspace.reply(Reply::TrustReview(review));
+        assert_eq!(workspace.key(Key::Enter), Effect::Nothing, "opening Enter cannot approve trust");
+        assert_eq!(workspace.key(Key::Escape), Effect::Send(Job::CancelEntry));
+        assert!(workspace.is_welcome());
+        assert_eq!(workspace.prompt().unwrap().text(), "actual repository");
+        assert_eq!(workspace.key(Key::Escape), Effect::Nothing);
+        assert!(workspace.prompt().is_none());
+    }
+
+    #[test]
+    fn trust_submission_is_one_action_and_old_welcome_reply_cannot_replace_a_repository() {
+        let mut workspace = Workspace::new(Snapshot::welcome());
+        workspace.request_open();
+        workspace.key(Key::Text("chosen".into()));
+        workspace.key(Key::Enter);
+        workspace.reply(Reply::TrustReview(crate::model::TrustReview { ticket: "token".into(), worktree: NativePath::new("chosen"), git_directory: NativePath::new("metadata"), fingerprint: "digest".into(), submitted: false }));
+        assert_eq!(workspace.answer_trust(true), Effect::Send(Job::GrantRepositoryTrust("token".into())));
+        assert_eq!(workspace.answer_trust(true), Effect::Nothing);
+        assert_eq!(workspace.answer_trust(false), Effect::Nothing, "cannot pretend to cancel an executing grant");
+        workspace.reply(Reply::RepositoryOpened(snapshot(None)));
+        workspace.reply(Reply::Welcome(Vec::new()));
+        assert!(!workspace.is_welcome());
+        assert!(!workspace.snapshot().files.is_empty());
+        assert!(workspace.trust_review().is_none());
     }
 
     fn approve(workspace: &mut Workspace) -> Job {

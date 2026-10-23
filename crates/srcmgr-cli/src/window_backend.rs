@@ -22,17 +22,8 @@ impl Backend for WindowBackend {
     fn run(&mut self, job: Job) -> Reply {
         let result = match job {
             Job::OpenRepository(path) => {
-                let opened = (|| {
-                    let worktree = crate::canonical_worktree(std::path::Path::new(path.as_os_str()))?;
-                    let candidate = Self { options: self.options.clone(), worktree, prepared: None };
-                    let mut snapshot = candidate.snapshot()?;
-                    let recent = open_profile_store(&candidate.options)?.remember_repository(BACKEND_GIT, &candidate.worktree);
-                    if let Err(error) = recent {
-                        snapshot.stage_result = Some(format!("Recent list not updated: {error}; repository data was not changed"));
-                    }
-                    *self = candidate;
-                    Ok(Reply::RepositoryOpened(snapshot))
-                })();
+                let opened = Self::open_target(&self.options, std::path::Path::new(path.as_os_str()))
+                    .map(|(candidate, snapshot)| { *self = candidate; Reply::RepositoryOpened(snapshot) });
                 Ok(opened.unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::OpenRepository, text }))
             }
             Job::CancelPrepared => { self.prepared = None; Ok(Reply::NoChange) }
@@ -93,6 +84,15 @@ impl Backend for WindowBackend {
 }
 
 impl WindowBackend {
+    pub fn open_target(options: &Options, path: &std::path::Path) -> Result<(Self, Snapshot), String> {
+        let worktree = crate::canonical_worktree(path)?;
+        let candidate = Self { options: options.clone(), worktree, prepared: None };
+        let mut snapshot = candidate.snapshot()?;
+        if let Err(error) = open_profile_store(options)?.remember_repository(BACKEND_GIT, &candidate.worktree) {
+            snapshot.stage_result = Some(format!("Recent list not updated: {error}; repository data was not changed"));
+        }
+        Ok((candidate, snapshot))
+    }
     /// The full list state. Also the trust check the window runs before it opens.
     pub fn snapshot(&self) -> Result<Snapshot, String> {
         let session = open_trusted(&self.options, &self.worktree)?;
@@ -119,8 +119,9 @@ impl WindowBackend {
             .collect();
         let key = repository_key(&self.worktree)?;
         let draft = store.get_draft(BACKEND_GIT, &key).map_err(|e| e.to_string())?;
-        let name = NativePath::new(identity.worktree_root.as_os_str()).display_label();
-        let mut snapshot = Snapshot::new(format!("MiniCon SrcMgr - {name}"), &status, branches, commits, draft);
+        let location = NativePath::new(identity.worktree_root.as_os_str()).display_label();
+        let name = NativePath::new(identity.worktree_root.file_name().unwrap_or(identity.worktree_root.as_os_str())).display_label();
+        let mut snapshot = Snapshot::new(NativePath::new(identity.worktree_root.as_os_str()), format!("MiniCon SrcMgr - {name} | {location}"), &status, branches, commits, draft);
         snapshot.stashes = srcmgr_git::stash_list(installation, identity).map_err(|e| e.to_string())?.into_iter()
             .map(|s| srcmgr_ui::StashRow { id: s.id, subject: s.subject }).collect();
         Ok(snapshot)
@@ -128,6 +129,7 @@ impl WindowBackend {
 
     fn perform(&mut self, job: Job, ticket: Option<&str>) -> Result<Reply, String> {
         Ok(match job {
+            Job::LoadWelcome | Job::ForgetRecent { .. } | Job::GrantRepositoryTrust(_) | Job::CancelEntry => return Err("repository entry requires the application entry boundary".into()),
             Job::OpenRepository(_) => return Err("repository entry must use its isolated worker path".to_owned()),
             Job::StashAction { id, expected, operation } => {
                 let session = open_trusted(&self.options, &self.worktree)?;
@@ -355,7 +357,7 @@ impl WindowBackend {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::env;
     use std::ffi::OsString;
     use std::fs;
@@ -369,10 +371,10 @@ mod tests {
     use crate::{Options, trust};
 
     /// A scratch root per test, removed when the test ends.
-    struct Scratch(PathBuf);
+    pub(crate) struct Scratch(pub(crate) PathBuf);
 
     impl Scratch {
-        fn new(name: &str) -> Self {
+        pub(crate) fn new(name: &str) -> Self {
             let root = env::temp_dir().join(format!("srcmgr-window-{}-{name}", std::process::id()));
             let _ = fs::remove_dir_all(&root);
             fs::create_dir_all(&root).expect("create scratch");
@@ -386,11 +388,11 @@ mod tests {
         }
     }
 
-    fn git_executable() -> PathBuf {
+    pub(crate) fn git_executable() -> PathBuf {
         env::var_os("SRCMGR_TEST_GIT").map_or_else(|| PathBuf::from("git"), PathBuf::from)
     }
 
-    fn fixture_git(directory: &Path, arguments: &[&str]) {
+    pub(crate) fn fixture_git(directory: &Path, arguments: &[&str]) {
         let output = Command::new(git_executable())
             .current_dir(directory)
             .args(arguments)
@@ -400,7 +402,7 @@ mod tests {
     }
 
     /// One commit with `a.txt` modified and `u.txt` untracked.
-    fn repository(root: &Path, name: &str) -> PathBuf {
+    pub(crate) fn repository(root: &Path, name: &str) -> PathBuf {
         let repo = root.join(name);
         fs::create_dir_all(&repo).expect("create repo");
         fixture_git(&repo, &["init", "-q", "-b", "main"]);

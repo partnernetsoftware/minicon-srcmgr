@@ -587,7 +587,131 @@ def workflow(git, repo, root, hwnd, user, key):
     return {"git_oracles": "PASS: stage/index/worktree; discard cancel/copy; selected apply retains source; stale drop preserves list; exact pop/drop preserve other entries/worktree", "recovery_acl": acl, "captures": captures, "visual_verdict": "REVIEW-REQUIRED: inspect captured labels/focus/return; Git oracles do not prove rendering"}
 
 
-def entry_smoke(git, repo, other, root, prefix, hwnd, user, gdi, key):
+def native_title(hwnd, user):
+    user.GetWindowTextW.argtypes = [w.HWND, w.LPWSTR, c.c_int]
+    title = c.create_unicode_buffer(32768)
+    user.GetWindowTextW(hwnd, title, len(title))
+    return title.value
+
+
+def wait_entry(predicate, label):
+    until = time.monotonic() + 15
+    while time.monotonic() < until:
+        if predicate(): return
+        time.sleep(0.05)
+    raise RuntimeError(label)
+
+
+def capture_entry(hwnd, user, gdi, root, name):
+    from PIL import ImageGrab
+    wait_quiet(hwnd, user, gdi)
+    time.sleep(0.15)
+    if user.GetForegroundWindow() != hwnd:
+        raise RuntimeError("cannot capture entry outside the owned foreground window")
+    bounds = w.RECT()
+    user.GetWindowRect.argtypes = [w.HWND, c.POINTER(w.RECT)]
+    if not user.GetWindowRect(hwnd, c.byref(bounds)):
+        raise c.WinError(c.get_last_error())
+    user.WindowFromPoint.argtypes, user.WindowFromPoint.restype = [w.POINT], w.HWND
+    owner = w.DWORD()
+    user.GetWindowThreadProcessId(hwnd, c.byref(owner))
+    for x, y in ((bounds.left + 20, bounds.top + 40), (bounds.right - 20, bounds.top + 40), ((bounds.left + bounds.right) // 2, (bounds.top + bounds.bottom) // 2), (bounds.left + 20, bounds.bottom - 20), (bounds.right - 20, bounds.bottom - 20)):
+        visible = user.WindowFromPoint(w.POINT(x, y))
+        process = w.DWORD()
+        user.GetWindowThreadProcessId(visible, c.byref(process))
+        if process.value != owner.value:
+            raise RuntimeError("owned capture is occluded by another process")
+    ImageGrab.grab(bbox=(bounds.left, bounds.top, bounds.right, bounds.bottom)).save(root / name)
+
+
+def click_review_button(hwnd, user, gdi, allow):
+    # Locate the actual default-Cancel blue border, then the adjacent grey
+    # approval border. This observes native pixels, not a hidden product hook.
+    if user.GetForegroundWindow() != hwnd:
+        raise RuntimeError("foreground guard refused a trust-button click")
+    rect = w.RECT()
+    user.GetClientRect(hwnd, c.byref(rect))
+    dc = user.GetDC(hwnd)
+    try:
+        found = None
+        for y in range(rect.bottom - 1, rect.bottom // 2, -1):
+            columns = [x for x in range(rect.right * 40 // 100, rect.right) if gdi.GetPixel(dc, x, y) == 0xD69C56]
+            if len(columns) > 40:
+                found = columns, y
+                break
+        if found is None:
+            raise RuntimeError("cannot locate rendered Cancel control")
+        columns, y = found
+        if allow:
+            runs, current = [], []
+            for x in range(rect.right * 38 // 100, min(columns)):
+                if gdi.GetPixel(dc, x, y) == 0x3C3C3C:
+                    current.append(x)
+                else:
+                    if len(current) > 40: runs.append(current)
+                    current = []
+            if len(current) > 40: runs.append(current)
+            if not runs: raise RuntimeError("cannot locate rendered Trust and open control")
+            columns = max(runs, key=len)
+        x = (min(columns) + max(columns)) // 2
+        y -= max(3, round(3 * user.GetDpiForWindow(hwnd) / 96))
+    finally:
+        user.ReleaseDC(hwnd, dc)
+    origin = w.POINT(x, y)
+    if not user.ClientToScreen(hwnd, c.byref(origin)):
+        raise c.WinError(c.get_last_error())
+    user.WindowFromPoint.argtypes, user.WindowFromPoint.restype = [w.POINT], w.HWND
+    if user.GetForegroundWindow() != hwnd or user.WindowFromPoint(origin) != hwnd:
+        raise RuntimeError("owned-window guard refused trust-button click")
+    user.SetCursorPos.argtypes, user.SetCursorPos.restype = [c.c_int, c.c_int], w.BOOL
+    if not user.SetCursorPos(origin.x, origin.y):
+        raise RuntimeError("native pointer positioning was refused")
+    actual = w.POINT()
+    if not user.GetCursorPos(c.byref(actual)) or (actual.x, actual.y) != (origin.x, origin.y) or user.GetForegroundWindow() != hwnd or user.WindowFromPoint(actual) != hwnd:
+        raise RuntimeError("pointer/foreground changed before trust-button click")
+    user.mouse_event(0x0002, 0, 0, 0, 0)
+    user.mouse_event(0x0004, 0, 0, 0, 0)
+
+
+def welcome_entry_start(repo, root, hwnd, user, gdi, key, tree):
+    wait_quiet(hwnd, user, gdi)
+    if native_title(hwnd, user) != "MiniCon SrcMgr":
+        raise RuntimeError("expected repository-independent Welcome")
+    capture_entry(hwnd, user, gdi, root, "welcome-empty.png")
+
+    def zero_git():
+        wait_entry(lambda: tree.accounting()["total_processes"] == len(tree.pids()), "entry process notifications did not reconcile")
+        images = dict(tree.images)
+        assert all(pid in images for pid in tree.pids()), "unknown process image before trust approval"
+        count = sum(name.lower() == "git.exe" for name in images.values())
+        assert count == 0, "Git ran before explicit trust approval"
+        return count
+
+    before = zero_git()
+    key(hwnd, 0x4F, ctrl=True)
+    key(hwnd, str(repo))
+    key(hwnd, 0x0D)
+    wait_entry(lambda: native_title(hwnd, user).startswith("MiniCon SrcMgr - Trust review | "), "trust review did not open")
+    capture_entry(hwnd, user, gdi, root, "welcome-trust-review.png")
+    zero_git()
+    assert not (root / "profile" / "trust.v1").exists(), "review saved authority before approval"
+    click_review_button(hwnd, user, gdi, False)
+    wait_entry(lambda: native_title(hwnd, user) == "MiniCon SrcMgr", "Cancel did not restore Welcome context")
+    zero_git()
+    assert not (root / "profile" / "trust.v1").exists(), "Cancel created a trust grant"
+    key(hwnd, 0x0D)  # Retry the preserved path; opening Enter cannot approve it.
+    wait_entry(lambda: native_title(hwnd, user).startswith("MiniCon SrcMgr - Trust review | "), "retry did not prepare a new review")
+    wait_quiet(hwnd, user, gdi)
+    time.sleep(0.15)
+    zero_git()
+    click_review_button(hwnd, user, gdi, True)
+    wait_entry(lambda: " | " in native_title(hwnd, user) and "Trust review" not in native_title(hwnd, user), "explicit pointer approval did not open the repository")
+    wait_quiet(hwnd, user, gdi)
+    capture_entry(hwnd, user, gdi, root, "welcome-approved.png")
+    return {"before_approval_git_processes": before, "cancel": "PASS: pointer Cancel preserved no-grant/no-Git state and original path", "approval": "PASS: pointer Trust and open acknowledged the selected repository", "captures": ["welcome-empty.png", "welcome-trust-review.png", "welcome-approved.png"], "visual_verdict": "REVIEW-REQUIRED", "scope": "Fresh-profile Welcome and explicit trust only; no init, settings or latency qualification"}
+
+
+def entry_smoke(git, repo, other, root, prefix, hwnd, user, gdi, key, approve_other=False):
     """Actual Open/input, index and draft routing, in two owned fixtures."""
     import sqlite3
     from PIL import ImageGrab
@@ -620,12 +744,16 @@ def entry_smoke(git, repo, other, root, prefix, hwnd, user, gdi, key):
         key(hwnd, 0x4F, ctrl=True)
         key(hwnd, str(path))
         key(hwnd, 0x0D)
+        if approve_other and path == other:
+            wait_entry(lambda: native_title(hwnd, user).startswith("MiniCon SrcMgr - Trust review | "), "other repository review did not open")
+            wait_quiet(hwnd, user, gdi)
+            key(hwnd, 0x59)
         wait(lambda: recent_is(path), "Open did not acknowledge the intended recent worktree")
         user.GetWindowTextW.argtypes = [w.HWND, w.LPWSTR, c.c_int]
         def title_matches():
             title = c.create_unicode_buffer(32768)
             user.GetWindowTextW(hwnd, title, len(title))
-            return normalize(title.value.removeprefix("MiniCon SrcMgr - ")) == normalize(path)
+            return normalize(title.value.removeprefix("MiniCon SrcMgr - ").split(" | ")[-1]) == normalize(path)
         wait(title_matches, "native window title did not identify the opened worktree")
         wait_quiet(hwnd, user, gdi)
         time.sleep(0.2)  # Functional settling only; never reported as latency.
@@ -687,6 +815,8 @@ def main():
     p.add_argument("--exercise-faults", action="store_true", help="inject supported failure/cancel cases only in the owned sustained fixture")
     p.add_argument("--workflow", action="store_true", help="run changed-path smoke and capture screens; requires Pillow and <= 200 commits")
     p.add_argument("--entry-smoke", action="store_true", help="two-owned-repository Open/index/draft journey; requires small fixture and skip-latency")
+    p.add_argument("--welcome-entry", action="store_true", help="start without a repository; prove no Git before pointer trust approval; requires entry-smoke and tree")
+    p.add_argument("--owned-topmost", action="store_true", help="temporarily raise only this probe window on a shared desktop; requires skip-latency")
     args = p.parse_args()
     if os.name != "nt":
         p.error("this native probe requires Windows")
@@ -698,6 +828,10 @@ def main():
         p.error("workflow smoke requires 1..200 commits and at least one file")
     if args.skip_latency and args.desktop_frames:
         p.error("skip-latency and desktop-frames cannot be combined")
+    if args.owned_topmost and not args.skip_latency:
+        p.error("owned-topmost is functional isolation, not a presentation benchmark")
+    if args.welcome_entry and not (args.entry_smoke and args.tree):
+        p.error("welcome-entry requires entry-smoke and tree")
     if args.entry_smoke and (max(args.files, args.commits) > 200 or not args.skip_latency or args.cycles or args.soak_seconds or args.workflow or args.exercise_faults or args.postcommit_profile_fault):
         p.error("entry-smoke requires <=200 files/commits, skip-latency and no other workflow/fault/soak mode")
     if args.busy_latency and not (args.tree and args.desktop_frames):
@@ -721,18 +855,20 @@ def main():
             sp.run([args.git, "-C", str(repo), "stash", "push", "-qm", label, "--", "f00000.txt"], check=True, capture_output=True)
         (repo / "f00000.txt").write_text("ONE\ntwo\nthree\n", encoding="utf-8")
     prefix = [exe, "--git", args.git, "--profile", str(root / "profile")]
-    sp.run(prefix + ["trust", "grant", str(repo)], check=True, capture_output=True)
+    if not args.welcome_entry:
+        sp.run(prefix + ["trust", "grant", str(repo)], check=True, capture_output=True)
     sp.run(prefix + ["setting", "set", "history.limit", "200"], check=True, capture_output=True)
     other = None
     if args.entry_smoke:
         other_root = root / "entry-other"
         other_root.mkdir()
         other = fixture(args.git, other_root, 5, 2)
-        target = other_root / "target-repo"
+        target = other_root / ("target repo 中文" if args.welcome_entry else "target-repo")
         other.rename(target)
         other = target.resolve()
         sp.run([args.git, "-C", str(other), "branch", "-m", "entry-target"], check=True, capture_output=True)
-        sp.run(prefix + ["trust", "grant", str(other)], check=True, capture_output=True)
+        if not args.welcome_entry:
+            sp.run(prefix + ["trust", "grant", str(other)], check=True, capture_output=True)
         for path, text in ((repo, "source draft"), (other, "target draft")):
             sp.run(prefix + ["draft", str(path), "save", "-m", text], check=True, capture_output=True)
     user, gdi, sample, key = native()
@@ -742,12 +878,14 @@ def main():
     kwargs = {"stdout": sp.DEVNULL, "stderr": (root / "stderr.log").open("w")}
     if args.measure_ui:
         kwargs["env"] = dict(os.environ, SRCMGR_MEASURE_UI="1")
-    child = tree.spawn(prefix + ["gui", str(repo)], **kwargs) if tree else sp.Popen(prefix + ["gui", str(repo)], creationflags=sp.CREATE_NO_WINDOW, **kwargs)
+    launch = prefix + (["gui"] if args.welcome_entry else ["gui", str(repo)])
+    child = tree.spawn(launch, **kwargs) if tree else sp.Popen(launch, creationflags=sp.CREATE_NO_WINDOW, **kwargs)
     harness_first = sample(os.getpid())
     receipt = {"artifact_sha256": hashlib.sha256(Path(exe).read_bytes()).hexdigest(), "os": platform.platform(), "fixture": {"files": args.files, "commits": args.commits, "refs": 200, "changed": min(args.files, 200)}, "git": sp.check_output([args.git, "--version"], text=True).strip()}
     receipt["desktop_pixels"] = [user.GetSystemMetrics(0), user.GetSystemMetrics(1)]
     receipt["logical_cpus"] = os.cpu_count()
     receipt["product_pid"] = child.pid
+    receipt["owned_topmost"] = args.owned_topmost
     receipt["character_input"] = "Native Unicode SendInput for literal ASCII commands/text; virtual keys for named/control chords; keyboard layout unchanged"
     receipt["history_limit"] = 200
     receipt["harness_sha256"] = {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in ("probe_workspace.py", "windows_job_probe.py")}
@@ -797,12 +935,26 @@ def main():
             raise RuntimeError("no native window after 30 seconds")
         time.sleep(1)
         user.ShowWindow(hwnd, 9)
+        if args.owned_topmost:
+            owner = w.DWORD()
+            user.GetWindowThreadProcessId(hwnd, c.byref(owner))
+            if owner.value != child.pid:
+                raise RuntimeError("cannot raise a foreign window")
+            user.SetWindowPos.argtypes = [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT]
+            user.SetWindowPos.restype = w.BOOL
+            if not user.SetWindowPos(hwnd, w.HWND(-1), 0, 0, 0, 0, 0x0043):
+                raise RuntimeError("owned-window functional isolation was refused")
         user.SetForegroundWindow(hwnd)
         time.sleep(0.2)
         scale = user.GetDpiForWindow(hwnd) / 96
         rect = w.RECT()
         user.GetClientRect(hwnd, c.byref(rect))
         receipt["client_pixels"], receipt["scale"] = [rect.right, rect.bottom], scale
+        if args.welcome_entry:
+            receipt["welcome"] = welcome_entry_start(repo, root, hwnd, user, gdi, key, tree)
+        else:
+            wait_entry(lambda: native_title(hwnd, user).startswith("MiniCon SrcMgr - ") and "Trust review" not in native_title(hwnd, user), "initial repository did not open")
+            wait_quiet(hwnd, user, gdi)
         dc = user.GetDC(hwnd)
         screen_dc = user.GetDC(None)
         try:
@@ -862,7 +1014,7 @@ def main():
         if args.workflow:
             receipt["workflow"] = workflow(args.git, repo, root, hwnd, user, key)
         if args.entry_smoke:
-            receipt["entry"] = entry_smoke(args.git, repo, other, root, prefix, hwnd, user, gdi, key)
+            receipt["entry"] = entry_smoke(args.git, repo, other, root, prefix, hwnd, user, gdi, key, args.welcome_entry)
         wait_quiet(hwnd, user, gdi)
         time.sleep(args.settle_seconds)
         initial_settled = sample(child.pid)
