@@ -184,6 +184,17 @@ mod tests {
     use super::*;
     use crate::window_backend::tests::{Scratch, repository, git_executable};
 
+    fn fixture_root(root: &Scratch) -> PathBuf {
+        let canonical = std::fs::canonicalize(&root.0).unwrap();
+        // The controlled fixture uses ordinary short names. Resolve any 8.3
+        // temp-parent alias first, then express its expected ordinary spelling;
+        // do not call the production handoff helper to generate the oracle.
+        #[cfg(windows)]
+        { PathBuf::from(canonical.to_str().unwrap().strip_prefix(r"\\?\").unwrap()) }
+        #[cfg(not(windows))]
+        { canonical }
+    }
+
     #[cfg(windows)]
     #[test]
     fn tools_windows_handoff_shortens_only_unambiguous_existing_disk_paths() {
@@ -191,7 +202,7 @@ mod tests {
         let canonical = std::fs::canonicalize(&root.0).unwrap();
         let ordinary = canonical.join("ordinary 中文");
         std::fs::create_dir(&ordinary).unwrap();
-        assert_eq!(handoff_path(&ordinary), root.0.join("ordinary 中文"));
+        assert_eq!(handoff_path(&ordinary), fixture_root(&root).join("ordinary 中文"));
         for name in ["trailing.", "trailing ", "COM¹", "NUL.txt"] {
             let path = canonical.join(name);
             std::fs::write(&path, b"native name").unwrap();
@@ -293,7 +304,7 @@ mod tests {
         let ticket = review(&mut tools);
         assert!(matches!(tools.launch(&options, &left, &ticket), Ok(Reply::ToolLaunched(_))));
         wait_report(&report);
-        let argument_repo = root.0.join("left & 中文");
+        let argument_repo = fixture_root(&root).join("left & 中文");
         let expected_args = [argument_repo.join(raw.as_os_str()).into_os_string(), argument_repo.into_os_string(), OsString::from(" literal ; & $() \"quoted\" ")];
         assert_eq!(std::fs::read_to_string(&report).unwrap(), format!("{left:?}\n{expected_args:?}\nNone\n"));
         std::fs::remove_file(&report).unwrap();
@@ -305,6 +316,6 @@ mod tests {
         tools.save(&options, Some(&right), ToolKind::Terminal, Some(terminal)).unwrap();
         let Reply::ToolReview { ticket, .. } = tools.prepare(&options, &right, ToolKind::Terminal, None).unwrap() else { panic!() };
         tools.launch(&options, &right, &ticket).unwrap(); wait_report(&report);
-        assert_eq!(std::fs::read_to_string(&report).unwrap(), format!("{right:?}\n{:?}\nNone\n", [root.0.join("right").into_os_string()]));
+        assert_eq!(std::fs::read_to_string(&report).unwrap(), format!("{right:?}\n{:?}\nNone\n", [fixture_root(&root).join("right").into_os_string()]));
     }
 }
