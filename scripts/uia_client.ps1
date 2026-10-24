@@ -23,7 +23,7 @@ function Ready-Node([string]$name) {
         $script:readiness.polls++
         try {
             $node = Find-Node $name
-            $state = @{ name = $node.Current.Name; enabled = $node.Current.IsEnabled; automation_id = $node.Current.AutomationId }
+            $state = @{ name = $node.Current.Name; enabled = $node.Current.IsEnabled; automation_id = $node.Current.AutomationId; root_enabled = $root.Current.IsEnabled }
             if ($null -eq $script:readiness.initial) { $script:readiness.initial = $state }
             $script:readiness.last = $state
             if ($state.enabled) {
@@ -39,7 +39,7 @@ function Invoke-Node($node) {
     $pattern = $node.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $pattern.Invoke()
 }
-$result = @{ mode = $request.mode; root_name = $root.Current.Name; owner = $OwnerPid }
+$result = @{ mode = $request.mode; root_name = $root.Current.Name; owner = $OwnerPid; root_enabled = $root.Current.IsEnabled; framework = $root.Current.FrameworkId }
 try {
 switch ($request.mode) {
     'list' {

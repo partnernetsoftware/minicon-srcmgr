@@ -56,7 +56,7 @@ def main():
     def client(mode,**values):
         nonlocal sequence
         sequence+=1;request=root/f'client-{sequence:02}-request.json';output=root/f'client-{sequence:02}-result.json';request.write_text(json.dumps(dict(mode=mode,**values)),encoding='utf-8')
-        attempt=sp.run(['powershell.exe','-NoProfile','-NonInteractive','-File',str(Path(__file__).with_name('uia_client.ps1')),'-Handle',str(hwnd),'-OwnerPid',str(child.pid),'-RequestFile',str(request),'-OutputFile',str(output)],env=env,capture_output=True,timeout=25)
+        attempt=sp.run(['powershell.exe','-NoProfile','-NonInteractive','-File',str(Path(__file__).with_name('uia_client.ps1')),'-Handle',str(hwnd),'-OwnerPid',str(child.pid),'-RequestFile',str(request),'-OutputFile',str(output)],env=env,capture_output=True,timeout=25,creationflags=sp.CREATE_NO_WINDOW)
         (root/f'client-{sequence:02}.log').write_bytes(attempt.stdout+attempt.stderr)
         assert attempt.returncode==0,(attempt.stdout+attempt.stderr).decode(errors='replace')
         return json.loads(output.read_text(encoding='utf-8-sig'))
