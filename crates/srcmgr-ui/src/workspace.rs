@@ -96,6 +96,7 @@ pub struct Prompt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateForm {
+    id: u64,
     pub path: String,
     pub branch: String,
     pub branch_focus: bool,
@@ -105,6 +106,7 @@ pub struct CreateForm {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IdentityForm {
+    id: u64,
     pub name: String,
     pub email: String,
     pub email_focus: bool,
@@ -758,6 +760,17 @@ impl Workspace {
     /// Native accessibility replaces committed field text; it never submits.
     /// Composer changes retain the existing selection/save/IME boundary.
     pub(crate) fn replace_editable_text(&mut self,text:String)->Effect {
+        if let Some(form)=self.create.as_mut() {
+            let limit=if form.branch_focus {255} else {32*1024};
+            if form.submitted||form.review.is_some()||text.len()>limit||text.contains(['\r','\n','\0']) {return Effect::Nothing;}
+            if form.branch_focus {form.branch=text;} else {form.path=text;}
+            return Effect::Nothing;
+        }
+        if let Some(form)=self.identity.as_mut() {
+            if form.submitted||text.len()>1024||text.contains(['\r','\n','\0']) {return Effect::Nothing;}
+            if form.email_focus {form.email=text;} else {form.name=text;}
+            return Effect::Nothing;
+        }
         if let Some(form)=self.composer.as_ref() {
             if form.focus!=CommitFocus::Message||!form.editor.preedit.is_empty()||self.prompt.as_ref().is_some_and(Prompt::pending)||text.len()>composer::PASTE_LIMIT_BYTES{return Effect::Nothing;}
             self.key(Key::SelectAll);return self.key(Key::Text(text));
@@ -768,7 +781,10 @@ impl Workspace {
         }
         Effect::Nothing
     }
-    pub(crate) fn accessibility_context(&self)->u64 {self.prompt.as_ref().map_or(self.generation,|prompt|prompt.id|(1<<63))}
+    pub(crate) fn accessibility_context(&self)->u64 {
+        let form=self.create.as_ref().map(|form|form.id).or_else(||self.identity.as_ref().map(|form|form.id)).or_else(||self.prompt.as_ref().map(|prompt|prompt.id));
+        form.map_or(self.generation,|id|id|(1<<63))
+    }
 
     pub fn ime_commit(&mut self, text: String) -> Effect {
         if let Some(form) = self.locate.as_mut() { form.editor.preedit.clear(); return form.edit(Key::Text(text)); }
@@ -1002,7 +1018,7 @@ impl Workspace {
         if self.modal() || self.is_welcome() { return Effect::Nothing; }
         self.notice = None;
         self.trust_scroll = 0;
-        self.identity = Some(IdentityForm { name: String::new(), email: String::new(), email_focus: false, submitted: true, ticket: None, detail: "Loading trusted repository identity...".into(), keep_input: false });
+        self.identity = Some(IdentityForm { id: Prompt::next_id(), name: String::new(), email: String::new(), email_focus: false, submitted: true, ticket: None, detail: "Loading trusted repository identity...".into(), keep_input: false });
         Effect::Send(Job::LoadIdentity)
     }
 
@@ -1061,7 +1077,7 @@ impl Workspace {
     pub fn request_create(&mut self) -> Effect {
         if !self.modal() {
             self.notice = None;
-            self.create = Some(CreateForm { path: String::new(), branch: "main".into(), branch_focus: false, submitted: false, review: None });
+            self.create = Some(CreateForm { id: Prompt::next_id(), path: String::new(), branch: "main".into(), branch_focus: false, submitted: false, review: None });
         }
         Effect::Nothing
     }
@@ -1073,6 +1089,7 @@ impl Workspace {
             form.submitted = true;
             Effect::Send(Job::ExecuteCreate(form.review.as_ref().unwrap().0.clone()))
         } else {
+            form.id = Prompt::next_id();
             form.review = None;
             self.notice = Some("Creation cancelled; no directory or metadata was created".into());
             Effect::Send(Job::CancelEntry)
@@ -1652,6 +1669,7 @@ impl Workspace {
                     lines.extend(entries);
                     if more_entries { lines.push("More entries exist; preview is incomplete. Existing content will not be staged.".into()); }
                     lines.push("y: Create repository   n/Esc: Back   Enter does not approve".into());
+                    form.id = Prompt::next_id();
                     form.review = Some((ticket, lines));
                     form.submitted = false;
                     self.trust_scroll = 0;

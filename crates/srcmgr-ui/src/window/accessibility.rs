@@ -250,6 +250,72 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 .join("\n"),
             geometry.diff,
         );
+    } else if let Some(form) = workspace.create_form() {
+        if let Some((_, lines)) = &form.review {
+            b.text(
+                "Review repository creation",
+                &lines.join("\n"),
+                trust_content(main, grid).0,
+            );
+        } else {
+            let (path, branch) = create_fields(main, grid);
+            b.input(
+                "Directory (parent must exist)",
+                &form.path,
+                path,
+                !form.submitted,
+                !form.branch_focus,
+            );
+            b.input(
+                "Initial branch",
+                &form.branch,
+                branch,
+                !form.submitted,
+                form.branch_focus,
+            );
+        }
+        let reviewing = form.review.is_some();
+        b.button(
+            if reviewing {
+                "Create repository"
+            } else {
+                "Review creation"
+            },
+            allow,
+            !form.submitted
+                && pending == 0
+                && (reviewing || (!form.path.is_empty() && !form.branch.is_empty())),
+        );
+        b.button(
+            if reviewing { "Back" } else { "Cancel" },
+            cancel,
+            !form.submitted,
+        );
+    } else if let Some(form) = workspace.identity_form() {
+        let (name, email) = create_fields(main, grid);
+        b.input("Name", &form.name, name, !form.submitted, !form.email_focus);
+        b.input(
+            "Email",
+            &form.email,
+            email,
+            !form.submitted,
+            form.email_focus,
+        );
+        b.text(
+            "Effective identity and config sources",
+            &form.detail,
+            identity_info(main, grid),
+        );
+        b.button(
+            if form.ticket.is_none() {
+                "Reload preview"
+            } else {
+                "Save local"
+            },
+            allow,
+            !form.submitted && pending == 0,
+        );
+        b.button("Cancel", cancel, !form.submitted || form.ticket.is_none());
     } else if let Some(prompt) = workspace.prompt().filter(|p| {
         matches!(
             p.kind(),
@@ -604,6 +670,140 @@ impl StatusWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn surface() -> Surface {
+        Surface {
+            width: 1040,
+            height: 680,
+            grid: super::super::tests::GRID,
+        }
+    }
+    fn enabled(scene: &Scene, name: &str) -> bool {
+        let node = scene.tree.nodes.iter().find(|n| n.name == name).unwrap();
+        !scene.disabled.contains(&node.id)
+    }
+    #[test]
+    fn create_semantics_require_review_and_revoke_old_form_and_review_contexts() {
+        let mut workspace = Workspace::new(Snapshot::welcome());
+        workspace.request_create();
+        let original = workspace.accessibility_context();
+        assert!(!enabled(
+            &build(&workspace, surface(), 0),
+            "Review creation"
+        ));
+        workspace.replace_editable_text("target 中文".into());
+        workspace.focus_create_field(true);
+        workspace.replace_editable_text("feature/native".into());
+        workspace.replace_editable_text("x".repeat(256));
+        assert_eq!(workspace.create_form().unwrap().branch, "feature/native");
+        let scene = build(&workspace, surface(), 0);
+        assert!(enabled(&scene, "Review creation"));
+        assert!(
+            scene
+                .tree
+                .nodes
+                .iter()
+                .any(|n| n.name == "Initial branch" && n.editable && n.text == "feature/native")
+        );
+        assert_eq!(
+            workspace.key(Key::Enter),
+            Effect::Send(Job::PrepareCreate {
+                path: NativePath::new("target 中文"),
+                branch: "feature/native".into()
+            })
+        );
+        assert!(!enabled(
+            &build(&workspace, surface(), 1),
+            "Review creation"
+        ));
+        workspace.replace_editable_text("late value".into());
+        assert_eq!(workspace.create_form().unwrap().branch, "feature/native");
+        workspace.reply(Reply::CreateReview {
+            ticket: "create-ticket".into(),
+            path: NativePath::new("target 中文"),
+            branch: "feature/native".into(),
+            new_directory: true,
+            entries: vec![],
+            more_entries: false,
+        });
+        let reviewed = workspace.accessibility_context();
+        assert_ne!(original, reviewed);
+        let scene = build(&workspace, surface(), 0);
+        assert!(enabled(&scene, "Create repository"));
+        assert!(!scene.tree.nodes.iter().any(|n| n.editable));
+        assert_eq!(
+            workspace.key(Key::Enter),
+            Effect::Nothing,
+            "text submission never approves creation"
+        );
+        assert_eq!(
+            workspace.answer_create(false),
+            Effect::Send(Job::CancelEntry)
+        );
+        assert_ne!(reviewed, workspace.accessibility_context());
+        workspace.key(Key::Escape);
+        workspace.request_create();
+        assert_ne!(original, workspace.accessibility_context());
+    }
+    #[test]
+    fn identity_semantics_follow_read_save_and_field_limits_without_implicit_submission() {
+        let mut workspace = Workspace::new(super::super::tests::snapshot(1));
+        assert_eq!(
+            workspace.request_identity(),
+            Effect::Send(Job::LoadIdentity)
+        );
+        let original = workspace.accessibility_context();
+        let scene = build(&workspace, surface(), 1);
+        assert!(!enabled(&scene, "Name"));
+        assert!(
+            enabled(&scene, "Cancel"),
+            "an identity read can be cancelled"
+        );
+        workspace.replace_editable_text("late read edit".into());
+        workspace.reply(Reply::IdentitySettings {
+            ticket: "identity-ticket".into(),
+            name: "old".into(),
+            email: "old@example.invalid".into(),
+            detail: "local scope".into(),
+        });
+        workspace.replace_editable_text("New 中文".into());
+        workspace.focus_identity_field(true);
+        workspace.replace_editable_text("new@example.invalid".into());
+        workspace.replace_editable_text("bad\naddress".into());
+        workspace.replace_editable_text("x".repeat(1025));
+        let scene = build(&workspace, surface(), 0);
+        assert!(enabled(&scene, "Save local"));
+        assert!(
+            scene
+                .tree
+                .nodes
+                .iter()
+                .any(|n| n.name == "Name" && n.text == "New 中文")
+        );
+        assert_eq!(
+            workspace.key(Key::Enter),
+            Effect::Send(Job::SaveIdentity {
+                ticket: "identity-ticket".into(),
+                name: "New 中文".into(),
+                email: "new@example.invalid".into()
+            })
+        );
+        let scene = build(&workspace, surface(), 1);
+        assert!(!enabled(&scene, "Save local"));
+        assert!(!enabled(&scene, "Cancel"));
+        workspace.replace_editable_text("late save edit".into());
+        assert_eq!(
+            workspace.identity_form().unwrap().email,
+            "new@example.invalid"
+        );
+        workspace.reply(Reply::PromptFailed {
+            action: PromptAction::IdentitySettings,
+            text: "save refused".into(),
+        });
+        workspace.key(Key::Escape);
+        workspace.request_identity();
+        assert_ne!(original, workspace.accessibility_context());
+    }
+
     #[test]
     fn large_index_publication_tracks_the_viewport_without_copying_hidden_paths() {
         let mut workspace = Workspace::new(super::super::tests::snapshot(1));
