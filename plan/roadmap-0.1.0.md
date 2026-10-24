@@ -30,7 +30,7 @@ Versions are delivery checkpoints, not an obligation to publish every intermedia
 | Target | User-visible outcome and work allocation | Exit demonstration | Dependencies / status |
 |---|---|---|---|
 | 0.0.5 | Retain implemented stage-result, recovery, selected stash and committed-file work; close changed-scope safety/qualification issues | Existing exact-state Git oracles and scoped candidate evidence in its plan | [Existing plan](plan-0.0.5.md); qualification remains open |
-| 0.0.6 | Welcome/Open/Create, recent repositories and isolated tabs; coherent Changes/Diff/full-index composer; quick filters; editor/terminal handoff; settings/setup guidance | Fresh profile → open/init → edit externally → stage selected content → save/reopen draft → commit → see OID/history, plus safe tab switch | [Active plan](plan-0.0.6.md); partial implementation |
+| 0.0.6 | Welcome/Open/Create, recent repositories and isolated tabs; coherent Changes/Diff/full-index composer; quick filters; editor/terminal handoff; settings/setup guidance | Fresh profile → open/init → edit externally → stage selected content → save/reopen draft → commit → see OID/history, plus safe tab switch | [Published development source checkpoint](plan-0.0.6.md); qualified runnable first-user delivery remains open |
 | 0.0.7 | Clone, remote CRUD, explicit fetch, timestamped ahead/behind, tracking branch/upstream, FF-only pull and current-branch push; HTTPS/SSH auth/progress/cancel | Two working copies exchange a commit through a test remote; non-FF and auth failure explain the next step without force or lost draft | Existing 07/11 worker/trust path; no integration on diverged pull yet |
 | 0.0.8 | Incoming review, explicit merge and rebase, conflict center, reviewed external merge tool, Continue/Abort/valid Skip and restart reconciliation; named stash and explicit untracked option | Deliberate conflicting edits → fetch/review → merge or rebase → resolve → restart → continue or abort; stash conflict retains source | 06/08/09/13; extend the 0.0.7 pull flow rather than introduce a separate sync implementation |
 | 0.0.9 | Incremental truthful graph, history message/OID query, A→B diff, file history/blame; branch rename and tags; normal single-commit cherry-pick/revert; guarded reset modes; sign-off/amend and configured signing status | Find/review an older change, trace a line, apply/revert a chosen commit and inspect actual results; unsafe reset refused unless its scope/recovery is qualified | 04/05/06/08; retain existing graph/semantic boundaries, no interactive rebase editor |
@@ -44,8 +44,8 @@ Basic history is visible from the start, clone belongs in 0.0.7, and available n
 
 | Workstream | Allocated target | Ownership | State |
 |---|---|---|---|
-| Enter, reopen, switch repos; app/Git settings | 0.0.6 | 03/10/13 | `[-]` · delivered source functions and named native/Git evidence in the active plan; source publication and full first-user qualification are tracked separately |
-| Coherent local Changes/Diff/composer and filters | 0.0.6, reusing 0.0.5 | 04/05/10 | `[-]` · implemented local source paths, corrected refresh navigation and scoped quality evidence in the active plan |
+| Enter, reopen, switch repos; app/Git settings | 0.0.6 | 03/10/13 | `[v]` · delivered in the published source checkpoint with named native/Git evidence in its plan; full first-user platform qualification remains separate |
+| Coherent local Changes/Diff/composer and filters | 0.0.6, reusing 0.0.5 | 04/05/10 | `[v]` · published local source paths, corrected refresh navigation and scoped quality evidence in its plan; no full reference-platform certificate |
 | Authenticated clone/fetch/FF-pull/reviewed push | 0.0.7 | 07/11 | `[_]` |
 | Branch tracking/upstream; remote result reconciliation | 0.0.7 | 06/07/13 | `[_]` |
 | Merge/rebase/conflicts and restart | 0.0.8 | 06/08/13 | `[_]` |
