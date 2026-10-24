@@ -1105,7 +1105,8 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
 
     main_panel(&mut draws, main_rect, grid, workspace);
 
-    let notice = workspace.notice().or(snapshot.stage_result.as_deref()).unwrap_or("");
+    let prior_result=if workspace.confirm().is_none(){snapshot.stage_result.as_deref()}else{None};
+    let notice = workspace.notice().or(prior_result).unwrap_or("");
     draws.push(Draw::Text {
         x: margin,
         baseline: footer_top + ascent,
@@ -2337,6 +2338,17 @@ mod tests {
                 if matches!(action,ChangesAction::Lines|ChangesAction::Hunk|ChangesAction::Staged|ChangesAction::Unstaged|ChangesAction::Range|ChangesAction::DiscardHunk){assert!(rect.y>=body.y+body.height);}
             }
         }
+    }
+
+    #[test]
+    fn a_fresh_review_footer_does_not_describe_the_previous_mutation() {
+        let mut state=snapshot(1);state.stage_result=Some("Prior mutation completed".into());
+        let mut workspace=Workspace::new(state);
+        assert!(texts(&scene(&workspace,1040,680,GRID,0)).contains(&"Prior mutation completed"));
+        assert!(matches!(workspace.change(ChangesAction::Ignore),Effect::Send(Job::Prepare {..})));
+        assert!(!texts(&scene(&workspace,1040,680,GRID,0)).contains(&"Prior mutation completed"),"a new review must not show a different action's result");
+        workspace.answer_confirmation(false);
+        assert!(texts(&scene(&workspace,1040,680,GRID,0)).contains(&"Prior mutation completed"),"dismissal keeps the previous known outcome available");
     }
 
     #[test]
