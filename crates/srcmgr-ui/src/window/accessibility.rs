@@ -1,4 +1,5 @@
 //! Product semantics reuse the actual draw geometry and pointer action path.
+use crate::messages::{english as message, Key as TextKey};
 use super::*;
 use srcmgr_platform_ext::{
     AccessibilityBounds, Action, PublishedNode, PublishedRole, PublishedTree,
@@ -151,7 +152,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
             .collect::<Vec<_>>()
             .join("\n");
         b.text(
-            "Action review",
+            message(TextKey::ChangesReview),
             &text,
             confirmation_body(main, grid, matches!(confirm, Confirm::Ignore { .. })),
         );
@@ -159,24 +160,24 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         if ignore {
             for (rect, name) in ignore_scope_buttons(main, grid)
                 .into_iter()
-                .zip(["Project .gitignore", "Local exclude"])
+                .zip([message(TextKey::ChangesProjectIgnore), message(TextKey::ChangesLocalExclude)])
             {
                 b.button(name, rect, pending == 0);
             }
         }
         b.button(
             if ignore {
-                "Save rule"
+                message(TextKey::ChangesSaveRule)
             } else {
-                "Confirm reviewed action"
+                message(TextKey::ChangesConfirm)
             },
             allow,
             workspace.confirmation_ready() && pending == 0,
         );
-        b.button("Cancel", cancel, true);
+        b.button(message(TextKey::ActionCancel), cancel, true);
     } else if let Some(review) = workspace.trust_review() {
         b.text(
-            "Repository trust review",
+            message(TextKey::TrustReview),
             &trust_lines(review, usize::MAX / 4)
                 .iter()
                 .map(|l| l.text.as_str())
@@ -184,12 +185,12 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 .join("\n"),
             trust_content(main, grid).0,
         );
-        b.button("Trust and open", allow, !review.submitted && pending == 0);
-        b.button("Cancel", cancel, !review.submitted);
+        b.button(message(TextKey::TrustApprove), allow, !review.submitted && pending == 0);
+        b.button(message(TextKey::ActionCancel), cancel, !review.submitted);
     } else if let Some(form) = workspace.commit_composer() {
         let geometry = commit_geometry(width, height, grid);
         b.input(
-            "Commit message",
+            message(TextKey::CommitMessage),
             &form.editor.text,
             geometry.message,
             !workspace.prompt().is_some_and(|p| p.pending()) && form.editor.preedit.is_empty(),
@@ -202,11 +203,11 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
             && form.editor.text.len() <= composer::PASTE_LIMIT_BYTES
             && form.editor.preedit.is_empty()
             && !workspace.prompt().is_some_and(|p| p.pending());
-        b.button("Commit", geometry.commit, ready && pending == 0);
-        b.button("Refresh review", geometry.refresh, pending == 0);
-        b.button("Save and close", geometry.close, true);
+        b.button(message(TextKey::CommitApprove), geometry.commit, ready && pending == 0);
+        b.button(message(TextKey::CommitRefresh), geometry.refresh, pending == 0);
+        b.button(message(TextKey::CommitClose), geometry.close, true);
         b.text(
-            "Complete staged index",
+            message(TextKey::CommitIndex),
             &form
                 .review
                 .as_ref()
@@ -238,7 +239,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         );
         let inner = inner_of(geometry.diff, grid);
         b.text(
-            "Staged Diff",
+            message(TextKey::CommitDiff),
             &form
                 .diff
                 .lines
@@ -253,21 +254,21 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
     } else if let Some(form) = workspace.create_form() {
         if let Some((_, lines)) = &form.review {
             b.text(
-                "Review repository creation",
+                message(TextKey::CreateReviewTitle),
                 &lines.join("\n"),
                 trust_content(main, grid).0,
             );
         } else {
             let (path, branch) = create_fields(main, grid);
             b.input(
-                "Directory (parent must exist)",
+                message(TextKey::CreateDirectory),
                 &form.path,
                 path,
                 !form.submitted && !workspace.entry_composing(),
                 !form.branch_focus,
             );
             b.input(
-                "Initial branch",
+                message(TextKey::CreateBranch),
                 &form.branch,
                 branch,
                 !form.submitted && !workspace.entry_composing(),
@@ -277,9 +278,9 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         let reviewing = form.review.is_some();
         b.button(
             if reviewing {
-                "Create repository"
+                message(TextKey::CreateApprove)
             } else {
-                "Review creation"
+                message(TextKey::CreateReview)
             },
             allow,
             !form.submitted
@@ -288,42 +289,42 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 && (reviewing || (!form.path.is_empty() && !form.branch.is_empty())),
         );
         b.button(
-            if reviewing { "Back" } else { "Cancel" },
+            if reviewing { message(TextKey::ActionBack) } else { message(TextKey::ActionCancel) },
             cancel,
             !form.submitted && !workspace.entry_composing(),
         );
     } else if let Some(form) = workspace.identity_form() {
         let (name, email) = create_fields(main, grid);
         b.input(
-            "Name",
+            message(TextKey::IdentityName),
             &form.name,
             name,
             !form.submitted && !workspace.entry_composing(),
             !form.email_focus,
         );
         b.input(
-            "Email",
+            message(TextKey::IdentityEmail),
             &form.email,
             email,
             !form.submitted && !workspace.entry_composing(),
             form.email_focus,
         );
         b.text(
-            "Effective identity and config sources",
+            message(TextKey::IdentitySources),
             &form.detail,
             identity_info(main, grid),
         );
         b.button(
             if form.ticket.is_none() {
-                "Reload preview"
+                message(TextKey::IdentityReload)
             } else {
-                "Save local"
+                message(TextKey::IdentitySave)
             },
             allow,
             !form.submitted && !workspace.entry_composing() && pending == 0,
         );
         b.button(
-            "Cancel",
+            message(TextKey::ActionCancel),
             cancel,
             !form.submitted && !workspace.entry_composing() || form.ticket.is_none(),
         );
@@ -336,10 +337,10 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         let body = trust_content(main, grid).0;
         let field = create_fields(body, grid).0;
         let label = match prompt.kind() {
-            PromptKind::OpenRepository => "Repository path",
+            PromptKind::OpenRepository => message(TextKey::EntryRepositoryPath),
             PromptKind::GitSettings => "Git executable",
             PromptKind::NewBranch => "Branch name",
-            PromptKind::Commit => "Commit message",
+            PromptKind::Commit => message(TextKey::CommitMessage),
         };
         b.input(
             label,
@@ -355,7 +356,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
             for (rect, name) in
                 recent_controls(main, grid)
                     .into_iter()
-                    .zip(["Open", "Locate recent", "Back"])
+                    .zip([message(TextKey::ActionOpen), message(TextKey::RecentLocate), message(TextKey::ActionBack)])
             {
                 b.button(
                     name,
@@ -366,15 +367,15 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         } else {
             b.button(
                 if prompt.kind() == PromptKind::GitSettings {
-                    "Test and save"
+                    message(TextKey::EntryTestSave)
                 } else {
-                    "Open"
+                    message(TextKey::ActionOpen)
                 },
                 allow,
                 !prompt.pending() && !workspace.entry_composing() && pending == 0,
             );
             b.button(
-                "Back",
+                message(TextKey::ActionBack),
                 cancel,
                 !prompt.pending() && !workspace.entry_composing(),
             );
@@ -397,13 +398,13 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         b.text("Dialog content",&format!("{text}\nUse this dialog's keyboard controls; assistive field editing is unavailable in this view."),main);
     } else {
         for (name, slots, cells) in [
-            ("Open", 27, 8),
-            ("Git settings", 6, 6),
+            (message(TextKey::ActionOpen), 27, 8),
+            (message(TextKey::EntryGitSettings), 6, 6),
             (
                 if workspace.is_welcome() {
-                    "Create"
+                    message(TextKey::EntryCreate)
                 } else {
-                    "Identity settings"
+                    message(TextKey::EntryIdentitySettings)
                 },
                 17,
                 10,
@@ -456,7 +457,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
             }
             if !workspace.snapshot().recents.is_empty() {
                 for (rect, name) in recent_controls(main, grid).into_iter().zip([
-                    "Open selected",
+                    message(TextKey::RecentOpen),
                     "Locate selected",
                     "Remove selected",
                 ]) {
@@ -484,7 +485,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 b.button(name, rect, true);
             }
             b.button(
-                "Prepare commit",
+                message(TextKey::CommitPrepare),
                 Rect {
                     x: width - grid.margin - (grid.advance * 39.0) as i64,
                     y: grid.margin,
@@ -576,7 +577,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 .collect::<Vec<_>>()
                 .join("\n");
             b.text(
-                "Selected Diff visible content",
+                message(TextKey::ChangesVisibleDiff),
                 &text,
                 diff_body(workspace, main, grid),
             );
@@ -593,7 +594,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         })
         .unwrap_or("");
     b.text(
-        "Current action status",
+        message(TextKey::CurrentActionStatus),
         status,
         Rect {
             x: grid.margin,

@@ -4,6 +4,7 @@
 //! from the platform font composited with MiniCon's pixel kernels, and a worker
 //! thread that runs Git so the window never waits on it.
 
+use crate::messages::{english as message, Key as TextKey};
 use std::sync::Arc;
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -1103,7 +1104,7 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         let [previous, next, close] = tab_controls(width, grid);
         button_draw(&mut draws, previous, grid, "<", BORDER);
         button_draw(&mut draws, next, grid, ">", BORDER);
-        button_draw(&mut draws, close, grid, "Close", BORDER);
+        button_draw(&mut draws, close, grid, message(TextKey::ActionClose), BORDER);
     }
 
     if workspace.commit_composer().is_some() {
@@ -1115,10 +1116,10 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         let panels = layout(width, height, grid);
         let recents = Rect { x: margin, y: panels.main.y, width: panels.files.width, height: panels.main.height };
         let rows: Vec<Line> = snapshot.recents.iter().map(|entry| Line { tone: Tone::Text, text: format!("{}  {}", entry.backend, entry.label) }).collect();
-        list_panel(&mut draws, recents, grid, Panel { focused: !workspace.modal(), title: "Recent repositories", empty: "No recent repositories" }, &rows, workspace.selected(Pane::Files));
+        list_panel(&mut draws, recents, grid, Panel { focused: !workspace.modal(), title: message(TextKey::RecentTitle), empty: message(TextKey::RecentEmpty) }, &rows, workspace.selected(Pane::Files));
         main_panel(&mut draws, panels.main, grid, workspace);
         if !workspace.modal() && !snapshot.recents.is_empty() {
-            for (button, label) in recent_controls(panels.main, grid).into_iter().zip(["Open selected", "Locate [L]", "Remove [d]"]) { button_draw(&mut draws, button, grid, label, if label == "Open selected" { FOCUS_BORDER } else { BORDER }); }
+            for (button, label) in recent_controls(panels.main, grid).into_iter().zip([message(TextKey::RecentOpen), "Locate [L]", "Remove [d]"]) { button_draw(&mut draws, button, grid, label, if label == message(TextKey::RecentOpen) { FOCUS_BORDER } else { BORDER }); }
         }
         draws.push(Draw::Text { x: margin, baseline: panels.footer_top + ascent, text: fit(workspace.notice().unwrap_or(&snapshot.head), grid.columns(width - 2 * margin)), colour: colour(Tone::Changed) });
         draws.push(Draw::Text { x: margin, baseline: panels.footer_top + row + ascent, text: if workspace.create_form().is_some() { "Tab Switch field   Enter Review   y Create after review   Esc Back/cancel".into() } else if workspace.modal() { hints(workspace) } else { "Ctrl+O Open   N Create   G Git settings   Enter Open selected   L Locate   d Remove   q Quit".into() }, colour: MUTED_TEXT });
@@ -1195,7 +1196,7 @@ fn commit_geometry(width: i64, height: i64, grid: Grid) -> CommitGeometry {
 fn commit_scene(draws: &mut Vec<Draw>, workspace: &Workspace, width: i64, height: i64, grid: Grid) {
     let form = workspace.commit_composer().unwrap();
     let geometry = commit_geometry(width, height, grid);
-    let inner = frame(draws, geometry.index, grid, form.focus == CommitFocus::Index, "Complete staged index");
+    let inner = frame(draws, geometry.index, grid, form.focus == CommitFocus::Index, message(TextKey::CommitIndex));
     if let Some(review) = &form.review {
         for (row, line) in wrapped_lines(&review.head, inner.cols).into_iter().take(2).enumerate() {
             draws.push(Draw::Text { x: inner.x, baseline: inner.top + row as i64 * grid.row + grid.ascent, text: line.text, colour: MUTED_TEXT });
@@ -1243,9 +1244,9 @@ fn commit_scene(draws: &mut Vec<Draw>, workspace: &Workspace, width: i64, height
     }
     let blocked = form.review.as_ref().and_then(|review| review.blocked.as_deref());
     let ready = form.review.is_some() && blocked.is_none() && form.diff_ready && !form.editor.text.trim().is_empty() && form.editor.text.len() <= composer::PASTE_LIMIT_BYTES && form.editor.preedit.is_empty() && !workspace.prompt().is_some_and(|prompt| prompt.pending());
-    button_draw(draws, geometry.commit, grid, if ready { "Commit" } else { "Commit disabled" }, if ready { FOCUS_BORDER } else { BORDER });
-    button_draw(draws, geometry.refresh, grid, "Refresh review", BORDER);
-    button_draw(draws, geometry.close, grid, "Save and close", BORDER);
+    button_draw(draws, geometry.commit, grid, if ready { message(TextKey::CommitApprove) } else { message(TextKey::CommitDisabled) }, if ready { FOCUS_BORDER } else { BORDER });
+    button_draw(draws, geometry.refresh, grid, message(TextKey::CommitRefresh), BORDER);
+    button_draw(draws, geometry.close, grid, message(TextKey::CommitClose), BORDER);
     let notice = form.save_error.as_deref().or(workspace.notice()).or(blocked).unwrap_or("Review is bound to the full index; Commit rechecks freshness");
     draws.push(Draw::Text { x: grid.margin, baseline: geometry.footer + grid.ascent, text: fit(&format!("{} | {notice}", workspace.draft_status()), grid.columns(width - 2 * grid.margin)), colour: colour(Tone::Changed) });
     draws.push(Draw::Text { x: grid.margin, baseline: geometry.footer + grid.row + grid.ascent, text: fit("Tab Message/Index/Diff   F5 Refresh   Ctrl+S Save   Ctrl+Enter Commit   Esc Save and close", grid.columns(width - 2 * grid.margin)), colour: MUTED_TEXT });
@@ -1482,7 +1483,7 @@ fn filtered_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Wor
     frame(draws, rect, grid, workspace.focus() == pane, &title);
     let (field, clear) = filter_controls(rect, grid);
     draws.push(Draw::Text { x: field.x, baseline: field.y + grid.ascent, text: fit(&format!("Filter /: {query}"), grid.columns(field.width)), colour: if query.is_empty() { MUTED_TEXT } else { colour(Tone::Heading) } });
-    draws.push(Draw::Text { x: clear.x, baseline: clear.y + grid.ascent, text: "Clear".into(), colour: if query.is_empty() { MUTED_TEXT } else { colour(Tone::Heading) } });
+    draws.push(Draw::Text { x: clear.x, baseline: clear.y + grid.ascent, text: message(TextKey::FilterClear).into(), colour: if query.is_empty() { MUTED_TEXT } else { colour(Tone::Heading) } });
     let inner = filtered_inner_of(rect, grid);
     if rows.is_empty() {
         let message = if !query.is_empty() { "No matching loaded items" } else { match pane { Pane::Files => "Working tree clean", Pane::Branches => "No local branches", _ => "No commits yet" } };
@@ -1605,7 +1606,7 @@ fn tool_scene(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         let body = trust_content(rect, grid).0;
         text_panel(draws, body, grid, true, "Review external tool launch", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
         button_draw(draws, geometry.buttons[0], grid, if form.working.is_some() { "Starting..." } else { "Launch [y]" }, BORDER);
-        button_draw(draws, geometry.buttons[3], grid, "Cancel", FOCUS_BORDER);
+        button_draw(draws, geometry.buttons[3], grid, message(TextKey::ActionCancel), FOCUS_BORDER);
         return;
     }
     for (index, kind) in [srcmgr_domain::ToolKind::Editor, srcmgr_domain::ToolKind::Terminal].into_iter().enumerate() { button_draw(draws, geometry.modes[index], grid, kind.name(), if form.kind == kind { FOCUS_BORDER } else { BORDER }); }
@@ -1614,7 +1615,7 @@ fn tool_scene(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
     tool_field(draws, geometry.arguments, grid, &form.arguments, editable && form.argument_focus, "Arguments (one per line)");
     let info = tool_info(form);
     text_panel(draws, geometry.info, grid, false, if editable { "Settings / destination" } else { "Working; fields are read-only" }, &wrapped_lines(&info, inner_of(geometry.info, grid).cols), workspace.trust_scroll(), None);
-    for (index, label) in ["Save", "Review launch", "Clear saved", "Close"].into_iter().enumerate() { button_draw(draws, geometry.buttons[index], grid, label, if index == 3 { FOCUS_BORDER } else if editable { BORDER } else { MUTED_TEXT }); }
+    for (index, label) in [message(TextKey::ToolsSave), message(TextKey::ToolsReview), "Clear saved", message(TextKey::ActionClose)].into_iter().enumerate() { button_draw(draws, geometry.buttons[index], grid, label, if index == 3 { FOCUS_BORDER } else if editable { BORDER } else { MUTED_TEXT }); }
 }
 
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
@@ -1629,8 +1630,8 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
             let body = locate_info(rect, grid);
             text_panel(draws, body, grid, false, "Record and effect", &wrapped_lines(&locate_text(form), inner_of(body, grid).cols), workspace.trust_scroll(), None);
         }
-        button_draw(draws, allow, grid, if form.working.is_some() { "Working..." } else if form.review.is_some() { "Save location" } else { "Review location" }, if form.working.is_some() { MUTED_TEXT } else { BORDER });
-        button_draw(draws, cancel, grid, if form.review.is_some() { "Back" } else { "Cancel" }, if form.working == Some(crate::LocateWork::Save) { MUTED_TEXT } else { FOCUS_BORDER });
+        button_draw(draws, allow, grid, if form.working.is_some() { message(TextKey::EntryWorking) } else if form.review.is_some() { message(TextKey::LocateSave) } else { message(TextKey::LocateReview) }, if form.working.is_some() { MUTED_TEXT } else { BORDER });
+        button_draw(draws, cancel, grid, if form.review.is_some() { message(TextKey::ActionBack) } else { message(TextKey::ActionCancel) }, if form.working == Some(crate::LocateWork::Save) { MUTED_TEXT } else { FOCUS_BORDER });
         return;
     }
     if let Some(form) = workspace.tool_form() { tool_scene(draws, rect, grid, workspace, form); return; }
@@ -1639,49 +1640,49 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         let text = format!("Repository: {}\n\n{}\n\nArchive the reviewed saved view and open with the default layout.\nThe archive is retained in this profile; no automatic deletion.\nDrafts, repository trust, source files, index and refs are preserved.\n\nChanged or expired records require a fresh review.\nIf entry later fails, the archive remains available.\nAutomatic recovery review is limited to 1 MiB.\n\ny: Archive view and open   n/Esc: Cancel\nEnter does not approve this change.", issue.path.display_label(), issue.reason);
         text_panel(draws, body, grid, true, "Saved view needs recovery", &wrapped_lines(&text, inner_of(body, grid).cols), 0, None);
         let (allow, cancel) = trust_buttons(rect, grid);
-        button_draw(draws, allow, grid, if issue.submitted { "Working..." } else { "Archive view and open" }, BORDER);
-        button_draw(draws, cancel, grid, "Cancel", FOCUS_BORDER);
+        button_draw(draws, allow, grid, if issue.submitted { message(TextKey::EntryWorking) } else { message(TextKey::RecoveryArchiveOpen) }, BORDER);
+        button_draw(draws, cancel, grid, message(TextKey::ActionCancel), FOCUS_BORDER);
         return;
     }
     if workspace.filter_editor().is_some() { filter_scene(draws, rect, grid, workspace); return; }
     if let Some(form) = workspace.identity_form() {
         let (body, _) = trust_content(rect, grid);
-        frame(draws, body, grid, true, "Repository identity (local scope)");
+        frame(draws, body, grid, true, message(TextKey::IdentityTitle));
         let (name, email) = create_fields(rect, grid);
         let label = |text: &str| srcmgr_domain::NativePath::new(text).display_label();
-        entry_field(draws,workspace,name,grid,crate::entry_input::Slot::IdentityName,"Name",&label(&form.name));
-        entry_field(draws,workspace,email,grid,crate::entry_input::Slot::IdentityEmail,"Email",&label(&form.email));
+        entry_field(draws,workspace,name,grid,crate::entry_input::Slot::IdentityName,message(TextKey::IdentityName),&label(&form.name));
+        entry_field(draws,workspace,email,grid,crate::entry_input::Slot::IdentityEmail,message(TextKey::IdentityEmail),&label(&form.email));
         let info = identity_info(rect, grid);
-        text_panel(draws, info, grid, false, "Effective identity and config sources (scroll)", &wrapped_lines(&form.detail, inner_of(info, grid).cols), workspace.trust_scroll(), None);
+        text_panel(draws, info, grid, false, message(TextKey::IdentitySourcesScroll), &wrapped_lines(&form.detail, inner_of(info, grid).cols), workspace.trust_scroll(), None);
         let (save, cancel) = trust_buttons(rect, grid);
-        button_draw(draws, save, grid, if form.submitted { "Working..." } else if workspace.entry_composing() { "Finish IME" } else if form.ticket.is_none() { "Reload preview" } else { "Save local" }, BORDER);
-        button_draw(draws, cancel, grid, "Cancel", FOCUS_BORDER);
+        button_draw(draws, save, grid, if form.submitted { message(TextKey::EntryWorking) } else if workspace.entry_composing() { message(TextKey::EntryFinishIme) } else if form.ticket.is_none() { message(TextKey::IdentityReload) } else { message(TextKey::IdentitySave) }, BORDER);
+        button_draw(draws, cancel, grid, message(TextKey::ActionCancel), FOCUS_BORDER);
         return;
     }
     if let Some(form) = workspace.create_form() {
         let (allow, cancel) = trust_buttons(rect, grid);
         if let Some((_, lines)) = &form.review {
             let (body, _) = trust_content(rect, grid);
-            text_panel(draws, body, grid, true, "Review repository creation", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+            text_panel(draws, body, grid, true, message(TextKey::CreateReviewTitle), &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
         } else {
-            frame(draws, rect, grid, true, "Create local Git repository");
+            frame(draws, rect, grid, true, message(TextKey::CreateTitle));
             let (path, branch) = create_fields(rect, grid);
-            entry_field(draws,workspace,path,grid,crate::entry_input::Slot::CreatePath,"Directory (parent must exist)",&form.path);
-            entry_field(draws,workspace,branch,grid,crate::entry_input::Slot::CreateBranch,"Initial branch",&form.branch);
+            entry_field(draws,workspace,path,grid,crate::entry_input::Slot::CreatePath,message(TextKey::CreateDirectory),&form.path);
+            entry_field(draws,workspace,branch,grid,crate::entry_input::Slot::CreateBranch,message(TextKey::CreateBranch),&form.branch);
             let info = Rect { y: branch.y + branch.height + grid.gap, height: (cancel.y - branch.y - branch.height - 2 * grid.gap).max(0), ..path };
-            text_panel(draws, info, grid, false, "Before creating", &wrapped_lines("Choose a new or existing directory.\nExisting files stay unstaged and unchanged.\nReview the exact target before any write.\nTab or click switches fields; Esc cancels.", inner_of(info, grid).cols), 0, None);
+            text_panel(draws, info, grid, false, message(TextKey::CreateBefore), &wrapped_lines("Choose a new or existing directory.\nExisting files stay unstaged and unchanged.\nReview the exact target before any write.\nTab or click switches fields; Esc cancels.", inner_of(info, grid).cols), 0, None);
         }
-        button_draw(draws, allow, grid, if form.submitted { "Working..." } else if workspace.entry_composing() { "Finish IME" } else if form.review.is_some() { "Create repository" } else { "Review creation" }, BORDER);
-        button_draw(draws, cancel, grid, if form.review.is_some() { "Back" } else { "Cancel" }, FOCUS_BORDER);
+        button_draw(draws, allow, grid, if form.submitted { message(TextKey::EntryWorking) } else if workspace.entry_composing() { message(TextKey::EntryFinishIme) } else if form.review.is_some() { message(TextKey::CreateApprove) } else { message(TextKey::CreateReview) }, BORDER);
+        button_draw(draws, cancel, grid, if form.review.is_some() { message(TextKey::ActionBack) } else { message(TextKey::ActionCancel) }, FOCUS_BORDER);
         return;
     }
     if let Some(review) = workspace.trust_review() {
         let (body, _) = trust_content(rect, grid);
         let lines = trust_lines(review, inner_of(body, grid).cols);
-        text_panel(draws, body, grid, true, "Review repository trust", &lines, workspace.trust_scroll(), None);
+        text_panel(draws, body, grid, true, message(TextKey::TrustReviewTitle), &lines, workspace.trust_scroll(), None);
         let (allow, cancel) = trust_buttons(rect, grid);
-        button_draw(draws, allow, grid, if review.submitted { "Opening..." } else { "Trust and open" }, if review.submitted { MUTED_TEXT } else { BORDER });
-        button_draw(draws, cancel, grid, "Cancel", if review.submitted { MUTED_TEXT } else { FOCUS_BORDER });
+        button_draw(draws, allow, grid, if review.submitted { "Opening..." } else { message(TextKey::TrustApprove) }, if review.submitted { MUTED_TEXT } else { BORDER });
+        button_draw(draws, cancel, grid, message(TextKey::ActionCancel), if review.submitted { MUTED_TEXT } else { FOCUS_BORDER });
         return;
     }
     let focused = workspace.focus() == Pane::Main || workspace.prompt().is_some();
@@ -1694,35 +1695,35 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
     if let Some(prompt) = workspace.prompt() {
         if prompt.kind() == PromptKind::OpenRepository {
             let body = trust_content(rect, grid).0;
-            frame(draws, body, grid, true, "Open repository");
+            frame(draws, body, grid, true, message(TextKey::EntryOpenTitle));
             let (field, _) = create_fields(body, grid);
-            entry_field(draws,workspace,field,grid,crate::entry_input::Slot::Prompt,"Repository path",prompt.text());
+            entry_field(draws,workspace,field,grid,crate::entry_input::Slot::Prompt,message(TextKey::EntryRepositoryPath),prompt.text());
             let info = Rect { y: field.y + field.height + grid.gap, height: (body.y+body.height-field.y-field.height-grid.gap).max(0), ..field };
             let text = format!("{}\n\nOpen checks current repository identity and trust before activation. Existing files and drafts are preserved. Locate selected recent changes only its bookmark; it does not move files or copy old drafts/trust.", workspace.notice().unwrap_or("Enter a local repository path, then Open. Back returns without opening."));
             text_panel(draws, info, grid, false, if prompt.pending() { "Opening; wait for the result" } else { "Status and next step" }, &wrapped_lines(&text, inner_of(info, grid).cols), 0, None);
             if workspace.is_welcome() && !workspace.snapshot().recents.is_empty() {
-                for (button,label) in recent_controls(rect,grid).into_iter().zip(["Open", "Locate recent", "Back"]) { button_draw(draws,button,grid,label,if label=="Back" {FOCUS_BORDER} else {BORDER}); }
-            } else { let (open,back)=trust_buttons(rect,grid); button_draw(draws,open,grid,"Open",BORDER); button_draw(draws,back,grid,"Back",FOCUS_BORDER); }
+                for (button,label) in recent_controls(rect,grid).into_iter().zip([message(TextKey::ActionOpen), message(TextKey::RecentLocate), message(TextKey::ActionBack)]) { button_draw(draws,button,grid,label,if label==message(TextKey::ActionBack) {FOCUS_BORDER} else {BORDER}); }
+            } else { let (open,back)=trust_buttons(rect,grid); button_draw(draws,open,grid,message(TextKey::ActionOpen),BORDER); button_draw(draws,back,grid,message(TextKey::ActionBack),FOCUS_BORDER); }
             return;
         }
         if prompt.kind() == PromptKind::GitSettings {
             let (body, _) = trust_content(rect, grid);
-            frame(draws, body, grid, true, "Application Git settings");
+            frame(draws, body, grid, true, message(TextKey::EntryApplicationGitSettings));
             let (field, _) = create_fields(body, grid);
-            entry_field(draws,workspace,field,grid,crate::entry_input::Slot::Prompt,"Git executable (blank = PATH)",prompt.text());
+            entry_field(draws,workspace,field,grid,crate::entry_input::Slot::Prompt,message(TextKey::EntryGitExecutable),prompt.text());
             let info = Rect { y: field.y + field.height + grid.gap, height: (body.y + body.height - field.y - field.height - 2 * grid.gap).max(0), ..field };
             let text = format!("Selected path: {}\n\n{}", if prompt.text().is_empty() { "Automatic PATH discovery".into() } else { srcmgr_domain::NativePath::new(prompt.text()).display_label() }, workspace.git_detail());
-            text_panel(draws, info, grid, false, "Selection and diagnostics", &wrapped_lines(&text, inner_of(info, grid).cols), 0, None);
+            text_panel(draws, info, grid, false, message(TextKey::EntrySelectionDiagnostics), &wrapped_lines(&text, inner_of(info, grid).cols), 0, None);
             let (save, cancel) = trust_buttons(rect, grid);
-            button_draw(draws, save, grid, if prompt.pending() { "Working..." } else if workspace.entry_composing() { "Finish IME" } else { "Test and save" }, BORDER);
-            button_draw(draws, cancel, grid, "Close", FOCUS_BORDER);
+            button_draw(draws, save, grid, if prompt.pending() { message(TextKey::EntryWorking) } else if workspace.entry_composing() { message(TextKey::EntryFinishIme) } else { message(TextKey::EntryTestSave) }, BORDER);
+            button_draw(draws, cancel, grid, message(TextKey::ActionClose), FOCUS_BORDER);
             return;
         }
         let title = match prompt.kind() {
             PromptKind::GitSettings => unreachable!("rendered above"),
-            PromptKind::Commit => "Commit message",
+            PromptKind::Commit => message(TextKey::CommitMessage),
             PromptKind::OpenRepository => "Open repository path (trust is required before Git runs)",
-            PromptKind::NewBranch => "New branch name",
+            PromptKind::NewBranch => message(TextKey::BranchNewTitle),
         };
         if prompt.kind()==PromptKind::NewBranch {entry_field(draws,workspace,rect,grid,crate::entry_input::Slot::Prompt,title,prompt.text());return;}
         let mut lines: Vec<Line> = format!("{}_", prompt.text())
@@ -1740,20 +1741,20 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         let ignore=matches!(confirm,Confirm::Ignore {..});
         let body=confirmation_body(rect,grid,ignore);
         text_panel(draws,body,grid,true,if ignore {"Review literal Ignore"}else{"Confirm and recovery"},&wrapped_lines(&messages.join("\n"),inner_of(body,grid).cols),workspace.trust_scroll(),None);
-        if let Confirm::Ignore {local,..}=confirm {for (i,scope) in ignore_scope_buttons(rect,grid).into_iter().enumerate(){button_draw(draws,scope,grid,if i==0{"Project .gitignore"}else{"Local exclude"},if *local==(i==1){FOCUS_BORDER}else{BORDER});}}
+        if let Confirm::Ignore {local,..}=confirm {for (i,scope) in ignore_scope_buttons(rect,grid).into_iter().enumerate(){button_draw(draws,scope,grid,if i==0{message(TextKey::ChangesProjectIgnore)}else{message(TextKey::ChangesLocalExclude)},if *local==(i==1){FOCUS_BORDER}else{BORDER});}}
         let (allow,cancel)=trust_buttons(rect,grid);
-        button_draw(draws,allow,grid,if !workspace.confirmation_ready(){"Preparing..."}else if ignore {"Save rule"}else{"Confirm"},if workspace.confirmation_ready(){BORDER}else{MUTED_TEXT});
-        button_draw(draws,cancel,grid,"Cancel",FOCUS_BORDER);
+        button_draw(draws,allow,grid,if !workspace.confirmation_ready(){"Preparing..."}else if ignore {message(TextKey::ChangesSaveRule)}else{"Confirm"},if workspace.confirmation_ready(){BORDER}else{MUTED_TEXT});
+        button_draw(draws,cancel,grid,message(TextKey::ActionCancel),FOCUS_BORDER);
         return;
     }
     if workspace.is_welcome() {
         let body=if workspace.snapshot().recents.is_empty() {rect} else {trust_content(rect,grid).0};
         let text=workspace.main().lines.iter().map(|line|line.text.as_str()).collect::<Vec<_>>().join("\n");
-        text_panel(draws,body,grid,focused,"Welcome",&wrapped_lines(&text,inner_of(body,grid).cols),workspace.trust_scroll(),None);
+        text_panel(draws,body,grid,focused,message(TextKey::WelcomeTitle),&wrapped_lines(&text,inner_of(body,grid).cols),workspace.trust_scroll(),None);
         return;
     }
     let main = workspace.main();
-    let title = if workspace.is_welcome() { "Welcome" } else { match workspace.source() {
+    let title = if workspace.is_welcome() { message(TextKey::WelcomeTitle) } else { match workspace.source() {
         Pane::Commits => match workspace.history_context() { Some(("Files", _, _)) => "Committed files", Some(("File Diff", _, _)) => "Committed file Diff", _ => "Commit details" },
         Pane::Branches => "Branch",
         Pane::Stashes => "Selected stash",
@@ -1786,7 +1787,7 @@ fn confirmation_title(confirm:&Confirm)->String {
 fn file_actions(rect:Rect,grid:Grid)->Vec<(Rect,ChangesAction,&'static str)> {
     let columns=((rect.width+grid.gap)/((grid.advance*7.0) as i64+2*grid.gap)).clamp(1,4);
     let rows=(4+columns-1)/columns;let height=grid.row+2*grid.gap;let width=(rect.width-(columns-1)*grid.gap)/columns;
-    [ChangesAction::StageFile,ChangesAction::UnstageFile,ChangesAction::DiscardFile,ChangesAction::Ignore].into_iter().zip(["Stage","Unstage","Discard","Ignore"]).enumerate().map(|(i,(action,label))|(Rect {x:rect.x+(i as i64%columns)*(width+grid.gap),y:rect.y+rect.height-rows*(height+grid.gap)+grid.gap+(i as i64/columns)*(height+grid.gap),width,height},action,label)).collect()
+    [ChangesAction::StageFile,ChangesAction::UnstageFile,ChangesAction::DiscardFile,ChangesAction::Ignore].into_iter().zip([message(TextKey::ChangesStage),message(TextKey::ChangesUnstage),message(TextKey::ChangesDiscard),message(TextKey::ChangesIgnore)]).enumerate().map(|(i,(action,label))|(Rect {x:rect.x+(i as i64%columns)*(width+grid.gap),y:rect.y+rect.height-rows*(height+grid.gap)+grid.gap+(i as i64/columns)*(height+grid.gap),width,height},action,label)).collect()
 }
 fn file_list_body(rect:Rect,grid:Grid)->Rect {Rect {height:(file_actions(rect,grid)[0].0.y-rect.y-grid.gap).max(0),..rect}}
 fn diff_sides(workspace:&Workspace,rect:Rect,grid:Grid)->Vec<(Rect,ChangesAction,&'static str)> {

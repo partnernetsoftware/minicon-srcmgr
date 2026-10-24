@@ -53,7 +53,7 @@ Basic history is visible from the start, clone belongs in 0.0.7, and available n
 | Graph/history query/compare/file history/blame | 0.0.9 | 05 | `[_]` |
 | Branch rename/tags; pick/revert/reset; amend/sign-off | 0.0.9 latest | 04/06/08 | `[_]` |
 | LFS/submodule/worktree compatibility floor | As each relevant entry/action lands; review by 0.0.9 | 03/09/11 | `[_]` |
-| Semantic controls, IME, localization keys and compact layouts | Start 0.0.6; primary-flow closure by 0.1.0 | 02/10 | `[_]` |
+| Semantic controls, IME, localization keys and compact layouts | Start 0.0.6; primary-flow closure by 0.1.0 | 02/10 | `[-]` · selected Windows semantics/input and typed control-caption keys have scoped evidence in the active plan; full native/language/layout closure stays open |
 | Packaging and representative environment | Feasibility starts 0.0.6; first qualified trial package as available; final 0.1.0 | 12/14 | `[_]` |
 
 Unscheduled beyond this first usable target: interactive rebase editor, advanced multi-commit editing, full LFS administration, submodule create/update management, worktree create/remove, advanced author/date/ref/path query language, patch exchange, S3 and real non-Git adapters. Their existing cumulative PRD requirements are retained; this roadmap does not erase them or invent parity.
