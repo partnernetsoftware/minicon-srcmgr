@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'crates/srcmgr-platform-ext/**'
+      - 'build-support/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'crates/srcmgr-platform-ext/**'
+      - 'build-support/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'

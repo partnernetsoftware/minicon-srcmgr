@@ -478,6 +478,12 @@ impl Attachment {
             {
                 return Err(Error::Native("window identity/thread unavailable".into()));
             }
+            let mut existing = 0;
+            if GetWindowSubclass(hwnd, Some(subclass), SUBCLASS_ID, Some(&mut existing)).as_bool() {
+                return Err(Error::Native(
+                    "accessibility is already attached to this window".into(),
+                ));
+            }
         }
         let com = Apartment::new()?;
         let simple: Simple = Root {
@@ -518,9 +524,11 @@ impl Attachment {
         }
         // SAFETY: UI-thread-only owner, live hook until NCDESTROY or Drop.
         unsafe {
-            let hook = &*self.hook;
+            // Hold a COM reference across a potentially reentrant host call;
+            // NCDESTROY may release the Hook during event publication.
+            let root = (&*self.hook).root.clone();
             let _ = UiaRaiseStructureChangedEvent(
-                &hook.root,
+                &root,
                 StructureChangeType_ChildrenInvalidated,
                 std::ptr::null_mut(),
                 0,
@@ -531,7 +539,9 @@ impl Attachment {
         if self.alive.load(Ordering::Acquire) {
             unsafe {
                 let _ = SetForegroundWindow(self.hwnd);
-                let _ = SetFocus(Some(self.hwnd));
+                if self.alive.load(Ordering::Acquire) {
+                    let _ = SetFocus(Some(self.hwnd));
+                }
             }
         }
     }
@@ -590,8 +600,15 @@ impl Drop for Attachment {
     fn drop(&mut self) {
         if self.alive.swap(false, Ordering::AcqRel) {
             unsafe {
-                let _ = RemoveWindowSubclass(self.hwnd, Some(subclass), SUBCLASS_ID);
-                let hook = Box::from_raw(self.hook);
+                let mut current = 0;
+                let owns =
+                    GetWindowSubclass(self.hwnd, Some(subclass), SUBCLASS_ID, Some(&mut current))
+                        .as_bool()
+                        && current == self.hook as usize;
+                if owns {
+                    let _ = RemoveWindowSubclass(self.hwnd, Some(subclass), SUBCLASS_ID);
+                }
+                let hook = &*self.hook;
                 hook.shared.accepting.store(false, Ordering::Release);
                 if let Ok(mut snapshot) = hook.shared.snapshot.lock() {
                     *snapshot = None;
@@ -599,12 +616,24 @@ impl Drop for Attachment {
                 if let Ok(mut queue) = hook.shared.queue.lock() {
                     queue.clear();
                 }
-                let _ = UiaReturnRawElementProvider(
-                    self.hwnd,
-                    WPARAM(0),
-                    LPARAM(0),
-                    None::<&IRawElementProviderSimple>,
-                );
+                let still_registered =
+                    GetWindowSubclass(self.hwnd, Some(subclass), SUBCLASS_ID, Some(&mut current))
+                        .as_bool()
+                        && current == self.hook as usize;
+                // If removal failed, NCDESTROY still owns the registered data.
+                // Freeing it here would leave a dangling callback pointer.
+                if !still_registered {
+                    let hook = Box::from_raw(self.hook);
+                    if owns {
+                        let _ = UiaReturnRawElementProvider(
+                            self.hwnd,
+                            WPARAM(0),
+                            LPARAM(0),
+                            None::<&IRawElementProviderSimple>,
+                        );
+                    }
+                    drop(hook);
+                }
             }
         }
     }
@@ -715,5 +744,66 @@ mod tests {
                 .is_err()
         );
         assert!(shared.queue.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn one_owned_window_has_one_provider_and_detaches_before_window_destruction() {
+        use std::{collections::VecDeque, sync::Mutex};
+        struct Owned(HWND);
+        impl Drop for Owned {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = DestroyWindow(self.0);
+                }
+            }
+        }
+        // SAFETY: create one hidden system-class fixture on this test thread;
+        // its owned guard destroys only this handle, even on assertion failure.
+        let window = Owned(
+            unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE::default(),
+                    windows::core::w!("STATIC"),
+                    windows::core::w!("SrcMgr provider lifetime fixture"),
+                    WS_OVERLAPPED,
+                    0,
+                    0,
+                    120,
+                    40,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .unwrap(),
+        );
+        let shared = Arc::new(Shared {
+            snapshot: Mutex::new(None),
+            queue: Mutex::new(VecDeque::new()),
+            accepting: AtomicBool::new(false),
+            wake: Arc::new(|| true),
+        });
+        let first = Attachment::new(Some(window.0.0 as i64), "", shared.clone()).unwrap();
+        assert!(
+            Attachment::new(Some(window.0.0 as i64), "", shared.clone()).is_err(),
+            "a second owner must not replace registered callback data"
+        );
+        let mut data = 0;
+        assert!(
+            unsafe { GetWindowSubclass(window.0, Some(subclass), SUBCLASS_ID, Some(&mut data)) }
+                .as_bool()
+        );
+        drop(first);
+        assert!(
+            unsafe { IsWindow(Some(window.0)) }.as_bool(),
+            "detaching a provider must not destroy its host"
+        );
+        assert!(
+            !unsafe { GetWindowSubclass(window.0, Some(subclass), SUBCLASS_ID, Some(&mut data)) }
+                .as_bool(),
+            "no freed callback data remains registered"
+        );
+        assert!(shared.snapshot.lock().unwrap().is_none());
+        assert!(!shared.accepting.load(Ordering::Acquire));
     }
 }

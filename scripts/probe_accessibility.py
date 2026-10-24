@@ -14,7 +14,9 @@ from windows_job_probe import OwnedTree
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ('exe','git','out'):parser.add_argument('--'+name,required=True)
-    parser.add_argument('--owned-topmost',action='store_true');args=parser.parse_args()
+    parser.add_argument('--owned-topmost',action='store_true')
+    parser.add_argument('--smoke',action='store_true',help='Only provider startup, live value, Back and normal exit; no repository trust or Git work')
+    args=parser.parse_args()
     workspace=Path(__file__).resolve().parents[1];root=Path(args.out).resolve()
     if not root.is_relative_to(workspace/'target/qualification'):parser.error('out must be a new owned qualification directory')
     root.mkdir(parents=True,exist_ok=False);(root/'harness-source.py').write_bytes(Path(__file__).read_bytes());(root/'uia-client-source.ps1').write_bytes(Path(__file__).with_name('uia_client.ps1').read_bytes())
@@ -63,6 +65,17 @@ def main():
         client('invoke',name='Open');title('MiniCon SrcMgr - Open repository | Ready')
         client('set',name='Repository path',value=str(repo)+' missing')
         client('set',name='Repository path',value=str(repo));nodes=client('list')['nodes'];assert any(n['name']=='Repository path' and n['value']==str(repo) for n in nodes),'ValuePattern did not edit the actual field'
+        if args.smoke:
+            client('invoke',name='Back');title('MiniCon SrcMgr')
+            user.PostMessageW(hwnd,0x10,0,0);child.wait(timeout=15);assert child.returncode==0
+            receipt['process_tree']=tree.receipt(sample)
+            assert receipt['process_tree']['coverage']=='COMPLETE' and not receipt['process_tree']['accounting']['active_processes']
+            assert not [p for p in receipt['process_tree']['processes'] if p.get('image','').casefold()=='git.exe'],'smoke unexpectedly executed Git'
+            assert run('rev-parse','HEAD')==head and run('write-tree')==initial and (repo/'a.txt').read_bytes()==b'changed\n'
+            receipt['cases']=['PASS: product loader, owned UIA provider, exact live path replacement, Back and normal exit; no owned Git and unchanged HEAD/index/source']
+            receipt['verdict']='PASS'
+            print(json.dumps({k:v for k,v in receipt.items() if k!='process_tree'}))
+            return
         client('invoke',name='Open');wait_entry(lambda:native_title(hwnd,user).startswith('MiniCon SrcMgr - Trust review | '),'native UIA Open bypassed/missed trust');capture('trust-uia')
         before_authority=time.time_ns()//100+116444736000000000
         client('invoke',name='Trust and open');opened();nodes=client('list')['nodes'];assert any(n['name']=='Stage' and n['enabled'] for n in nodes)

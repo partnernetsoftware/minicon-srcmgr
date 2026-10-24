@@ -9,6 +9,7 @@ on:
       - 'crates/srcmgr-state/**'
       - 'crates/srcmgr-git/**'
       - 'crates/srcmgr-platform-ext/**'
+      - 'build-support/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -22,6 +23,7 @@ on:
       - 'crates/srcmgr-state/**'
       - 'crates/srcmgr-git/**'
       - 'crates/srcmgr-platform-ext/**'
+      - 'build-support/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -67,5 +69,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p srcmgr-cli --bin minicon-srcmgr ignore_review
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Product executable loader and command entry
+        run: cargo run --locked -p srcmgr-cli -- --help
       - name: Affected client static checks
         run: cargo clippy --locked -p srcmgr-cli -p srcmgr-ui -p srcmgr-git -p srcmgr-platform-ext --all-targets -- -D warnings
