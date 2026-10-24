@@ -143,11 +143,12 @@ def main():
         raise
     finally:
         if child and child.poll() is None:
-            key(hwnd,0x1B)
             try:
-                wait_entry(lambda:not native_title(hwnd,user).startswith('MiniCon SrcMgr - Review'),'cleanup review cancellation did not settle');settled()
+                if hwnd:
+                    key(hwnd,0x1B)
+                    wait_entry(lambda:not native_title(hwnd,user).startswith('MiniCon SrcMgr - Review'),'cleanup review cancellation did not settle');settled()
             except Exception as error:receipt['cleanup_readiness_error']=repr(error)
-            user.PostMessageW(hwnd,0x10,0,0)
+            if hwnd:user.PostMessageW(hwnd,0x10,0,0)
             try:child.wait(timeout=15)
             except sp.TimeoutExpired:receipt['forced_close']=True;child.terminate();child.wait(timeout=5)
         receipt['exit_code']=child.returncode if child else None

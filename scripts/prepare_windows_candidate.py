@@ -228,6 +228,16 @@ def main():
         else:
             entry["notices"] = ["LICENSE"]
         inventory.append(entry)
+    require(command("rustc", "--version", "--verbose", cwd=ROOT).decode() == build["compiler"],
+            "installed compiler differs from the candidate's runtime notice source")
+    sysroot = Path(command("rustc", "--print", "sysroot", cwd=ROOT).decode().strip())
+    rust_docs = sysroot / "share/doc/rust"
+    runtime_notices = []
+    for notice in [rust_docs / "COPYRIGHT-library.html", *sorted((rust_docs / "licenses").glob("*.txt"))]:
+        name = "licenses/rust-standard-library/" + notice.relative_to(rust_docs).as_posix()
+        files[name] = notice.read_bytes()
+        runtime_notices.append(name)
+    require(len(runtime_notices) > 1, "Rust standard-library distribution notices are unavailable")
     # A PowerShell 7 parent can export incompatible module paths into 5.1.
     # Let this no-profile inspection host discover its own built-in modules.
     env = {k: v for k, v in os.environ.items() if k.casefold() != "psmodulepath"}
@@ -241,7 +251,8 @@ def main():
         "Conservative locked Windows normal/build dependency inventory, including compiler tooling. "
         "License declarations and copied upstream texts require distribution review; this is not a legal clearance.\n\n"
         + "\n".join(f"- {p['name']} {p['version']}: {p['license']}; " + ", ".join(p["notices"]) for p in inventory)
-        + "\n").encode()
+        + "\n\nRust standard-library copyright index and conservative bundled license catalogue: "
+        + ", ".join(runtime_notices) + "\n").encode()
     files["START.md"] = ("# Internal candidate — not qualified for publication\n\n"
         "Start `minicon-srcmgr.exe` for the GUI. Open/Create are explicit; Git is separately installed "
         "(minimum baseline 2.43, capability checks still apply). You may select Git in the application. "
@@ -265,7 +276,8 @@ def main():
         "runtime_resolution": "NOT-RUN on clean supported image", "git": "separately installed; baseline >=2.43",
         "authenticode_observed": signature, "release_qualification": "UNQUALIFIED",
         "signing_gate": "NOT-QUALIFIED", "scan_gate": "NOT-RUN", "notice_review": "PENDING",
-        "evidence": receipts, "dependencies": inventory, "packager_sha256": sha(Path(__file__).read_bytes()),
+        "evidence": receipts, "dependencies": inventory, "rust_standard_library_notices": runtime_notices,
+        "packager_sha256": sha(Path(__file__).read_bytes()),
         "files": {name: sha(data) for name, data in sorted(files.items())},
     }
     files["manifest.json"] = (json.dumps(document, indent=2) + "\n").encode()
