@@ -70,6 +70,11 @@ jobs:
           cargo test --locked -p srcmgr-cli --bin minicon-srcmgr ignore_review
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Product executable loader and command entry
-        run: cargo run --locked -p srcmgr-cli -- --help
+        shell: pwsh
+        run: |
+          $loaderProfile = Join-Path $env:RUNNER_TEMP ('srcmgr-loader-' + [guid]::NewGuid().ToString('N'))
+          $output = cargo run --locked -p srcmgr-cli -- --profile $loaderProfile setting get history.limit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($output -ne 'unset') { throw 'Fresh product profile did not return the known unset setting' }
       - name: Affected client static checks
         run: cargo clippy --locked -p srcmgr-cli -p srcmgr-ui -p srcmgr-git -p srcmgr-platform-ext --all-targets -- -D warnings
