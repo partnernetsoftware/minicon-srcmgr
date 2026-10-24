@@ -3,6 +3,7 @@
 //! the [`Backend`] trait on a worker thread.
 
 mod model;
+mod entry_input;
 mod tools;
 mod locate;
 pub use locate::{LocateForm, LocateWork};

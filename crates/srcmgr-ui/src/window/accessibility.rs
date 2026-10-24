@@ -263,14 +263,14 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 "Directory (parent must exist)",
                 &form.path,
                 path,
-                !form.submitted,
+                !form.submitted && !workspace.entry_composing(),
                 !form.branch_focus,
             );
             b.input(
                 "Initial branch",
                 &form.branch,
                 branch,
-                !form.submitted,
+                !form.submitted && !workspace.entry_composing(),
                 form.branch_focus,
             );
         }
@@ -283,22 +283,29 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
             },
             allow,
             !form.submitted
+                && !workspace.entry_composing()
                 && pending == 0
                 && (reviewing || (!form.path.is_empty() && !form.branch.is_empty())),
         );
         b.button(
             if reviewing { "Back" } else { "Cancel" },
             cancel,
-            !form.submitted,
+            !form.submitted && !workspace.entry_composing(),
         );
     } else if let Some(form) = workspace.identity_form() {
         let (name, email) = create_fields(main, grid);
-        b.input("Name", &form.name, name, !form.submitted, !form.email_focus);
+        b.input(
+            "Name",
+            &form.name,
+            name,
+            !form.submitted && !workspace.entry_composing(),
+            !form.email_focus,
+        );
         b.input(
             "Email",
             &form.email,
             email,
-            !form.submitted,
+            !form.submitted && !workspace.entry_composing(),
             form.email_focus,
         );
         b.text(
@@ -313,9 +320,13 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 "Save local"
             },
             allow,
-            !form.submitted && pending == 0,
+            !form.submitted && !workspace.entry_composing() && pending == 0,
         );
-        b.button("Cancel", cancel, !form.submitted || form.ticket.is_none());
+        b.button(
+            "Cancel",
+            cancel,
+            !form.submitted && !workspace.entry_composing() || form.ticket.is_none(),
+        );
     } else if let Some(prompt) = workspace.prompt().filter(|p| {
         matches!(
             p.kind(),
@@ -330,7 +341,13 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
             PromptKind::NewBranch => "Branch name",
             PromptKind::Commit => "Commit message",
         };
-        b.input(label, prompt.text(), field, !prompt.pending(), true);
+        b.input(
+            label,
+            prompt.text(),
+            field,
+            !prompt.pending() && !workspace.entry_composing(),
+            true,
+        );
         if prompt.kind() == PromptKind::OpenRepository
             && workspace.is_welcome()
             && !workspace.snapshot().recents.is_empty()
@@ -340,7 +357,11 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                     .into_iter()
                     .zip(["Open", "Locate recent", "Back"])
             {
-                b.button(name, rect, !prompt.pending());
+                b.button(
+                    name,
+                    rect,
+                    !prompt.pending() && !workspace.entry_composing(),
+                );
             }
         } else {
             b.button(
@@ -350,9 +371,13 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                     "Open"
                 },
                 allow,
-                !prompt.pending() && pending == 0,
+                !prompt.pending() && !workspace.entry_composing() && pending == 0,
             );
-            b.button("Back", cancel, !prompt.pending());
+            b.button(
+                "Back",
+                cancel,
+                !prompt.pending() && !workspace.entry_composing(),
+            );
         }
     } else if workspace.modal() {
         // Other forms are named/readable while their field/action semantics are
@@ -704,6 +729,11 @@ mod tests {
                 .iter()
                 .any(|n| n.name == "Initial branch" && n.editable && n.text == "feature/native")
         );
+        workspace.ime_preedit("未完成".into());
+        let composing = build(&workspace, surface(), 0);
+        assert!(!enabled(&composing, "Review creation"));
+        assert!(!enabled(&composing, "Initial branch"));
+        workspace.ime_preedit(String::new());
         assert_eq!(
             workspace.key(Key::Enter),
             Effect::Send(Job::PrepareCreate {
@@ -779,6 +809,11 @@ mod tests {
                 .iter()
                 .any(|n| n.name == "Name" && n.text == "New 中文")
         );
+        workspace.ime_preedit("未完成".into());
+        let composing = build(&workspace, surface(), 0);
+        assert!(!enabled(&composing, "Save local"));
+        assert!(!enabled(&composing, "Email"));
+        workspace.ime_preedit(String::new());
         assert_eq!(
             workspace.key(Key::Enter),
             Effect::Send(Job::SaveIdentity {

@@ -250,6 +250,7 @@ pub struct FilterEditor {
 enum TabAction { Select(NativePath), Close, Quit }
 
 pub struct Workspace {
+    entry_input: Option<crate::entry_input::EntryInput>,
     locate: Option<crate::LocateForm>,
     tools: Option<crate::ToolForm>,
     navigation_issue: Option<crate::NavigationIssue>,
@@ -307,6 +308,7 @@ impl Workspace {
     pub fn new(snapshot: Snapshot) -> Self {
         let tabs = snapshot.repository.as_ref().map(|path| RepositoryTab { path: path.clone(), head: snapshot.head.clone() }).into_iter().collect();
         let mut workspace = Self {
+            entry_input: None,
             locate: None,
             tools: None,
             navigation_issue: None,
@@ -375,7 +377,7 @@ impl Workspace {
     pub fn filter_query(&self, pane: Pane) -> &str { Self::filter_slot(pane).map_or("", |i| self.filters[i].query.as_str()) }
     pub fn visible_rows(&self, pane: Pane) -> &[usize] { Self::filter_slot(pane).map_or(&[], |i| self.filters[i].rows.as_slice()) }
     pub fn filter_editor(&self) -> Option<&FilterEditor> { self.filter_editor.as_ref() }
-    pub fn clipboard_context(&self) -> Option<u64> { self.locate.as_ref().filter(|f| f.working.is_none() && f.review.is_none()).map(|f| f.id).or_else(|| self.tools.as_ref().filter(|f| f.working.is_none() && f.review.is_none()).map(|f| f.id)).or_else(|| self.filter_editor.as_ref().map(|e| e.id)).or_else(|| self.composer.as_ref().map(|c| c.id)) }
+    pub fn clipboard_context(&self) -> Option<u64> { if let Some((_,input))=self.entry_editor() {return input.preedit.is_empty().then(||self.entry_input.as_ref().unwrap().id);} self.locate.as_ref().filter(|f| f.working.is_none() && f.review.is_none()).map(|f| f.id).or_else(|| self.tools.as_ref().filter(|f| f.working.is_none() && f.review.is_none()).map(|f| f.id)).or_else(|| self.filter_editor.as_ref().map(|e| e.id)).or_else(|| self.composer.as_ref().map(|c| c.id)) }
 
     pub fn locate_form(&self) -> Option<&crate::LocateForm> { self.locate.as_ref() }
     pub fn request_locate(&mut self) -> Effect {
@@ -748,7 +750,66 @@ impl Workspace {
         else { "Draft unsaved" }
     }
 
+    fn entry_spec(&self)->Option<(crate::entry_input::Slot,u64,usize,&str)> {
+        use crate::entry_input::Slot;
+        if self.trust.is_some()||self.confirm.is_some()||self.locate.is_some()||self.tools.is_some()||self.filter_editor.is_some()||self.composer.is_some(){return None;}
+        if let Some(form)=self.identity.as_ref().filter(|form|!form.submitted) {
+            return Some((if form.email_focus {Slot::IdentityEmail} else {Slot::IdentityName},form.id,1024,if form.email_focus {&form.email} else {&form.name}));
+        }
+        if let Some(form)=self.create.as_ref().filter(|form|!form.submitted&&form.review.is_none()) {
+            return Some((if form.branch_focus {Slot::CreateBranch} else {Slot::CreatePath},form.id,if form.branch_focus {255} else {32*1024},if form.branch_focus {&form.branch} else {&form.path}));
+        }
+        self.prompt.as_ref().filter(|p|!p.pending()&&p.kind!=PromptKind::Commit).map(|p|(Slot::Prompt,p.id,32*1024,p.text.as_str()))
+    }
+
+    pub(crate) fn prepare_entry_input(&mut self) {
+        let valid=self.entry_spec().is_some_and(|(slot,context,_,text)|self.entry_input.as_ref().is_some_and(|input|input.slot==slot&&input.context==context&&input.editor.text==text));
+        if !valid {self.entry_input=self.entry_spec().map(|(slot,context,limit,text)|crate::entry_input::EntryInput::new(slot,context,text,limit));}
+    }
+
+    pub(crate) fn entry_editor(&self)->Option<(crate::entry_input::Slot,&ComposerState)> {
+        let (slot,context,_,text)=self.entry_spec()?;
+        self.entry_input.as_ref().filter(|input|input.slot==slot&&input.context==context&&input.editor.text==text).map(|input|(slot,&input.editor))
+    }
+
+    pub(crate) fn entry_active_slot(&self)->Option<crate::entry_input::Slot> {self.entry_spec().map(|(slot,_,_,_)|slot)}
+
+    pub(crate) fn entry_composing(&self)->bool {self.entry_editor().is_some_and(|(_,editor)|!editor.preedit.is_empty())}
+
+    fn finish_entry_edit(&mut self,result:Result<Effect,String>)->Effect {
+        let effect=match result {Ok(effect)=>effect,Err(message)=>{self.notice=Some(message);return Effect::Nothing;}};
+        if let Some(input)=self.entry_input.as_ref() && self.entry_spec().is_some_and(|(_,_,_,text)|text!=input.editor.text) {
+            let slot=input.slot; let text=input.editor.text.clone();
+            use crate::entry_input::Slot;
+            match slot {
+                Slot::Prompt=>{let prompt=self.prompt.as_mut().unwrap();prompt.text=text;if prompt.kind==PromptKind::GitSettings&&self.git_detail.starts_with("Saved and applied."){self.git_detail.insert_str(0,"Unsaved selection. Previously applied choice:\n");}}
+                Slot::CreatePath=>self.create.as_mut().unwrap().path=text,
+                Slot::CreateBranch=>self.create.as_mut().unwrap().branch=text,
+                Slot::IdentityName=>self.identity.as_mut().unwrap().name=text,
+                Slot::IdentityEmail=>self.identity.as_mut().unwrap().email=text,
+            }
+            self.notice=None;
+        }
+        effect
+    }
+
+    pub(crate) fn click_entry_caret(&mut self,column:usize,columns:usize)->Effect {
+        self.prepare_entry_input();
+        if self.entry_composing(){return Effect::Nothing;}
+        if let Some(input)=self.entry_input.as_mut() {
+            input.id=crate::tools::context_id();
+            let editor=&mut input.editor;
+            let visible=crate::entry_input::viewport(editor,columns);
+            let prefix=usize::from(visible.truncated);
+            editor.caret=composer::caret_at_cell(&editor.text,visible.text,column.saturating_sub(prefix));
+            editor.anchor=None;editor.select_all=false;
+        }
+        Effect::Nothing
+    }
+
     pub fn ime_preedit(&mut self, text: String) {
+        self.prepare_entry_input();
+        if let Some(input)=self.entry_input.as_mut() {input.id=crate::tools::context_id();input.editor.preedit=text.chars().take(4096).collect();return;}
         if let Some(form) = self.locate.as_mut() { if form.working.is_none() && form.review.is_none() { form.editor.preedit = text.chars().take(4096).collect(); } return; }
         if let Some(form) = self.tools.as_mut() { if form.working.is_none() && form.review.is_none() { form.editor_mut().preedit = text.chars().take(4096).collect(); } return; }
         if let Some(form) = self.filter_editor.as_mut() { form.editor.preedit = text.chars().take(4096).collect(); return; }
@@ -760,17 +821,8 @@ impl Workspace {
     /// Native accessibility replaces committed field text; it never submits.
     /// Composer changes retain the existing selection/save/IME boundary.
     pub(crate) fn replace_editable_text(&mut self,text:String)->Effect {
-        if let Some(form)=self.create.as_mut() {
-            let limit=if form.branch_focus {255} else {32*1024};
-            if form.submitted||form.review.is_some()||text.len()>limit||text.contains(['\r','\n','\0']) {return Effect::Nothing;}
-            if form.branch_focus {form.branch=text;} else {form.path=text;}
-            return Effect::Nothing;
-        }
-        if let Some(form)=self.identity.as_mut() {
-            if form.submitted||text.len()>1024||text.contains(['\r','\n','\0']) {return Effect::Nothing;}
-            if form.email_focus {form.email=text;} else {form.name=text;}
-            return Effect::Nothing;
-        }
+        self.prepare_entry_input();
+        if let Some(input)=self.entry_input.as_mut() {let result=input.replace(&text);return self.finish_entry_edit(result);}
         if let Some(form)=self.composer.as_ref() {
             if form.focus!=CommitFocus::Message||!form.editor.preedit.is_empty()||self.prompt.as_ref().is_some_and(Prompt::pending)||text.len()>composer::PASTE_LIMIT_BYTES{return Effect::Nothing;}
             self.key(Key::SelectAll);return self.key(Key::Text(text));
@@ -787,6 +839,8 @@ impl Workspace {
     }
 
     pub fn ime_commit(&mut self, text: String) -> Effect {
+        self.prepare_entry_input();
+        if let Some(input)=self.entry_input.as_mut() {input.editor.preedit.clear();return self.key(Key::Text(text));}
         if let Some(form) = self.locate.as_mut() { form.editor.preedit.clear(); return form.edit(Key::Text(text)); }
         if let Some(form) = self.tools.as_mut() { form.editor_mut().preedit.clear(); return form.edit_key(Key::Text(text)); }
         if let Some(form) = self.filter_editor.as_mut() { form.editor.preedit.clear(); return self.filter_key(Key::Text(text)); }
@@ -907,6 +961,16 @@ impl Workspace {
     }
 
     pub fn complete_clipboard(&mut self, id: u64, text: Option<String>, cut: Option<String>) -> Effect {
+        if self.entry_spec().is_some() {
+            if self.clipboard_context()!=Some(id) {return Effect::Nothing;}
+            if let Some(text)=text {return self.key(Key::Pasted(text));}
+            if let Some(cut)=cut && self.entry_input.as_ref().is_some_and(|input|composer::selection_text(&input.editor)==Some(cut.as_str())) {
+                let input=self.entry_input.as_mut().unwrap();input.id=crate::tools::context_id();
+                composer::cut(&mut input.editor);
+                return self.finish_entry_edit(Ok(Effect::Nothing));
+            }
+            return Effect::Nothing;
+        }
         if let Some(form) = self.locate.as_mut() {
             if form.id != id || form.working.is_some() || form.review.is_some() { return Effect::Nothing; }
             if let Some(text) = text { return form.edit(Key::Pasted(text)); }
@@ -1023,7 +1087,8 @@ impl Workspace {
     }
 
     pub fn focus_identity_field(&mut self, email: bool) -> Effect {
-        if let Some(form) = self.identity.as_mut() && !form.submitted { form.email_focus = email; }
+        if self.entry_composing(){return Effect::Nothing;}
+        if let Some(form) = self.identity.as_mut() && !form.submitted { if form.email_focus!=email {self.entry_input=None;} form.email_focus = email; }
         Effect::Nothing
     }
 
@@ -1038,7 +1103,7 @@ impl Workspace {
         }
         match key {
             Key::Escape | Key::CtrlC => { self.identity = None; Effect::Send(Job::CancelEntry) }
-            Key::Tab | Key::BackTab => { form.email_focus = !form.email_focus; Effect::Nothing }
+            Key::Tab | Key::BackTab => { self.entry_input=None; form.email_focus = !form.email_focus; Effect::Nothing }
             Key::Up => self.scroll_trust(-1),
             Key::Down => self.scroll_trust(1),
             Key::PageUp => self.scroll_trust(-(PAGE_LINES as isize)),
@@ -1071,7 +1136,8 @@ impl Workspace {
         Effect::Send(Job::LoadGitSettings)
     }
     pub fn focus_create_field(&mut self, branch: bool) -> Effect {
-        if let Some(form) = self.create.as_mut() && !form.submitted && form.review.is_none() { form.branch_focus = branch; }
+        if self.entry_composing(){return Effect::Nothing;}
+        if let Some(form) = self.create.as_mut() && !form.submitted && form.review.is_none() { if form.branch_focus!=branch {self.entry_input=None;} form.branch_focus = branch; }
         Effect::Nothing
     }
     pub fn request_create(&mut self) -> Effect {
@@ -1112,7 +1178,7 @@ impl Workspace {
         }
         match key {
             Key::Escape | Key::CtrlC => { self.create = None; Effect::Send(Job::CancelEntry) }
-            Key::Tab | Key::BackTab => { form.branch_focus = !form.branch_focus; Effect::Nothing }
+            Key::Tab | Key::BackTab => { self.entry_input=None; form.branch_focus = !form.branch_focus; Effect::Nothing }
             Key::Enter => {
                 if form.path.is_empty() || form.branch.is_empty() { return Effect::Nothing; }
                 form.submitted = true;
@@ -1356,6 +1422,20 @@ impl Workspace {
     }
 
     pub fn key(&mut self, key: Key) -> Effect {
+        self.prepare_entry_input();
+        if self.entry_input.is_some() {
+            let editing=matches!(&key,Key::SelectAll|Key::CtrlC|Key::Cut|Key::Paste|Key::Backspace|Key::Delete|Key::Left|Key::Right|Key::Home|Key::End|Key::EditMove{..}|Key::Char(_)|Key::Space|Key::Text(_)|Key::Pasted(_));
+            if editing||self.entry_composing() {
+                let result=self.entry_input.as_mut().unwrap().key(key);
+                return self.finish_entry_edit(result);
+            }
+        }
+        let effect=self.key_inner(key);
+        self.prepare_entry_input();
+        effect
+    }
+
+    fn key_inner(&mut self, key: Key) -> Effect {
         if let Some(form) = self.locate.as_mut() {
             if !form.editor.preedit.is_empty() { return form.edit(key); }
             if key == Key::Escape { return self.cancel_locate(); }
@@ -3487,4 +3567,68 @@ mod tests {
         workspace.reply(Reply::Full(smaller));
         assert_eq!(workspace.selected(Pane::Files), 0);
     }
+    #[test]
+    fn entry_ime_composition_cannot_prepare_or_save_before_committed_text() {
+        let mut ui=Workspace::new(Snapshot::welcome());
+        ui.request_create();ui.key(Key::Text("target".into()));ui.ime_preedit("未完成".into());
+        assert_eq!(ui.key(Key::Enter),Effect::Nothing,"uncommitted path composition must not prepare repository creation");
+        assert!(!ui.create_form().unwrap().submitted);
+        ui.ime_commit("中文".into());
+        assert_eq!(ui.key(Key::Enter),Effect::Send(Job::PrepareCreate{path:NativePath::new("target中文"),branch:"main".into()}));
+        let mut ui=Workspace::new(snapshot(None));
+        ui.request_identity();ui.reply(Reply::IdentitySettings{ticket:"identity".into(),name:"Existing".into(),email:"old@example.invalid".into(),detail:"local".into()});
+        ui.ime_preedit("未完成".into());
+        assert_eq!(ui.key(Key::Enter),Effect::Nothing,"composition cannot write the reviewed local configuration");
+        assert!(!ui.identity_form().unwrap().submitted);
+    }
+
+    #[test]
+    fn entry_clipboard_completion_cannot_cut_equal_text_at_a_new_selection() {
+        let mut ui=Workspace::new(Snapshot::welcome());ui.request_create();
+        ui.key(Key::Text("a a".into()));ui.key(Key::Home);
+        ui.key(Key::EditMove{movement:Move::Right,extend:true});
+        assert_eq!(ui.key(Key::Cut),Effect::Copy{text:"a".into(),cut:true});
+        let old=ui.clipboard_context().unwrap();
+        ui.key(Key::End);ui.key(Key::EditMove{movement:Move::Left,extend:true});
+        assert_eq!(composer::selection_text(ui.entry_editor().unwrap().1),Some("a"));
+        ui.complete_clipboard(old,None,Some("a".into()));
+        assert_eq!(ui.create_form().unwrap().path,"a a","the old cut cannot erase another equal selection");
+    }
+
+    #[test]
+    fn entry_editing_keeps_literal_targets_and_fences_paste_across_focus_and_submission() {
+        let mut ui=Workspace::new(Snapshot::welcome());ui.request_create();
+        assert_eq!(ui.key(Key::Text("ab中文cd".into())),Effect::Nothing);
+        ui.key(Key::Home);ui.key(Key::EditMove{movement:Move::Right,extend:true});ui.key(Key::EditMove{movement:Move::Right,extend:true});
+        ui.key(Key::Pasted("新".into()));assert_eq!(ui.create_form().unwrap().path,"新中文cd");
+        assert_eq!(ui.key(Key::Paste),Effect::Paste);let old=ui.clipboard_context().unwrap();
+        ui.key(Key::Tab);ui.key(Key::BackTab);ui.complete_clipboard(old,Some("wrong field".into()),None);
+        assert_eq!(ui.create_form().unwrap().path,"新中文cd");
+        ui.key(Key::SelectAll);assert_eq!(ui.key(Key::CtrlC),Effect::Copy{text:"新中文cd".into(),cut:false});
+        ui.key(Key::Pasted("bad\npath".into()));assert_eq!(ui.create_form().unwrap().path,"新中文cd");assert!(ui.notice().unwrap().contains("one line"));
+        assert_eq!(composer::selection_text(ui.entry_editor().unwrap().1),Some("新中文cd"));
+        ui.key(Key::Pasted("C:/literal ; & $() 中文".into()));
+        assert_eq!(ui.key(Key::Enter),Effect::Send(Job::PrepareCreate{path:NativePath::new("C:/literal ; & $() 中文"),branch:"main".into()}));
+        assert_eq!(ui.clipboard_context(),None);
+        ui.complete_clipboard(old,Some("late pending".into()),None);assert_eq!(ui.create_form().unwrap().path,"C:/literal ; & $() 中文");
+    }
+    #[test]
+    fn entry_git_selection_and_open_use_shared_replacement_and_explicit_submit_only() {
+        let mut ui=Workspace::new(Snapshot::welcome());ui.request_git_settings();
+        ui.reply(Reply::GitSettings{path:Some(NativePath::new("saved-git.exe")),detail:"Saved and applied.".into()});
+        ui.key(Key::SelectAll);assert_eq!(ui.key(Key::Pasted("C:/tools/git 中文.exe".into())),Effect::Nothing);
+        assert!(ui.git_detail().starts_with("Unsaved selection"));
+        ui.key(Key::SelectAll);ui.key(Key::Pasted("x".repeat(32769)));assert_eq!(ui.prompt().unwrap().text(),"C:/tools/git 中文.exe");
+        assert!(ui.notice().unwrap().contains("32768"));
+        assert_eq!(ui.key(Key::Enter),Effect::Send(Job::ConfigureGit(Some(NativePath::new("C:/tools/git 中文.exe")))));
+        ui.reply(Reply::PromptFailed{action:PromptAction::GitSettings,text:"selection refused".into()});
+        assert_eq!(ui.prompt().unwrap().text(),"C:/tools/git 中文.exe");ui.key(Key::Escape);
+        ui.request_open();ui.key(Key::SelectAll);ui.key(Key::Text("C:/repos/source".into()));
+        ui.ime_preedit("未完成".into());assert_eq!(ui.key(Key::Enter),Effect::Nothing);
+        ui.key(Key::Escape);assert!(ui.prompt().is_some(),"first Escape cancels composition only");
+        assert_eq!(ui.prompt().unwrap().text(),"C:/repos/source");
+        let Effect::Send(Job::EnterRepository{path:Some(path),..})=ui.key(Key::Enter) else {panic!("explicit Open must enter the literal target");};
+        assert_eq!(path,NativePath::new("C:/repos/source"));
+    }
+
 }

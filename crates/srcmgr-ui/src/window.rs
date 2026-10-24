@@ -281,6 +281,24 @@ impl StatusWindow {
         let scale = window.scale_factor()?;
         let px = (x * scale).round() as i64;
         let py = (y * scale).round() as i64;
+        self.workspace.prepare_entry_input();
+        if matches!(gesture,Gesture::Click) && self.workspace.entry_composing() {return Ok(PixelWindowDirective::Continue);}
+        if matches!(gesture,Gesture::Click) {
+            use crate::entry_input::Slot;
+            let main=layout(surface.width,surface.height,surface.grid).main;
+            for slot in [Slot::Prompt,Slot::CreatePath,Slot::CreateBranch,Slot::IdentityName,Slot::IdentityEmail] {
+                if let Some(rect)=entry_rect(&self.workspace,slot,main,surface.grid) && contains(rect,px,py) {
+                    match slot {
+                        Slot::CreatePath|Slot::CreateBranch=>{self.workspace.focus_create_field(slot==Slot::CreateBranch);}
+                        Slot::IdentityName|Slot::IdentityEmail=>{self.workspace.focus_identity_field(slot==Slot::IdentityEmail);}
+                        Slot::Prompt=>{},
+                    }
+                    let inner=inner_of(rect,surface.grid);
+                    let effect=self.workspace.click_entry_caret(((px-inner.x).max(0) as f32/surface.grid.advance) as usize,inner.cols);
+                    let directive=self.dispatch(effect);window.request_redraw();return Ok(directive);
+                }
+            }
+        }
         if self.workspace.locate_form().is_some() {
             let main = layout(surface.width, surface.height, surface.grid).main;
             let (allow, cancel) = trust_buttons(main, surface.grid);
@@ -862,6 +880,16 @@ impl PixelWindowApplication for StatusWindow {
         };
         let width = frame.width();
         let height = frame.height();
+        self.workspace.prepare_entry_input();
+        if !self.ime_position_failed && let Some((slot,editor))=self.workspace.entry_editor()
+            && let Some(rect)=entry_rect(&self.workspace,slot,layout(i64::from(width),i64::from(height),grid).main,grid) {
+            let input=inner_of(rect,grid);
+            let visible=crate::entry_input::viewport(editor,input.cols);
+            let before=if visible.preedit>0 {0} else {composer::cells(&editor.text[visible.text..editor.caret])};
+            let cell=(usize::from(visible.truncated)+before+composer::cells(&editor.preedit[visible.preedit..])).min(input.cols.saturating_sub(1));
+            let area=minicon_platform::window_host::LogicalRect::new((input.x+cell as i64*grid.advance.round() as i64) as f64/scale,input.top as f64/scale,f64::from(grid.advance)/scale,grid.row as f64/scale);
+            if let Err(error)=window.set_ime_cursor_area(area) {self.ime_position_failed=true;let _=self.workspace.reply(Reply::Notice(format!("IME caret positioning is unavailable: {error}")));}
+        }
         if !self.ime_position_failed && let Some(form) = self.workspace.locate_form() && form.working.is_none() && form.review.is_none() {
             let input = inner_of(filter_field(layout(i64::from(width), i64::from(height), grid).main, grid), grid);
             let visible = composer::visible_window(&form.editor.text, &form.editor.preedit, form.editor.caret, 1, input.cols);
@@ -1621,12 +1649,12 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         frame(draws, body, grid, true, "Repository identity (local scope)");
         let (name, email) = create_fields(rect, grid);
         let label = |text: &str| srcmgr_domain::NativePath::new(text).display_label();
-        text_panel(draws, name, grid, !form.email_focus && !form.submitted, "Name", &[Line { tone: Tone::Text, text: field_tail(&label(&form.name), inner_of(name, grid).cols, !form.email_focus && !form.submitted) }], 0, None);
-        text_panel(draws, email, grid, form.email_focus && !form.submitted, "Email", &[Line { tone: Tone::Text, text: field_tail(&label(&form.email), inner_of(email, grid).cols, form.email_focus && !form.submitted) }], 0, None);
+        entry_field(draws,workspace,name,grid,crate::entry_input::Slot::IdentityName,"Name",&label(&form.name));
+        entry_field(draws,workspace,email,grid,crate::entry_input::Slot::IdentityEmail,"Email",&label(&form.email));
         let info = identity_info(rect, grid);
         text_panel(draws, info, grid, false, "Effective identity and config sources (scroll)", &wrapped_lines(&form.detail, inner_of(info, grid).cols), workspace.trust_scroll(), None);
         let (save, cancel) = trust_buttons(rect, grid);
-        button_draw(draws, save, grid, if form.submitted { "Working..." } else if form.ticket.is_none() { "Reload preview" } else { "Save local" }, BORDER);
+        button_draw(draws, save, grid, if form.submitted { "Working..." } else if workspace.entry_composing() { "Finish IME" } else if form.ticket.is_none() { "Reload preview" } else { "Save local" }, BORDER);
         button_draw(draws, cancel, grid, "Cancel", FOCUS_BORDER);
         return;
     }
@@ -1638,14 +1666,12 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         } else {
             frame(draws, rect, grid, true, "Create local Git repository");
             let (path, branch) = create_fields(rect, grid);
-            let path_lines = vec![Line { tone: Tone::Text, text: field_tail(&form.path, inner_of(path, grid).cols, !form.branch_focus) }];
-            let branch_lines = vec![Line { tone: Tone::Text, text: field_tail(&form.branch, inner_of(branch, grid).cols, form.branch_focus) }];
-            text_panel(draws, path, grid, !form.branch_focus, "Directory (parent must exist)", &path_lines, 0, None);
-            text_panel(draws, branch, grid, form.branch_focus, "Initial branch", &branch_lines, 0, None);
+            entry_field(draws,workspace,path,grid,crate::entry_input::Slot::CreatePath,"Directory (parent must exist)",&form.path);
+            entry_field(draws,workspace,branch,grid,crate::entry_input::Slot::CreateBranch,"Initial branch",&form.branch);
             let info = Rect { y: branch.y + branch.height + grid.gap, height: (cancel.y - branch.y - branch.height - 2 * grid.gap).max(0), ..path };
             text_panel(draws, info, grid, false, "Before creating", &wrapped_lines("Choose a new or existing directory.\nExisting files stay unstaged and unchanged.\nReview the exact target before any write.\nTab or click switches fields; Esc cancels.", inner_of(info, grid).cols), 0, None);
         }
-        button_draw(draws, allow, grid, if form.submitted { "Working..." } else if form.review.is_some() { "Create repository" } else { "Review creation" }, BORDER);
+        button_draw(draws, allow, grid, if form.submitted { "Working..." } else if workspace.entry_composing() { "Finish IME" } else if form.review.is_some() { "Create repository" } else { "Review creation" }, BORDER);
         button_draw(draws, cancel, grid, if form.review.is_some() { "Back" } else { "Cancel" }, FOCUS_BORDER);
         return;
     }
@@ -1670,7 +1696,7 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
             let body = trust_content(rect, grid).0;
             frame(draws, body, grid, true, "Open repository");
             let (field, _) = create_fields(body, grid);
-            text_panel(draws, field, grid, !prompt.pending(), "Repository path", &[Line { tone: Tone::Text, text: field_tail(prompt.text(), inner_of(field, grid).cols, !prompt.pending()) }], 0, None);
+            entry_field(draws,workspace,field,grid,crate::entry_input::Slot::Prompt,"Repository path",prompt.text());
             let info = Rect { y: field.y + field.height + grid.gap, height: (body.y+body.height-field.y-field.height-grid.gap).max(0), ..field };
             let text = format!("{}\n\nOpen checks current repository identity and trust before activation. Existing files and drafts are preserved. Locate selected recent changes only its bookmark; it does not move files or copy old drafts/trust.", workspace.notice().unwrap_or("Enter a local repository path, then Open. Back returns without opening."));
             text_panel(draws, info, grid, false, if prompt.pending() { "Opening; wait for the result" } else { "Status and next step" }, &wrapped_lines(&text, inner_of(info, grid).cols), 0, None);
@@ -1683,12 +1709,12 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
             let (body, _) = trust_content(rect, grid);
             frame(draws, body, grid, true, "Application Git settings");
             let (field, _) = create_fields(body, grid);
-            text_panel(draws, field, grid, true, "Git executable (blank = PATH)", &[Line { tone: Tone::Text, text: field_tail(prompt.text(), inner_of(field, grid).cols, true) }], 0, None);
+            entry_field(draws,workspace,field,grid,crate::entry_input::Slot::Prompt,"Git executable (blank = PATH)",prompt.text());
             let info = Rect { y: field.y + field.height + grid.gap, height: (body.y + body.height - field.y - field.height - 2 * grid.gap).max(0), ..field };
             let text = format!("Selected path: {}\n\n{}", if prompt.text().is_empty() { "Automatic PATH discovery".into() } else { srcmgr_domain::NativePath::new(prompt.text()).display_label() }, workspace.git_detail());
             text_panel(draws, info, grid, false, "Selection and diagnostics", &wrapped_lines(&text, inner_of(info, grid).cols), 0, None);
             let (save, cancel) = trust_buttons(rect, grid);
-            button_draw(draws, save, grid, if prompt.pending() { "Working..." } else { "Test and save" }, BORDER);
+            button_draw(draws, save, grid, if prompt.pending() { "Working..." } else if workspace.entry_composing() { "Finish IME" } else { "Test and save" }, BORDER);
             button_draw(draws, cancel, grid, "Close", FOCUS_BORDER);
             return;
         }
@@ -1698,6 +1724,7 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
             PromptKind::OpenRepository => "Open repository path (trust is required before Git runs)",
             PromptKind::NewBranch => "New branch name",
         };
+        if prompt.kind()==PromptKind::NewBranch {entry_field(draws,workspace,rect,grid,crate::entry_input::Slot::Prompt,title,prompt.text());return;}
         let mut lines: Vec<Line> = format!("{}_", prompt.text())
             .split('\n')
             .map(|text| Line { tone: Tone::Text, text: text.to_owned() })
@@ -1798,6 +1825,35 @@ fn create_fields(rect: Rect, grid: Grid) -> (Rect, Rect) {
     let inner = inner_of(rect, grid);
     let path = Rect { x: inner.x, y: inner.top, width: inner.width, height: 3 * grid.row + 2 * grid.gap };
     (path, Rect { y: path.y + path.height + grid.gap, ..path })
+}
+
+fn entry_rect(workspace:&Workspace,slot:crate::entry_input::Slot,main:Rect,grid:Grid)->Option<Rect> {
+    use crate::entry_input::Slot;
+    match slot {
+        Slot::CreatePath|Slot::CreateBranch=>workspace.create_form().filter(|f|!f.submitted&&f.review.is_none()).map(|_|{let(a,b)=create_fields(main,grid);if slot==Slot::CreatePath {a} else {b}}),
+        Slot::IdentityName|Slot::IdentityEmail=>workspace.identity_form().filter(|f|!f.submitted).map(|_|{let(a,b)=create_fields(main,grid);if slot==Slot::IdentityName {a} else {b}}),
+        Slot::Prompt=>workspace.prompt().filter(|p|!p.pending()&&p.kind()!=PromptKind::Commit).map(|p|if p.kind()==PromptKind::NewBranch {main} else {create_fields(trust_content(main,grid).0,grid).0}),
+    }
+}
+
+fn entry_field(draws:&mut Vec<Draw>,workspace:&Workspace,rect:Rect,grid:Grid,slot:crate::entry_input::Slot,title:&str,text:&str) {
+    let focused=workspace.entry_active_slot()==Some(slot);
+    let Some((_,editor))=workspace.entry_editor().filter(|(active,_)|*active==slot) else {
+        text_panel(draws,rect,grid,focused,title,&[Line{tone:Tone::Text,text:field_tail(text,inner_of(rect,grid).cols,focused)}],0,None);return;
+    };
+    let input=frame(draws,rect,grid,true,title);
+    let visible=crate::entry_input::viewport(editor,input.cols);
+    let prefix=usize::from(visible.truncated);
+    if visible.preedit==0 && let Some((a,b))=composer::selection_bounds(editor) {
+        let a=a.max(visible.text).min(editor.text.len());let b=b.max(a).min(editor.text.len());
+        let before=prefix+composer::cells(&editor.text[visible.text..a])+usize::from(a>editor.caret);
+        let cells=(composer::cells(&editor.text[a..b])+usize::from(a<=editor.caret&&b>editor.caret)).min(input.cols.saturating_sub(before));
+        draws.push(Draw::Rect{rect:Rect{x:input.x+before as i64*grid.advance.round() as i64,y:input.top,width:cells as i64*grid.advance.round() as i64,height:grid.row},colour:SELECTION});
+    }
+    let mut painted=if visible.truncated {"‹".to_owned()} else {String::new()};
+    if visible.preedit==0 {painted.push_str(&editor.text[visible.text..editor.caret]);}
+    painted.push_str(&editor.preedit[visible.preedit..]);painted.push('|');painted.push_str(&editor.text[editor.caret..]);
+    draws.push(Draw::Text{x:input.x,baseline:input.top+grid.ascent,text:fit(&painted,input.cols),colour:colour(Tone::Text)});
 }
 
 fn field_tail(text: &str, columns: usize, focused: bool) -> String {
@@ -2403,4 +2459,19 @@ mod tests {
         assert!(!all.contains(&"alpha"), "the first line scrolled away");
         assert!(all.contains(&"beta"));
     }
+    #[test]
+    fn entry_pointer_caret_and_long_preedit_render_stay_inside_the_active_field() {
+        let mut workspace=Workspace::new(Snapshot::welcome());workspace.request_create();
+        workspace.key(Key::Text("ab中文cd".into()));workspace.click_entry_caret(2,80);workspace.key(Key::Text("X".into()));
+        assert_eq!(workspace.create_form().unwrap().path,"abX中文cd");
+        workspace.key(Key::Home);workspace.ime_preedit("中".repeat(100));
+        let panels=layout(1040,680,GRID);let rect=entry_rect(&workspace,crate::entry_input::Slot::CreatePath,panels.main,GRID).unwrap();let inner=inner_of(rect,GRID);
+        let draws=scene(&workspace,1040,680,GRID,0);
+        let text=draws.iter().find_map(|draw|match draw {Draw::Text{x,baseline,text,..} if *x==inner.x&&*baseline==inner.top+GRID.ascent=>Some(text),_=>None}).unwrap();
+        assert!(text.contains('|'),"IME and horizontal scrolling must keep the caret visible");
+        assert!(composer::cells(text)<=inner.cols);
+        assert!(workspace.entry_composing());
+        assert_eq!(workspace.key(Key::Enter),Effect::Nothing);
+    }
+
 }
