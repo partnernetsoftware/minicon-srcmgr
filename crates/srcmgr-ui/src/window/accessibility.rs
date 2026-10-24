@@ -211,9 +211,25 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 .review
                 .as_ref()
                 .map(|r| {
-                    r.files
-                        .iter()
-                        .map(|f| format!("{} {}", f.change, f.path.display_label()))
+                    let inner = inner_of(geometry.index, grid);
+                    let rows = (inner.rows - COMMIT_CONTEXT_ROWS).max(1);
+                    let offset = window_start(form.selected, r.files.len(), rows);
+                    let end = (offset + rows as usize).min(r.files.len());
+                    let heading = format!(
+                        "{}\n{} paths | unfiltered | visible {}..{}",
+                        r.head,
+                        r.files.len(),
+                        if r.files.is_empty() { 0 } else { offset + 1 },
+                        end,
+                    );
+                    std::iter::once(heading)
+                        .chain(
+                            r.files
+                                .iter()
+                                .skip(offset)
+                                .take(rows as usize)
+                                .map(|f| format!("{} {}", f.change, f.path.display_label())),
+                        )
                         .collect::<Vec<_>>()
                         .join("\n")
                 })
@@ -588,6 +604,65 @@ impl StatusWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn large_index_publication_tracks_the_viewport_without_copying_hidden_paths() {
+        let mut workspace = Workspace::new(super::super::tests::snapshot(1));
+        let Effect::Send(Job::LoadCommitReview { generation }) = workspace.request_commit() else {
+            panic!("commit review must load");
+        };
+        let count = 20_000;
+        workspace.reply(Reply::CommitReview {
+            generation,
+            review: crate::CommitReview {
+                ticket: "large-index".into(),
+                head: "main | ordinary commit".into(),
+                files: (0..count)
+                    .map(|index| crate::StagedRow {
+                        path: NativePath::new(format!("{index:05}-{}.txt", "中文-path".repeat(12))),
+                        change: "M".into(),
+                        added: Some(1),
+                        deleted: Some(1),
+                    })
+                    .collect(),
+                blocked: None,
+            },
+        });
+        let surface = Surface {
+            width: 1040,
+            height: 680,
+            grid: super::super::tests::GRID,
+        };
+        for last in [false, true] {
+            if last {
+                workspace.key(Key::Tab);
+                workspace.key(Key::End);
+            }
+            let scene = build(&workspace, surface, 0);
+            let text = &scene
+                .tree
+                .nodes
+                .iter()
+                .find(|n| n.name == "Complete staged index")
+                .unwrap()
+                .text;
+            assert!(
+                text.len() < 16_384,
+                "hidden paths must not be copied into each frame"
+            );
+            assert!(text.contains("20000 paths | unfiltered | visible"));
+            assert!(text.contains(if last { "19999-" } else { "00000-" }));
+            assert!(!text.contains(if last { "00000-" } else { "19999-" }));
+            AccessibleSnapshot {
+                revision: 1,
+                context: workspace.accessibility_context(),
+                tree: scene.tree,
+                disabled: scene.disabled,
+            }
+            .validate()
+            .unwrap();
+        }
+    }
+
     #[test]
     fn semantic_review_uses_real_guards_and_omits_background_actions() {
         let mut workspace = Workspace::new(super::super::tests::snapshot(1));
