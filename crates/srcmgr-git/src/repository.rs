@@ -171,6 +171,10 @@ pub fn diff(
     path: &OsStr,
     staged: bool,
 ) -> Result<String, GitError> {
+    Ok(String::from_utf8_lossy(&diff_bytes(installation,identity,path,staged)?).into_owned())
+}
+
+fn diff_bytes(installation:&GitInstallation,identity:&RepositoryIdentity,path:&OsStr,staged:bool)->Result<Vec<u8>,GitError> {
     let mut arguments = vec![
         OsString::from("--literal-pathspecs"),
         OsString::from("diff"),
@@ -184,7 +188,32 @@ pub fn diff(
     arguments.push(OsString::from("--"));
     arguments.push(path.to_os_string());
     let output = run_mutation(installation, identity, &arguments, None)?;
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(output.stdout)
+}
+
+/// One bounded digest, not a second cached Diff. GUI partial actions must use
+/// the exact UTF-8 diff actually read for their current file/view.
+pub struct ReviewedDiff {path:OsString,staged:bool,repository:srcmgr_domain::RepositoryId,digest:[u8;32]}
+impl ReviewedDiff {
+    pub fn read(git:&GitInstallation,repo:&RepositoryIdentity,path:&OsStr,staged:bool)->Result<(Self,String),GitError> {
+        use sha2::{Digest,Sha256};
+        let bytes=diff_bytes(git,repo,path,staged)?;
+        let digest=Sha256::digest(&bytes).into();
+        let text=String::from_utf8(bytes).map_err(|_|GitError::UnreviewableDiff)?;
+        Ok((Self {path:path.to_os_string(),staged,repository:repo.id.clone(),digest},text))
+    }
+    pub fn matches(&self,path:&OsStr,staged:bool)->bool {self.path==path&&self.staged==staged}
+    pub fn apply(&self,git:&GitInstallation,repo:&RepositoryIdentity,index:usize,lines:Option<&[usize]>)->Result<(),GitError> {
+        use sha2::{Digest,Sha256};
+        let bytes=diff_bytes(git,repo,&self.path,self.staged)?;
+        let digest:[u8;32]=Sha256::digest(&bytes).into();
+        if self.repository!=repo.id||digest!=self.digest {return Err(GitError::StaleDiff);}
+        let patch=String::from_utf8(bytes).map_err(|_|GitError::UnreviewableDiff)?;
+        let parts=crate::hunks::split(&patch).ok_or(GitError::NoHunks)?;
+        let hunk=parts.hunks.get(index).ok_or(GitError::HunkOutOfRange)?;
+        let selected=if let Some(lines)=lines {crate::hunks::select_lines(hunk,lines).ok_or(GitError::NoChangedLines)?}else{hunk.clone()};
+        apply_patch(git,repo,&format!("{}{selected}",parts.header),true,self.staged)
+    }
 }
 
 /// Creates a branch at HEAD and switches to it. The name is validated by Git's

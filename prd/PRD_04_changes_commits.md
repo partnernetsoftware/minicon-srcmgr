@@ -32,6 +32,12 @@ Text filters, external diff/textconv and attributes follow [11](PRD_11_security.
 
 Unstage restores selected index content toward HEAD without overwriting worktree content; unborn HEAD uses the empty-tree case. Staging an untracked file honors configured clean filters only after trust. Intent-to-add, sparse/skip-worktree and assume-unchanged states must be recognized; do not silently clear flags or expand a sparse checkout. Unsupported partial operations explain why and preserve all bytes.
 
+## Current partial staging review boundary
+
+The 0.0.6 Changes surface exposes separate Stage/Unstage file actions and explicit Unstaged/Staged Diff selectors, plus contextual hunk, changed-line and range actions. Mutations name the raw selected path even in a filtered list. No matching row, a loading/stale view or a non-patch view cannot authorize a partial action. Untracked content explicitly offers whole-file Stage without inventing a text patch.
+
+The worker retains only the selected path, side, repository identity and a SHA-256 digest of the actual displayed UTF-8 Git diff. Before a partial operation it reads the diff again, compares that digest and constructs the selected patch from those same checked bytes. It never applies a new diff using old line/hunk numbers. Changed content refuses and refreshes without retry; the review is consumed on attempt. Undecodable content has no partial patch authority; whole-file staging still preserves its bytes. This uses the workspace's existing SHA-256 dependency, not a new repository engine or cached second Diff. Git's index preimage checks remain authoritative; no universal transaction against unrelated writers is claimed.
+
 ## Commit composition
 
 The commit panel shows staged content summary, multiline subject/body draft, author identity, optional amend, sign-off and signing status. Recommended subject length is guidance, never a hard arbitrary refusal. No staged changes disables ordinary Commit; empty commit is an explicit advanced action. Missing identity opens a form that distinguishes repository-local from global configuration; default write scope is local and includes a preview. Drafts persist by repo/worktree and operation mode.

@@ -13,6 +13,7 @@ use crate::{
 };
 
 pub struct WindowBackend {
+    reviewed_diff: Option<srcmgr_git::ReviewedDiff>,
     pub options: Options,
     pub worktree: PathBuf,
     pub prepared: Option<crate::confirmation::Prepared>,
@@ -49,6 +50,10 @@ impl Backend for WindowBackend {
                 let authorized = self.prepared.take().ok_or_else(|| "confirmation missing or consumed; preview again".to_owned())
                     .and_then(|prepared| prepared.authorize(&self.options, &self.worktree, &ticket));
                 match authorized {
+                    Ok((Job::Ignore {..},note))=>Ok(match self.snapshot() {
+                        Ok(mut snapshot)=>{snapshot.stage_result=Some(note);Reply::Full(snapshot)},
+                        Err(error)=>Reply::PromptCompleted {action:PromptAction::Ignore,text:format!("{note}\nState refresh unavailable: {error}. Refresh before further work; do not resubmit this consumed action.")},
+                    }),
                     Err(error) => self.snapshot().map(|mut snapshot| {
                         snapshot.stage_result = Some(format!("Action refused before execution; state refreshed: {error}"));
                         Reply::Full(snapshot)
@@ -96,7 +101,7 @@ impl WindowBackend {
         let worktree = crate::canonical_worktree(path)?;
         let mut selected = options.clone();
         if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
-        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None };
+        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None };
         let mut snapshot = candidate.snapshot()?;
         snapshot.navigation = open_profile_store(options)?.navigation(&NativePath::new(candidate.worktree.as_os_str())).map_err(|e| e.to_string())?
             .map(|record| srcmgr_ui::Navigation::decode(&record)).transpose().map_err(str::to_owned)?;
@@ -154,6 +159,7 @@ impl WindowBackend {
                 Reply::Full(snapshot)
             }
             Job::Prepare { .. } | Job::ExecutePrepared(_) | Job::CancelPrepared => return Err("nested confirmation is not allowed".to_owned()),
+            Job::Ignore {..}=>return Err("Ignore needs a fresh reviewed confirmation".into()),
             Job::LoadCommitReview { .. } | Job::CommitDiff { .. } => return Err("commit review must use its isolated worker path".into()),
             Job::Reload => {
                 let mut snapshot = self.snapshot()?;
@@ -173,22 +179,15 @@ impl WindowBackend {
             Job::SetHunk { path, staged_view, number } => {
                 let index = number.checked_sub(1).ok_or("hunk numbers start at 1")?;
                 let session = open_trusted(&self.options, &self.worktree)?;
-                srcmgr_git::apply_hunk(&session.installation, &session.identity, path.as_os_str(), index, staged_view)
-                    .map_err(|e| e.to_string())?;
+                let review=self.reviewed_diff.take().filter(|r|r.matches(path.as_os_str(),staged_view)).ok_or("Read the current file Diff before a partial operation")?;
+                if let Err(error)=review.apply(&session.installation,&session.identity,index,None) {let mut snapshot=self.snapshot()?;snapshot.stage_result=Some(format!("Partial action refused or failed: {error}; state refreshed; no automatic retry"));return Ok(Reply::Full(snapshot));}
                 self.stage_result(Some(&path))?
             }
             Job::SetLines { path, staged_view, number, lines } => {
                 let index = number.checked_sub(1).ok_or("hunk numbers start at 1")?;
                 let session = open_trusted(&self.options, &self.worktree)?;
-                srcmgr_git::apply_lines(
-                    &session.installation,
-                    &session.identity,
-                    path.as_os_str(),
-                    index,
-                    &lines,
-                    staged_view,
-                )
-                .map_err(|e| e.to_string())?;
+                let review=self.reviewed_diff.take().filter(|r|r.matches(path.as_os_str(),staged_view)).ok_or("Read the current file Diff before a partial operation")?;
+                if let Err(error)=review.apply(&session.installation,&session.identity,index,Some(&lines)) {let mut snapshot=self.snapshot()?;snapshot.stage_result=Some(format!("Partial action refused or failed: {error}; state refreshed; no automatic retry"));return Ok(Reply::Full(snapshot));}
                 self.stage_result(Some(&path))?
             }
             Job::SetAll { stage } => {
@@ -281,7 +280,8 @@ impl WindowBackend {
         Ok(Reply::Full(snapshot))
     }
 
-    fn main(&self, request: MainRequest) -> Result<MainView, String> {
+    fn main(&mut self, request: MainRequest) -> Result<MainView, String> {
+        self.reviewed_diff=None;
         let session = open_trusted(&self.options, &self.worktree)?;
         match request {
             MainRequest::CommitFiles { id } => {
@@ -312,10 +312,12 @@ impl WindowBackend {
             }
             MainRequest::File { path, staged_view, untracked } => {
                 if untracked {
-                    return Ok(MainView::note("(untracked file: no diff against the index)"));
+                    let mut view=MainView::note("(untracked file: no diff against the index; Stage adds the whole file)");
+                    view.file=Some(FileTarget {path,staged_view});
+                    return Ok(view);
                 }
-                let text = srcmgr_git::diff(&session.installation, &session.identity, path.as_os_str(), staged_view)
-                    .map_err(|e| e.to_string())?;
+                let (review,text)=srcmgr_git::ReviewedDiff::read(&session.installation,&session.identity,path.as_os_str(),staged_view).map_err(|e|e.to_string())?;
+                self.reviewed_diff=Some(review);
                 Ok(MainView::diff(&text, FileTarget { path, staged_view }))
             }
             MainRequest::Commit { id } => {
@@ -536,6 +538,7 @@ pub(crate) mod tests {
             trust(&granted).expect("grant the fixture");
         }
         WindowBackend {
+            reviewed_diff: None,
             options,
             worktree: repo.to_path_buf(),
             prepared: None,
@@ -1126,8 +1129,89 @@ pub(crate) mod tests {
         assert_eq!(reloaded.draft.as_deref(), Some("first line\nsecond"));
     }
 
+    fn read_file_review(backend: &mut WindowBackend, staged_view: bool) {
+        let reply=backend.run(Job::Main {generation:1,request:MainRequest::File {path:NativePath::new("a.txt"),staged_view,untracked:false}});
+        assert!(matches!(reply,Reply::Main {..}),"{reply:?}");
+    }
+
     #[test]
-    fn a_hunk_action_stages_then_unstages_only_that_hunk() {
+    fn ignore_review_cancel_stale_rules_and_known_write_keep_exact_repository_state() {
+        fn prepare(backend:&mut WindowBackend,local:bool)->String {
+            let reply=backend.run(Job::Prepare {generation:9,action:Box::new(Job::Ignore {path:NativePath::new("u.txt"),local})});
+            match reply {Reply::Prepared {ticket,lines,..}=>{assert!(lines.iter().any(|line|line.contains("u.txt")));ticket},other=>panic!("{other:?}")}
+        }
+        let scratch=Scratch::new("ignore-review");let repo=repository(&scratch.0,"repo");
+        let project=repo.join(".gitignore");fs::write(&project,b"# base\r\n").unwrap();
+        fixture_git(&repo,&["add",".gitignore"]);fixture_git(&repo,&["commit","-qm","rules"]);
+        // Already-modified rules keep porcelain status unchanged during the stale edit.
+        fs::write(&project,b"# modified\r\n").unwrap();
+        let mut backend=backend(&scratch.0,&repo,true);
+        assert_eq!(backend.run(Job::SaveDraft("retained ignore draft".into())),Reply::DraftSaved(Some("retained ignore draft".into())));
+        let head=git_text(&repo,&["rev-parse","HEAD"]);let index=git_text(&repo,&["write-tree"]);
+        let ticket=prepare(&mut backend,false);assert_eq!(fs::read(&project).unwrap(),b"# modified\r\n");
+        assert_eq!(backend.run(Job::CancelPrepared),Reply::NoChange);
+        notice(backend.run(Job::ExecutePrepared(ticket)));assert_eq!(fs::read(&project).unwrap(),b"# modified\r\n");
+        let ticket=prepare(&mut backend,false);fs::write(&project,b"# external\r\n").unwrap();
+        let refused=notice(backend.run(Job::ExecutePrepared(ticket)));assert!(refused.contains("changed"),"{refused}");
+        assert_eq!(fs::read(&project).unwrap(),b"# external\r\n");
+        let ticket=prepare(&mut backend,true);
+        let lock=backend.options.profile.as_ref().unwrap().join("profile.lock");fs::write(&lock,b"other writer").unwrap();
+        let reply=backend.run(Job::ExecutePrepared(ticket.clone()));
+        assert!(matches!(reply,Reply::PromptCompleted {action:srcmgr_ui::PromptAction::Ignore,ref text} if text.contains("saved")&&text.contains("refresh unavailable")),"known publication must remain acknowledged: {reply:?}");
+        assert_eq!(fs::read(&lock).unwrap(),b"other writer");fs::remove_file(lock).unwrap();
+        let saved=fs::read(repo.join(".git/info/exclude")).unwrap();
+        notice(backend.run(Job::ExecutePrepared(ticket)));assert_eq!(fs::read(repo.join(".git/info/exclude")).unwrap(),saved);
+        assert_eq!(git_text(&repo,&["check-ignore","--","u.txt"]),"u.txt");
+        assert_eq!(fs::read(&project).unwrap(),b"# external\r\n");
+        assert_eq!(fs::read(repo.join("u.txt")).unwrap(),b"new\n");assert_eq!(fs::read(repo.join("a.txt")).unwrap(),b"two\n");
+        assert_eq!(git_text(&repo,&["rev-parse","HEAD"]),head);assert_eq!(git_text(&repo,&["write-tree"]),index);
+        assert_eq!(full(backend.run(Job::Reload)).draft.as_deref(),Some("retained ignore draft"));
+    }
+
+    #[test]
+    fn file_review_refuses_changed_worktree_and_index_without_retargeting_lines() {
+        let scratch=Scratch::new("stale-file-review");
+        let repo=repository(&scratch.0,"repo");
+        let mut backend=backend(&scratch.0,&repo,true);
+        let original=git_text(&repo,&["write-tree"]);
+        let head=git_text(&repo,&["rev-parse","HEAD"]);
+        read_file_review(&mut backend,false);
+        fs::write(repo.join("a.txt"),b"foreign\n").unwrap();
+        let result=notice(backend.run(Job::SetLines {path:NativePath::new("a.txt"),staged_view:false,number:1,lines:vec![2]}));
+        assert_eq!(git_text(&repo,&["write-tree"]),original,"a stale line number must not stage foreign bytes");
+        assert!(result.contains("changed"),"{result}");
+        assert_eq!(fs::read(repo.join("a.txt")).unwrap(),b"foreign\n");
+        // A refused review is consumed; only a new read enables a new operation.
+        assert!(notice(backend.run(Job::SetHunk {path:NativePath::new("a.txt"),staged_view:false,number:1})).contains("Read the current"));
+        read_file_review(&mut backend,false);
+        full(backend.run(Job::SetHunk {path:NativePath::new("a.txt"),staged_view:false,number:1}));
+        assert_eq!(git_text(&repo,&["show",":a.txt"]),"foreign");
+        read_file_review(&mut backend,true);
+        fs::write(repo.join("a.txt"),b"other index\n").unwrap();fixture_git(&repo,&["add","a.txt"]);
+        let foreign_index=git_text(&repo,&["write-tree"]);
+        notice(backend.run(Job::SetHunk {path:NativePath::new("a.txt"),staged_view:true,number:1}));
+        assert_eq!(git_text(&repo,&["write-tree"]),foreign_index,"stale staged review cannot unstage another writer's index");
+        assert_eq!(fs::read(repo.join("a.txt")).unwrap(),b"other index\n");
+        assert_eq!(git_text(&repo,&["rev-parse","HEAD"]),head);
+    }
+
+    #[test]
+    fn file_review_refuses_lossy_partial_patch_but_whole_file_preserves_bytes() {
+        let scratch=Scratch::new("raw-file-review");let repo=repository(&scratch.0,"repo");
+        let mut backend=backend(&scratch.0,&repo,true);read_file_review(&mut backend,false);
+        let original=git_text(&repo,&["write-tree"]);let raw=b"invalid \xff text\n";
+        fs::write(repo.join("a.txt"),raw).unwrap();
+        let reply=backend.run(Job::Main {generation:2,request:MainRequest::File {path:NativePath::new("a.txt"),staged_view:false,untracked:false}});
+        assert!(matches!(reply,Reply::MainFailed {..}),"{reply:?}");
+        notice(backend.run(Job::SetLines {path:NativePath::new("a.txt"),staged_view:false,number:1,lines:vec![2]}));
+        assert_eq!(git_text(&repo,&["write-tree"]),original);
+        full(backend.run(Job::SetFile {path:NativePath::new("a.txt"),stage:true}));
+        let actual=Command::new(git_executable()).current_dir(&repo).args(["show",":a.txt"]).output().unwrap();
+        assert!(actual.status.success());assert_eq!(actual.stdout,raw);assert_eq!(fs::read(repo.join("a.txt")).unwrap(),raw);
+    }
+
+    #[test]
+    fn file_review_hunk_action_stages_then_unstages_only_that_hunk() {
         let scratch = Scratch::new("hunk");
         let repo = repository(&scratch.0, "repo");
         // Ten unchanged lines between the two edits keep them in separate hunks.
@@ -1137,6 +1221,7 @@ pub(crate) mod tests {
         fixture_git(&repo, &["commit", "-q", "-m", "lines"]);
         fs::write(repo.join("a.txt"), format!("TOP\n{middle}BOTTOM\n")).expect("two hunks");
         let mut backend = backend(&scratch.0, &repo, true);
+        read_file_review(&mut backend, false);
         full(backend.run(Job::SetHunk {
             path: NativePath::new("a.txt"),
             staged_view: false,
@@ -1151,6 +1236,7 @@ pub(crate) mod tests {
         assert!(patch.contains("+TOP") && !patch.contains("+BOTTOM"), "{patch}");
         let worktree = fs::read_to_string(repo.join("a.txt")).expect("read");
         assert_eq!(worktree, format!("TOP\n{middle}BOTTOM\n"), "the working tree is never rewritten");
+        read_file_review(&mut backend, true);
         full(backend.run(Job::SetHunk {
             path: NativePath::new("a.txt"),
             staged_view: true,
@@ -1178,10 +1264,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_selected_line_stages_only_that_line_and_leaves_the_worktree_alone() {
+    fn file_review_selected_line_stages_only_that_line_and_leaves_the_worktree_alone() {
         let scratch = Scratch::new("lines");
         let repo = repository(&scratch.0, "repo");
         let mut backend = backend(&scratch.0, &repo, true);
+        read_file_review(&mut backend, false);
         // Line 2 of the hunk is the added `two`; the removed `one` stays in the index.
         full(backend.run(Job::SetLines {
             path: NativePath::new("a.txt"),

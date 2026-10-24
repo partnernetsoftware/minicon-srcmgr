@@ -1,0 +1,44 @@
+name: Git ignore publication contracts
+
+on:
+  push:
+    paths:
+      - 'crates/srcmgr-git/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.github/workflows/ignore-edit.yml'
+  pull_request:
+    paths:
+      - 'crates/srcmgr-git/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.github/workflows/ignore-edit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pinned toolchain
+        run: rustup show active-toolchain
+      - name: Actual Git matching, byte preservation and filesystem publication
+        shell: pwsh
+        run: |
+          $env:SRCMGR_TEST_GIT = (Get-Command git).Source
+          & $env:SRCMGR_TEST_GIT --version
+          cargo test --locked -p srcmgr-git --lib ignore_edit::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p srcmgr-git --lib runner::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -225,6 +225,7 @@ pub enum MainRequest {
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Job {
+    Ignore { path: NativePath, local: bool },
     PrepareLocate { backend: String, source: EncodedPath, target: NativePath },
     SaveLocated(String),
     CancelLocate,
@@ -365,6 +366,7 @@ pub struct CommitReview {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PromptAction {
+    Ignore,
     LocateRepository,
     ExternalTool,
     IdentitySettings,

@@ -14,6 +14,8 @@ mod hunks;
 mod installation;
 mod initialization;
 mod identity_config;
+mod ignore_edit;
+pub use ignore_edit::{IgnoreEdit, ignore_effect};
 mod commit_review;
 mod index_summary;
 mod repository;
@@ -32,6 +34,7 @@ pub use identity_config::{IdentityConfig, IdentityValue};
 pub use commit_review::{IndexBinding, StagedFile, StagedReview, ReviewedCommit, index_binding};
 pub use index_summary::{IndexSummary, index_summary};
 pub use repository::{reference_target, retain_recovery_ref};
+pub use repository::ReviewedDiff;
 pub use repository::{
     BranchSummary, CommitSummary, RepositoryIdentity, apply_hunk, apply_lines, checkout_detached, commit,
     commit_detail, create_branch, delete_branch, diff, discard_file, discard_hunk, hunks, ignore_match, local_branches,

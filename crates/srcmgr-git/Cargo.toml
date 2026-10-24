@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 srcmgr-domain.workspace = true
 minicon-core.workspace = true
+sha2.workspace = true
 minicon-platform = { workspace = true, features = ["filesystem"] }
 
 [lints]

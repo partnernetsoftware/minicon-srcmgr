@@ -23,7 +23,7 @@ use minicon_ui_core::GlyphCache;
 use minicon_ui_core::pixel::{blend_mask_xrgb, fill_xrgb_rect};
 
 use crate::model::{Backend, Job, Line, PromptAction, Reply, Snapshot, Tone, short};
-use crate::workspace::{CommitFocus, Confirm, Effect, Key, Pane, PromptKind, Workspace};
+use crate::workspace::{ChangesAction, CommitFocus, Confirm, Effect, Key, Pane, PromptKind, Workspace};
 
 enum ClipboardRequest { Read, Write { text: String, cut: bool } }
 enum ClipboardTask {
@@ -45,6 +45,7 @@ const SELECTION_DIM: u32 = 0x0033_3740;
 const MUTED_TEXT: u32 = 0x0080_8080;
 
 const HELP_LINES: &[&str] = &[
+    "Files: named Stage / Unstage / Discard / Ignore; i reviews Ignore",
     "Welcome: L Locate selected recent path; d Remove bookmark only",
     "T  Tools: optional editor / terminal settings and reviewed launch",
     "/            filter loaded Files, Branches or Commits; Esc clears",
@@ -193,10 +194,17 @@ impl StatusWindow {
         } else if let Some(prompt) = self.workspace.prompt() && prompt.kind() == PromptKind::OpenRepository {
             let title = format!("MiniCon SrcMgr - Open repository | {}", if prompt.pending() { "Working" } else { "Ready" });
             if self.native_title != title { window.set_title(&title); self.native_title = title; }
+        } else if let Some(confirm)=self.workspace.confirm() {
+            let kind=match confirm {Confirm::Ignore {local:true,..}=>"Local ignore",Confirm::Ignore {local:false,..}=>"Project ignore",_=>"Repository action"};
+            let title=format!("MiniCon SrcMgr - Review | {kind} | {}",if self.workspace.confirmation_ready(){"Ready"}else{"Preparing"});
+            if self.native_title!=title {window.set_title(&title);self.native_title=title;}
         } else if let Some((kind, id, ready)) = self.workspace.history_context() {
             let path = self.workspace.snapshot().repository.as_ref().map(|p| p.display_label()).unwrap_or_default();
             let title = format!("MiniCon SrcMgr - History | {kind} | {} | {} | {path}", if ready { "Ready" } else { "Loading" }, short(id));
             if self.native_title != title { window.set_title(&title); self.native_title = title; }
+        } else if let Some((side,status))=self.workspace.file_view_status() {
+            let title=format!("{} | {side} {status}",self.workspace.snapshot().title);
+            if self.native_title!=title {window.set_title(&title);self.native_title=title;}
         } else if self.native_title != self.workspace.snapshot().title {
             self.native_title.clone_from(&self.workspace.snapshot().title);
             window.set_title(&self.native_title);
@@ -467,6 +475,20 @@ impl StatusWindow {
             };
             let directive = self.dispatch(effect); self.sync_title(window); window.request_redraw(); return Ok(directive);
         }
+        if self.workspace.confirm().is_some() {
+            let rect=layout(surface.width,surface.height,surface.grid).main;
+            let (allow,cancel)=trust_buttons(rect,surface.grid);
+            let scopes=ignore_scope_buttons(rect,surface.grid);
+            let ignore=matches!(self.workspace.confirm(),Some(Confirm::Ignore {..}));
+            let effect=match gesture {
+                Gesture::Click if contains(allow,px,py)=>self.workspace.answer_confirmation(true),
+                Gesture::Click if contains(cancel,px,py)=>self.workspace.answer_confirmation(false),
+                Gesture::Click if ignore&&contains(scopes[0],px,py)=>self.workspace.set_ignore_scope(false),
+                Gesture::Click if ignore&&contains(scopes[1],px,py)=>self.workspace.set_ignore_scope(true),
+                Gesture::Wheel(delta)=>self.workspace.scroll_trust(wheel_lines(delta,surface.grid.row,scale)),_=>Effect::Nothing,
+            };
+            let directive=self.dispatch(effect);self.sync_title(window);window.request_redraw();return Ok(directive);
+        }
         if self.workspace.modal() {
             return Ok(PixelWindowDirective::Continue);
         }
@@ -488,6 +510,7 @@ impl StatusWindow {
             (Gesture::Click, Hit::IdentitySettings) => self.workspace.request_identity(),
             (Gesture::Click, Hit::Commit) => self.workspace.request_commit(),
             (Gesture::Click, Hit::Back) => self.workspace.key(Key::Escape),
+            (Gesture::Click, Hit::Change(action))=>self.workspace.change(action),
             (Gesture::Click, Hit::Filter(pane)) => self.workspace.request_filter(pane),
             (Gesture::Click, Hit::ClearFilter(pane)) => self.workspace.clear_filter(pane),
             (Gesture::Click, Hit::Repository(index)) => self.workspace.select_repository(index),
@@ -899,9 +922,15 @@ impl PixelWindowApplication for StatusWindow {
             let text=self.workspace.main().lines.iter().map(|line|line.text.as_str()).collect::<Vec<_>>().join("\n");
             self.workspace.set_trust_scroll_limit(wrapped_lines(&text,inner.cols).len().saturating_sub(inner.rows.max(0) as usize));
         }
+        if let Some(confirm)=self.workspace.confirm() {
+            let body=confirmation_body(layout(i64::from(width),i64::from(height),grid).main,grid,matches!(confirm,Confirm::Ignore {..}));
+            let inner=inner_of(body,grid);
+            let text=std::iter::once(confirmation_title(confirm)).chain(self.workspace.confirmation_lines().iter().cloned()).collect::<Vec<_>>().join("\n");
+            self.workspace.set_trust_scroll_limit(wrapped_lines(&text,inner.cols).len().saturating_sub(inner.rows.max(0) as usize));
+        }
         self.surface = Some(Surface { width: i64::from(width), height: i64::from(height), grid });
         // The main panel's visible rows, so the cursor stays on screen after a resize.
-        let main_rows = inner_of(layout(i64::from(width), i64::from(height), grid).main, grid).rows;
+        let main_rows = inner_of(diff_body(&self.workspace,layout(i64::from(width),i64::from(height),grid).main,grid),grid).rows;
         self.workspace.set_view_rows(main_rows.max(0) as usize);
         let draws = scene(&self.workspace, i64::from(width), i64::from(height), grid, self.pending + self.queued.len());
         let mut canvas = Canvas { pixels: frame.pixels_mut(), stride: width, height };
@@ -1067,7 +1096,10 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
     if file_pane == Pane::Stashes {
         let rows: Vec<_> = snapshot.stashes.iter().enumerate().map(|(index, item)| Line { tone: Tone::Text, text: format!("stash@{{{index}}} {} {}", short(&item.id), item.subject) }).collect();
         list_panel(&mut draws, files_rect, grid, Panel { focused: focus == Pane::Stashes, title: &format!("[5] Stashes ({}; max 200)", snapshot.stashes.len()), empty: "No stashes" }, &rows, selected(Pane::Stashes));
-    } else { filtered_panel(&mut draws, files_rect, grid, workspace, Pane::Files); }
+    } else {
+        filtered_panel(&mut draws,file_list_body(files_rect,grid),grid,workspace,Pane::Files);
+        for (rect,action,label) in file_actions(files_rect,grid) {button_draw(&mut draws,rect,grid,label,if workspace.change_available(action){BORDER}else{MUTED_TEXT});}
+    }
     filtered_panel(&mut draws, branches_rect, grid, workspace, Pane::Branches);
     filtered_panel(&mut draws, commits_rect, grid, workspace, Pane::Commits);
 
@@ -1213,6 +1245,7 @@ struct Surface {
 /// What a pointer position is over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Hit {
+    Change(ChangesAction),
     Tools,
     Back,
     Filter(Pane),
@@ -1305,9 +1338,11 @@ fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
         return Hit::Nothing;
     }
     let snapshot = workspace.snapshot();
+    if !workspace.stash_list_visible() {for (rect,action,_) in file_actions(panels.files,grid) {if contains(rect,x,y){return Hit::Change(action);}}}
+    if workspace.diff_actions_visible() {for (rect,action,_) in diff_sides(workspace,panels.main,grid){if contains(rect,x,y){return Hit::Change(action);}}}
     let lists = [
         (Pane::Status, panels.status, 1),
-        (if workspace.stash_list_visible() { Pane::Stashes } else { Pane::Files }, panels.files, if workspace.stash_list_visible() { snapshot.stashes.len() } else { workspace.visible_rows(Pane::Files).len() }),
+        (if workspace.stash_list_visible() { Pane::Stashes } else { Pane::Files }, if workspace.stash_list_visible(){panels.files}else{file_list_body(panels.files,grid)}, if workspace.stash_list_visible() { snapshot.stashes.len() } else { workspace.visible_rows(Pane::Files).len() }),
         (Pane::Branches, panels.branches, workspace.visible_rows(Pane::Branches).len()),
         (Pane::Commits, panels.commits, workspace.visible_rows(Pane::Commits).len()),
     ];
@@ -1329,7 +1364,7 @@ fn hit_test(workspace: &Workspace, surface: Surface, x: i64, y: i64) -> Hit {
     }
     if contains(panels.main, x, y) {
         if workspace.can_back() && contains(back_control(panels.main, grid), x, y) { return Hit::Back; }
-        let inner = inner_of(panels.main, grid);
+        let inner = inner_of(diff_body(workspace,panels.main,grid),grid);
         if y < inner.top || y >= inner.top + inner.rows * grid.row {
             return Hit::Main(None);
         }
@@ -1347,7 +1382,7 @@ const fn pane_of(hit: Hit) -> Option<Pane> {
         Hit::Panel(pane) | Hit::Row(pane, _) => Some(pane),
         Hit::Main(_) => Some(Pane::Main),
         Hit::Recent(_) => Some(Pane::Files),
-        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::Tools | Hit::RecentOpen | Hit::RecentLocate | Hit::RecentRemove | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository | Hit::Filter(_) | Hit::ClearFilter(_) | Hit::Back => None,
+        Hit::Nothing | Hit::Open | Hit::Create | Hit::GitSettings | Hit::IdentitySettings | Hit::Tools | Hit::RecentOpen | Hit::RecentLocate | Hit::RecentRemove | Hit::Commit | Hit::Repository(_) | Hit::NextRepository | Hit::PreviousRepository | Hit::CloseRepository | Hit::Filter(_) | Hit::ClearFilter(_) | Hit::Back | Hit::Change(_) => None,
     }
 }
 
@@ -1649,28 +1684,14 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         return;
     }
     if let Some(confirm) = workspace.confirm() {
-        let text = match confirm {
-            Confirm::Stash { id, operation } => format!("{operation} stash {}? Full OID: {id}", short(id)),
-            Confirm::DeleteBranch(name) => format!("Delete branch {name}?   y deletes it   n keeps it"),
-            Confirm::DiscardFile { path, untracked: true } => {
-                format!("Delete untracked file {}?   y deletes it   n keeps it", path.display_label())
-            }
-            Confirm::DiscardFile { path, untracked: false } => {
-                format!("Discard unstaged changes to {}?   y discards   n keeps them", path.display_label())
-            }
-            Confirm::DiscardHunk { path, index } => {
-                format!("Discard hunk {} of {}?   y discards   n keeps it", index + 1, path.display_label())
-            }
-            Confirm::Detach { short, .. } => format!("Check out {short} detached?   y checks out   n keeps HEAD"),
-        };
-        let mut messages = vec![text];
-        messages.extend_from_slice(workspace.confirmation_lines());
-        let columns = inner_of(rect, grid).cols.max(1);
-        let lines: Vec<Line> = messages.iter().flat_map(|message| {
-            let chars: Vec<char> = message.chars().collect();
-            chars.chunks(columns).map(|chunk| Line { tone: Tone::Removed, text: chunk.iter().collect() }).collect::<Vec<_>>()
-        }).collect();
-        text_panel(draws, rect, grid, true, "Confirm and recovery", &lines, 0, None);
+        let mut messages=vec![confirmation_title(confirm)];messages.extend_from_slice(workspace.confirmation_lines());
+        let ignore=matches!(confirm,Confirm::Ignore {..});
+        let body=confirmation_body(rect,grid,ignore);
+        text_panel(draws,body,grid,true,if ignore {"Review literal Ignore"}else{"Confirm and recovery"},&wrapped_lines(&messages.join("\n"),inner_of(body,grid).cols),workspace.trust_scroll(),None);
+        if let Confirm::Ignore {local,..}=confirm {for (i,scope) in ignore_scope_buttons(rect,grid).into_iter().enumerate(){button_draw(draws,scope,grid,if i==0{"Project .gitignore"}else{"Local exclude"},if *local==(i==1){FOCUS_BORDER}else{BORDER});}}
+        let (allow,cancel)=trust_buttons(rect,grid);
+        button_draw(draws,allow,grid,if !workspace.confirmation_ready(){"Preparing..."}else if ignore {"Save rule"}else{"Confirm"},if workspace.confirmation_ready(){BORDER}else{MUTED_TEXT});
+        button_draw(draws,cancel,grid,"Cancel",FOCUS_BORDER);
         return;
     }
     if workspace.is_welcome() {
@@ -1684,12 +1705,46 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         Pane::Commits => match workspace.history_context() { Some(("Files", _, _)) => "Committed files", Some(("File Diff", _, _)) => "Committed file Diff", _ => "Commit details" },
         Pane::Branches => "Branch",
         Pane::Stashes => "Selected stash",
-        Pane::Status | Pane::Files | Pane::Main => "Diff",
+        Pane::Status | Pane::Files | Pane::Main => match &main.file {Some(target) if target.staged_view=>"Staged Diff (index vs HEAD)",Some(_)=>"Unstaged Diff (worktree vs index)",None=>"Diff"},
     }};
     let highlight = if focused { Some(workspace.selection()) } else { None };
-    text_panel(draws, rect, grid, focused, title, &main.lines, workspace.scroll(), highlight);
+    text_panel(draws,diff_body(workspace,rect,grid),grid,focused,title,&main.lines,workspace.scroll(),highlight);
+    if workspace.diff_actions_visible(){for (rect,action,label) in diff_sides(workspace,rect,grid){button_draw(draws,rect,grid,label,if workspace.change_available(action){BORDER}else{MUTED_TEXT});}}
     if workspace.can_back() { button_draw(draws, back_control(rect, grid), grid, "Back [Esc]", BORDER); }
 }
+
+fn confirmation_title(confirm:&Confirm)->String {
+    match confirm {
+            Confirm::Ignore {path,local}=>format!("Add a literal ignore rule for {} to {}?",path.display_label(),if *local{"repository-local exclude"}else{"project .gitignore"}),
+            Confirm::Stash { id, operation } => format!("{operation} stash {}? Full OID: {id}", short(id)),
+            Confirm::DeleteBranch(name) => format!("Delete branch {name}?   y deletes it   n keeps it"),
+            Confirm::DiscardFile { path, untracked: true } => {
+                format!("Delete untracked file {}?   y deletes it   n keeps it", path.display_label())
+            }
+            Confirm::DiscardFile { path, untracked: false } => {
+                format!("Discard unstaged changes to {}?   y discards   n keeps them", path.display_label())
+            }
+            Confirm::DiscardHunk { path, index } => {
+                format!("Discard hunk {} of {}?   y discards   n keeps it", index + 1, path.display_label())
+            }
+            Confirm::Detach { short, .. } => format!("Check out {short} detached?   y checks out   n keeps HEAD"),
+        }
+}
+
+fn file_actions(rect:Rect,grid:Grid)->Vec<(Rect,ChangesAction,&'static str)> {
+    let columns=((rect.width+grid.gap)/((grid.advance*7.0) as i64+2*grid.gap)).clamp(1,4);
+    let rows=(4+columns-1)/columns;let height=grid.row+2*grid.gap;let width=(rect.width-(columns-1)*grid.gap)/columns;
+    [ChangesAction::StageFile,ChangesAction::UnstageFile,ChangesAction::DiscardFile,ChangesAction::Ignore].into_iter().zip(["Stage","Unstage","Discard","Ignore"]).enumerate().map(|(i,(action,label))|(Rect {x:rect.x+(i as i64%columns)*(width+grid.gap),y:rect.y+rect.height-rows*(height+grid.gap)+grid.gap+(i as i64/columns)*(height+grid.gap),width,height},action,label)).collect()
+}
+fn file_list_body(rect:Rect,grid:Grid)->Rect {Rect {height:(file_actions(rect,grid)[0].0.y-rect.y-grid.gap).max(0),..rect}}
+fn diff_sides(workspace:&Workspace,rect:Rect,grid:Grid)->Vec<(Rect,ChangesAction,&'static str)> {
+    let width=(rect.width-2*grid.gap)/3;let height=grid.row+2*grid.gap;
+    let staged=workspace.main().file.as_ref().is_some_and(|f|f.staged_view);
+    [ChangesAction::Unstaged,ChangesAction::Staged,ChangesAction::Hunk,ChangesAction::Lines,ChangesAction::Range,ChangesAction::DiscardHunk].into_iter().zip(["Unstaged","Staged",if staged{"Unstage hunk"}else{"Stage hunk"},if staged{"Unstage lines"}else{"Stage lines"},if workspace.anchor_set(){"Range on"}else{"Select range"},"Discard hunk"]).enumerate().map(|(i,(action,label))|(Rect {x:rect.x+i as i64%3*(width+grid.gap),y:rect.y+rect.height-2*height-grid.gap+i as i64/3*(height+grid.gap),width,height},action,label)).collect()
+}
+fn diff_body(workspace:&Workspace,rect:Rect,grid:Grid)->Rect {if workspace.diff_actions_visible(){Rect {height:(diff_sides(workspace,rect,grid)[0].0.y-rect.y-grid.gap).max(0),..rect}}else{rect}}
+fn ignore_scope_buttons(rect:Rect,grid:Grid)->[Rect;2] {let width=(rect.width-grid.gap)/2;let height=grid.row+2*grid.gap;[Rect {x:rect.x,y:rect.y,width,height},Rect {x:rect.x+width+grid.gap,y:rect.y,width,height}]}
+fn confirmation_body(rect:Rect,grid:Grid,ignore:bool)->Rect {let body=trust_content(rect,grid).0;if ignore {let top=ignore_scope_buttons(rect,grid)[0];Rect {y:top.y+top.height+grid.gap,height:(body.height-top.height-grid.gap).max(0),..body}}else{body}}
 
 fn trust_buttons(rect: Rect, grid: Grid) -> (Rect, Rect) {
     let height = (grid.row + 2 * grid.gap).max(2 * grid.margin);
@@ -2268,6 +2323,20 @@ mod tests {
         assert_eq!(hit_test(&workspace, surface, panels.files.x + 5, row_y), Hit::Row(Pane::Files, 2));
         assert_eq!(hit_test(&workspace, surface, panels.main.x + 5, panels.main.y + 1), Hit::Main(None));
         assert_eq!(hit_test(&workspace, surface, 1, 1), Hit::Nothing, "the header is not a target");
+    }
+
+    #[test]
+    fn changes_pointer_actions_share_drawn_geometry_and_leave_content_above_them() {
+        let workspace=Workspace::new(snapshot(3));
+        for (width,height) in [(1040,680),(800,600)] {
+            let panels=layout(width,height,GRID);let surface=Surface {width,height,grid:GRID};
+            let body=diff_body(&workspace,panels.main,GRID);
+            for (rect,action,_) in file_actions(panels.files,GRID).into_iter().chain(diff_sides(&workspace,panels.main,GRID)) {
+                assert_eq!(hit_test(&workspace,surface,rect.x+rect.width/2,rect.y+rect.height/2),Hit::Change(action));
+                assert!(rect.width>0&&rect.height>0);
+                if matches!(action,ChangesAction::Lines|ChangesAction::Hunk|ChangesAction::Staged|ChangesAction::Unstaged|ChangesAction::Range|ChangesAction::DiscardHunk){assert!(rect.y>=body.y+body.height);}
+            }
+        }
     }
 
     #[test]

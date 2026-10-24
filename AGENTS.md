@@ -13,3 +13,5 @@ The repository holds the PRD baseline, Rust foundation and the delivered Windows
 For implementation, follow [the work order](prd/PRD_14_verification_roadmap.md#implementation-work-order-and-evidence) and reconcile status with named evidence. Product behavior remains owned by the PRD series.
 
 Choose verification by changed behavior, risk and dependency impact under [PRD 14](prd/PRD_14_verification_roadmap.md#risk-based-test-selection-and-stopping). State the minimum check and stopping condition first; reuse unaffected evidence and stop when the selected checks pass without unresolved issues. Do not default to full suites, six-cell matrices or long runs for every change.
+
+Use [continuous suite feedback](prd/PRD_14_verification_roadmap.md#continuous-suite-feedback) to drive the next task. Preserve and classify failures, retain useful defect regressions in the appropriate existing lane, and record actionable coverage or suite-cost gaps in the active plan. A later green run does not erase an unexplained failure or replace milestone evidence.

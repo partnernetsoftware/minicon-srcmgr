@@ -40,6 +40,7 @@ fn recovery_usage(root: &Path) -> Result<u64, String> {
 }
 
 pub struct Prepared {
+    ignore: Option<srcmgr_git::IgnoreEdit>,
     pub ticket: String,
     pub action: Job,
     expires: Instant,
@@ -53,6 +54,7 @@ pub fn is_risky(job: &Job) -> bool {
     matches!(
         job,
         Job::Discard { .. }
+            | Job::Ignore { .. }
             | Job::DiscardHunk { .. }
             | Job::DeleteBranch(_)
             | Job::Detach(_)
@@ -150,6 +152,7 @@ impl Prepared {
             return Err("this action does not use a destructive confirmation".to_owned());
         }
         let session = open_trusted(options, worktree)?;
+        let ignore=if let Job::Ignore {path,local}=&action {Some(srcmgr_git::IgnoreEdit::prepare(&session.installation,&session.identity,path,*local).map_err(|e|e.to_string())?)}else{None};
         if let Job::StashAction { id, expected, .. } = &action {
             srcmgr_git::check_stash_selection(
                 &session.installation,
@@ -193,7 +196,7 @@ impl Prepared {
             }
             _ => None,
         };
-        let recovery = if let Some((path, bytes)) = &file {
+        let recovery = if ignore.is_some() {"Ignore edits only the named rules file; it does not untrack, stage, commit or delete the selected content.".into()} else if let Some((path, bytes)) = &file {
             format!(
                 "Recovery: safety copy required for {} ({} bytes); created only after y. A save failure blocks discard. Restore manually from the named local record; index is kept.",
                 path.display_label(),
@@ -214,7 +217,11 @@ impl Prepared {
         };
         let guard_worktree =
             matches!(&action, Job::StashAction { operation, .. } if operation != "drop");
+        let mut lines=ignore.as_ref().map_or_else(Vec::new,|edit|edit.lines.clone());
+        lines.push(recovery);
+        lines.push("y performs this reviewed action; n / Escape cancels. Enter does not approve. Preview expires in 60 seconds.".into());
         let prepared = Self {
+            ignore,
             ticket: ticket.clone(),
             action,
             expires: Instant::now() + Duration::from_secs(60),
@@ -228,11 +235,7 @@ impl Prepared {
             Reply::Prepared {
                 generation,
                 ticket,
-                lines: vec![
-                    recovery,
-                    "y performs this action; n / Escape cancels. Preview expires in 60 seconds."
-                        .to_owned(),
-                ],
+                lines,
             },
         ))
     }
@@ -250,6 +253,10 @@ impl Prepared {
         let session = open_trusted(options, worktree)?;
         if state(&session, self.guard_worktree)? != self.state {
             return Err("repository changed since preview; nothing was run".to_owned());
+        }
+        if let Some(edit)=self.ignore {
+            let note=edit.publish(&session.installation,&session.identity).map_err(|e|e.to_string())?;
+            return Ok((self.action,note));
         }
         let mut note = String::new();
         if let Some((path, bytes)) = &self.file {

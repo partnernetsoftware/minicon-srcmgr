@@ -5,7 +5,7 @@
 //! terminates the whole tree rather than only the root process.
 
 use std::ffi::OsStr;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -113,13 +113,28 @@ pub(crate) fn run<S: AsRef<OsStr>>(
     input: Option<&str>,
     limits: Limits,
 ) -> Result<Output, GitError> {
+    run_input(executable,current_dir,arguments,input,None,limits)
+}
+
+/// Byte-safe stdin for NUL-delimited native paths, through the same owned
+/// MiniCon pipe and timeout/output supervision as text commands.
+pub(crate) fn run_bytes<S: AsRef<OsStr>>(
+    executable:&Path,current_dir:Option<&Path>,arguments:&[S],input:&[u8],limits:Limits,
+) -> Result<Output,GitError> {
+    run_input(executable,current_dir,arguments,None,Some(input),limits)
+}
+
+fn run_input<S: AsRef<OsStr>>(
+    executable:&Path,current_dir:Option<&Path>,arguments:&[S],text:Option<&str>,bytes:Option<&[u8]>,limits:Limits,
+) -> Result<Output,GitError> {
     let mut command = ContainedHeadlessCommand::new(executable);
     command
         .args(arguments.iter().map(|argument| argument.as_ref().to_os_string()))
         .capture_output();
-    if let Some(text) = input {
+    if let Some(text) = text {
         command.stdin_text(text);
     }
+    if bytes.is_some(){command.pipe_stdin();}
     if let Some(directory) = current_dir {
         command.current_dir(directory);
     }
@@ -136,6 +151,11 @@ pub(crate) fn run<S: AsRef<OsStr>>(
     let overrun = Arc::new(AtomicBool::new(false));
     let stdout_reader = spawn_reader(stdout, limits.stdout_bytes, Arc::clone(&overrun));
     let stderr_reader = spawn_reader(stderr, limits.stderr_bytes, Arc::clone(&overrun));
+    let input_writer=if let Some(bytes)=bytes {
+        let mut writer=child.take_stdin().ok_or(GitError::Supervision)?;
+        let bytes=bytes.to_vec();
+        Some(thread::spawn(move||writer.write_all(&bytes)))
+    }else{None};
 
     let deadline = Instant::now() + limits.timeout;
     let mut exit = None;
@@ -157,6 +177,7 @@ pub(crate) fn run<S: AsRef<OsStr>>(
     let cleanup = child.terminate_and_wait(KILL_GRACE);
     let (stdout, stdout_overrun) = join_reader(stdout_reader)?;
     let (stderr, stderr_overrun) = join_reader(stderr_reader)?;
+    let input_result=input_writer.map(|writer|writer.join().map_err(|_|GitError::Supervision)).transpose()?;
     cleanup.map_err(GitError::Io)?;
 
     if expired && exit.is_none() {
@@ -166,7 +187,7 @@ pub(crate) fn run<S: AsRef<OsStr>>(
         return Err(GitError::OutputLimit);
     }
     match exit {
-        Some(ProcessExit::Code(0)) => Ok(Output { stdout }),
+        Some(ProcessExit::Code(0)) => {if let Some(result)=input_result {result.map_err(GitError::Io)?;}Ok(Output { stdout })},
         Some(ProcessExit::Code(code)) => Err(GitError::Exit { code, detail: first_error_line(&stderr) }),
         _ => Err(GitError::Terminated),
     }

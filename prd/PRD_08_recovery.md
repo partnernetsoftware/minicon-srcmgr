@@ -48,6 +48,8 @@ Freshness checks detect observed changes and Git supplies its native locks/condi
 
 Pointer and keyboard confirmations share the same prepared plan: use a named consequence-bearing confirm button for pointer input and the established explicit keyboard confirmation, with Cancel initially focused. Ordinary stage/unstage/create-branch/commit uses direct named actions and visible target/result, not a generic confirmation modal. Irrecoverable typed-target requirements remain unchanged.
 
+In the current Changes slice, tracked file/hunk Discard opens that existing prepared-plan boundary through named buttons. The review scrolls above fixed Confirm/Cancel controls; Enter never approves. Untracked Discard remains unavailable while recoverable trash is unqualified, with no permanent-delete substitute. Ignore uses Save rule/Cancel and a fresh ticket per destination; it is a rule-file edit without an implicit index mutation. A known rule publication remains acknowledged when subsequent state refresh fails, with explicit refresh guidance and no resubmission.
+
 No permanent “never warn again” switch for destructive classes. Keyboard Enter cannot confirm while a modal is still receiving its opening keypress; destructive default focus is Cancel. Snapshot/backup creation happens only after a valid confirmation and before its associated destructive write; it is not a side effect of browsing a preview. The user sees whether a durable safety copy exists before proceeding. Each destructive or irrecoverable row in the risk table shows one recovery label as part of its preview, before confirmation: restorable from a recovery ref or safety copy, restorable with the limits stated, or not restorable. The label is not a help link.
 
 ## Conflict center

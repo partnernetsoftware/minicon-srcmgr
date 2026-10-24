@@ -212,12 +212,16 @@ impl Prompt {
 /// confirms; `n` or Escape keeps everything as it was.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Confirm {
+    Ignore { path: NativePath, local: bool },
     DeleteBranch(String),
     DiscardFile { path: NativePath, untracked: bool },
     DiscardHunk { path: NativePath, index: usize },
     Detach { id: String, short: String },
     Stash { id: String, operation: String },
 }
+
+#[derive(Clone,Copy,Debug,Eq,PartialEq)]
+pub enum ChangesAction { StageFile, UnstageFile, DiscardFile, Ignore, Unstaged, Staged, Hunk, Lines, Range, DiscardHunk }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RepositoryTab { pub path: NativePath, pub head: String }
@@ -1240,7 +1244,58 @@ impl Workspace {
 
     pub const fn stash_list_visible(&self) -> bool { self.stash_mode }
 
+    fn selected_change(&self)->Option<&crate::FileRow> {if self.is_welcome()||self.stash_mode||!self.visible_rows(Pane::Files).contains(&self.files){None}else{self.snapshot.files.get(self.files)}}
+    pub fn diff_actions_visible(&self)->bool {self.source==Pane::Files&&!self.is_welcome()&&!self.stash_mode}
+    pub fn current_file_diff(&self)->bool {
+        self.main_ready && self.source==Pane::Files && self.selected_change().is_some_and(|row|self.main.file.as_ref().is_some_and(|target|target.path==row.path))
+    }
+    pub fn file_view_status(&self)->Option<(&'static str,&'static str)> {
+        if !self.diff_actions_visible()||self.selected_change().is_none(){return None;}
+        let staged=self.main.file.as_ref().map(|t|t.staged_view).unwrap_or(matches!(&self.last_request,Some(MainRequest::File {staged_view:true,..})));
+        Some((if staged {"Staged"}else{"Unstaged"},if self.current_file_diff(){"Ready"}else if self.notice.is_some(){"Unavailable"}else{"Loading"}))
+    }
+    pub fn change_available(&self,action:ChangesAction)->bool {
+        if self.modal(){return false;}
+        let Some(row)=self.selected_change() else{return false;};
+        let staged=self.main.file.as_ref().is_some_and(|t|t.staged_view);
+        match action {
+            ChangesAction::StageFile=>row.has_unstaged,ChangesAction::UnstageFile=>row.has_staged,
+            ChangesAction::DiscardFile=>row.has_unstaged&&!row.untracked,ChangesAction::Ignore=>true,
+            ChangesAction::Unstaged=>row.has_unstaged,ChangesAction::Staged=>row.has_staged,
+            ChangesAction::Hunk|ChangesAction::Range=>self.current_file_diff()&&!self.main.hunks.is_empty(),
+            ChangesAction::DiscardHunk=>self.current_file_diff()&&!staged&&!row.untracked&&!self.main.hunks.is_empty(),
+            ChangesAction::Lines=>{let (a,b)=self.selection();self.current_file_diff()&&self.main.lines.iter().enumerate().any(|(i,l)|i>=a&&i<=b&&matches!(l.tone,Tone::Added|Tone::Removed))},
+        }
+    }
+    pub fn change(&mut self,action:ChangesAction)->Effect {
+        if self.modal(){return Effect::Nothing;}
+        if action==ChangesAction::DiscardFile {return if self.selected_change().is_some(){self.ask_discard_file()}else{Effect::Nothing};}
+        if !self.change_available(action){self.notice=Some(if action==ChangesAction::Lines&&self.current_file_diff(){"select a changed line in the diff"}else{"This action is unavailable for the selected file/view. Select current content or refresh first."}.into());return Effect::Nothing;}
+        self.notice=None;
+        match action {
+            ChangesAction::StageFile|ChangesAction::UnstageFile=>Effect::Send(Job::SetFile {path:self.selected_change().unwrap().path.clone(),stage:action==ChangesAction::StageFile}),
+            ChangesAction::Ignore=>self.set_ignore_scope(false),
+            ChangesAction::Unstaged|ChangesAction::Staged=>{
+                let row=self.selected_change().unwrap().clone();self.source=Pane::Files;self.focus=Pane::Main;
+                self.generation+=1;self.cursor=0;self.scroll=0;self.anchor=None;self.main_ready=false;
+                self.main=MainView::note("Loading selected file view...");
+                let request=MainRequest::File {path:row.path,staged_view:action==ChangesAction::Staged,untracked:row.untracked};
+                self.last_request=Some(request.clone());Effect::Send(Job::Main {generation:self.generation,request})
+            }
+            ChangesAction::Hunk=>{self.focus=Pane::Main;self.stage_hunk()},ChangesAction::Lines=>{self.focus=Pane::Main;self.stage_lines()},
+            ChangesAction::Range=>{self.focus=Pane::Main;self.anchor=if self.anchor.is_some(){None}else{Some(self.cursor)};Effect::Nothing},
+            ChangesAction::DiscardHunk=>{self.focus=Pane::Main;self.ask_discard_hunk()},ChangesAction::DiscardFile=>unreachable!(),
+        }
+    }
+    pub fn confirmation_ready(&self)->bool {self.prepared_ticket.is_some()}
+    pub fn answer_confirmation(&mut self,allow:bool)->Effect {if let Some(confirm)=self.confirm.take(){self.answer(confirm,if allow {Key::Char('y')}else{Key::Char('n')})}else{Effect::Nothing}}
+    pub fn set_ignore_scope(&mut self,local:bool)->Effect {
+        let path=if let Some(Confirm::Ignore {path,..})=&self.confirm {path.clone()}else{let Some(row)=self.selected_change()else{return Effect::Nothing;};row.path.clone()};
+        self.confirm=Some(Confirm::Ignore {path:path.clone(),local});self.prepare_confirmation(Job::Ignore {path,local})
+    }
+
     fn prepare_confirmation(&mut self, action: Job) -> Effect {
+        self.trust_scroll=0;
         self.generation += 1;
         self.prepared_ticket = None;
         self.confirmation_lines = vec!["Checking target and recovery capability... y is unavailable until ready.".to_owned()];
@@ -1327,6 +1382,7 @@ impl Workspace {
             }
             return if let Effect::Send(Job::OpenRepository(path)) = effect { self.entry(Some(path)) } else { effect };
         }
+        if self.confirm.is_some() && matches!(key,Key::PageUp|Key::PageDown|Key::Up|Key::Down) {return self.scroll_trust(match key {Key::Up=>-1,Key::Down=>1,Key::PageUp=>-(PAGE_LINES as isize),_=>PAGE_LINES as isize});}
         if let Some(confirm) = self.confirm.take() {
             return self.answer(confirm, key);
         }
@@ -1452,8 +1508,9 @@ impl Workspace {
             Key::Char('d') if self.focus == Pane::Branches => self.ask_delete(),
             Key::Char('d') if self.focus == Pane::Stashes => self.ask_stash_action("drop"),
             Key::Char('p') if self.focus == Pane::Stashes => self.ask_stash_action("pop"),
-            Key::Char('d') if self.focus == Pane::Files => self.ask_discard_file(),
-            Key::Char('d') if self.focus == Pane::Main => self.ask_discard_hunk(),
+            Key::Char('d') if self.focus == Pane::Files => self.change(ChangesAction::DiscardFile),
+            Key::Char('i') if self.focus == Pane::Files => self.change(ChangesAction::Ignore),
+            Key::Char('d') if self.focus == Pane::Main => self.change(ChangesAction::DiscardHunk),
             Key::Char('s') if self.focus == Pane::Files => self.stash(),
             Key::Char('S') if self.focus == Pane::Files => {
                 self.focus_list(Pane::Stashes)
@@ -2012,7 +2069,7 @@ impl Workspace {
         match self.focus {
             Pane::Status => Effect::Nothing,
             Pane::Files => match self.snapshot.files.get(self.files) {
-                Some(row) => Effect::Send(Job::SetFile { path: row.path.clone(), stage: row.has_unstaged }),
+                Some(row) => self.change(if row.has_unstaged {ChangesAction::StageFile}else{ChangesAction::UnstageFile}),
                 None => Effect::Nothing,
             },
             Pane::Branches => match self.snapshot.branches.get(self.branches) {
@@ -2025,7 +2082,7 @@ impl Workspace {
             },
             Pane::Commits => self.ask_detach(),
             Pane::Stashes => self.ask_stash_action("apply"),
-            Pane::Main => self.stage_lines(),
+            Pane::Main => self.change(ChangesAction::Lines),
         }
     }
 
@@ -2044,7 +2101,7 @@ impl Workspace {
                     Effect::Nothing
                 }
             }
-            Pane::Main => self.stage_hunk(),
+            Pane::Main => self.change(ChangesAction::Hunk),
             Pane::Status | Pane::Branches | Pane::Commits | Pane::Stashes => Effect::Nothing,
         }
     }
@@ -2181,6 +2238,7 @@ impl Workspace {
     /// Asks for the main-panel content of the source list. The main panel
     /// shows a loading note until the reply arrives.
     fn show_source(&mut self) -> Effect {
+        let previous_side=match &self.last_request {Some(MainRequest::File {path,staged_view,..})=>Some((path.clone(),*staged_view)),_=>None};
         self.main_ready = false;
         let position = self.next_position.take().filter(|(pane, identity, _, _)| *pane == self.source && *identity == self.selected_identity(self.source));
         self.last_request = None;
@@ -2199,7 +2257,7 @@ impl Workspace {
             Pane::Files => match self.snapshot.files.get(self.files) {
                 Some(row) => MainRequest::File {
                     path: row.path.clone(),
-                    staged_view: !row.has_unstaged,
+                    staged_view: previous_side.as_ref().filter(|(path,staged)|path==&row.path&&if *staged{row.has_staged}else{row.has_unstaged}).map_or(!row.has_unstaged,|(_,staged)|*staged),
                     untracked: row.untracked,
                 },
                 None => {
@@ -2882,6 +2940,34 @@ mod tests {
         workspace.key(Key::Right);
         assert_eq!(workspace.key(Key::Space), Effect::Nothing);
         assert_eq!(workspace.notice(), Some("select a changed line in the diff"));
+    }
+
+    #[test]
+    fn changes_named_actions_keep_raw_filter_target_diff_side_and_fresh_ignore_scope() {
+        let mut initial=snapshot(None);initial.files[0].has_staged=true;
+        let mut workspace=Workspace::new(initial);
+        workspace.open();
+        assert!(!workspace.change_available(ChangesAction::Hunk),"loading is not actionable Diff content");
+        let Job::Main {generation,..}=sent(workspace.change(ChangesAction::Staged)) else{panic!()};
+        workspace.reply(Reply::Main {generation,view:file_diff("a.txt",true)});
+        assert_eq!(sent(workspace.change(ChangesAction::Lines)),Job::SetLines {path:NativePath::new("a.txt"),staged_view:true,number:1,lines:vec![1]});
+        assert!(!workspace.change_available(ChangesAction::DiscardHunk));
+        assert_eq!(sent(workspace.change(ChangesAction::UnstageFile)),Job::SetFile {path:NativePath::new("a.txt"),stage:false});
+        workspace.request_filter(Pane::Files);workspace.key(Key::Text("B.TXT".into()));workspace.key(Key::Enter);
+        let Job::Prepare {generation:project,action}=sent(workspace.change(ChangesAction::Ignore)) else{panic!()};
+        assert_eq!(*action,Job::Ignore {path:NativePath::new("b.txt"),local:false});
+        assert_eq!(workspace.answer_confirmation(true),Effect::Nothing,"approval must wait for preparation");
+        let Job::Prepare {generation:local,action}=sent(workspace.set_ignore_scope(true)) else{panic!()};
+        assert_eq!(*action,Job::Ignore {path:NativePath::new("b.txt"),local:true});
+        workspace.reply(Reply::Prepared {generation:project,ticket:"old project".into(),lines:vec!["obsolete".into()]});
+        assert!(!workspace.confirmation_ready(),"late project result cannot approve local scope");
+        workspace.reply(Reply::Prepared {generation:local,ticket:"local ticket".into(),lines:vec!["reviewed local scope".into()]});
+        assert_eq!(workspace.key(Key::Enter),Effect::Nothing,"Enter cannot save a rule");
+        assert!(workspace.confirmation_ready());
+        assert_eq!(workspace.answer_confirmation(true),Effect::Send(Job::ExecutePrepared("local ticket".into())));
+        workspace.request_filter(Pane::Files);workspace.key(Key::SelectAll);workspace.key(Key::Text("no match".into()));workspace.key(Key::Enter);
+        assert!(workspace.visible_rows(Pane::Files).is_empty());
+        for action in [ChangesAction::StageFile,ChangesAction::UnstageFile,ChangesAction::Ignore,ChangesAction::Hunk,ChangesAction::Lines]{assert!(!workspace.change_available(action));assert_eq!(workspace.change(action),Effect::Nothing);}
     }
 
     #[test]

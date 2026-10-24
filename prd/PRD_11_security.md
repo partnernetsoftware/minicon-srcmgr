@@ -60,6 +60,10 @@ Spawn uses an argument vector and the reviewed repository cwd, with null standar
 
 Patch/clone/worktree writes are scoped to reviewed destinations and revalidated against links/reparse changes; path boundary checks are necessary but not a claim that hostile same-user races are impossible. Recovery files receive owner-only permissions where available, since they contain source code. Remote transports default to HTTPS/SSH; insecure/unknown protocols require an explicit advanced decision and must not weaken global Git settings. Submodule recursion rechecks every child URL. Update networking follows [12](PRD_12_platform_delivery.md).
 
+## Reviewed ignore publication
+
+Reviewed ignore publication is limited to the identified repository's root `.gitignore` or common-directory `info/exclude`. Its filesystem guard rejects link-like destinations/parents and changed original bytes, permissions or file identity, reserves an exclusive lock and validates that lock's identity/content before publication. Cleanup removes only owned objects; a foreign lock is retained. Missing destinations use no-clobber hard-link publication and refuse unsupported filesystems instead of falling back to an overwrite. Existing files use MiniCon's atomic replacement. These checks narrow ordinary concurrent-writer hazards without claiming a race-free transaction against arbitrary same-user filesystem changes. Raw ignore queries use the pinned contained stdin pipe with the existing environment, timeout and output/tree bounds; no shell or uncontained child is introduced.
+
 ## Privacy and diagnostics
 
 No telemetry, analytics, crash upload, cloud account, source indexing service or background update network by default. Local logs exclude file content, commit message bodies, raw patches, credential-bearing URLs, tokens, environment dumps and private expanded paths. An explicit detailed capture is local, time-bounded and warns that Git/helper output can contain source/identities. Redaction runs before storage, not only at export. Error summaries preserve category/correlation ID and remediation without repeating raw secrets.

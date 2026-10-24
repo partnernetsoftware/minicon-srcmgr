@@ -57,5 +57,13 @@ jobs:
           $env:SRCMGR_TEST_GIT = (Get-Command git.exe).Source
           cargo test --locked -p srcmgr-cli --bin minicon-srcmgr commit_review
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Reviewed Changes against actual rules and index bytes
+        shell: pwsh
+        run: |
+          $env:SRCMGR_TEST_GIT = (Get-Command git.exe).Source
+          cargo test --locked -p srcmgr-cli --bin minicon-srcmgr file_review
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p srcmgr-cli --bin minicon-srcmgr ignore_review
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Affected client static checks
         run: cargo clippy --locked -p srcmgr-cli -p srcmgr-ui -p srcmgr-git --all-targets -- -D warnings

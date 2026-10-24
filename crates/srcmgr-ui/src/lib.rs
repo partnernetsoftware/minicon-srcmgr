@@ -26,3 +26,4 @@ pub use model::PromptAction;
 pub use model::{RecentRow, TrustReview};
 pub use model::{CommitReview, StagedRow};
 pub use workspace::{Effect, Key, Pane, Prompt, PromptKind, Workspace};
+pub use workspace::ChangesAction;

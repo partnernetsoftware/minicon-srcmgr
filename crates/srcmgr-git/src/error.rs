@@ -40,6 +40,9 @@ pub enum GitError {
     InitializationTarget(&'static str),
     InvalidIdentity,
     IdentityConfigChanged,
+    IgnoreEdit(&'static str),
+    StaleDiff,
+    UnreviewableDiff,
     StaleCommitReview,
     /// The revision is not a hexadecimal object id.
     InvalidRevision,
@@ -59,6 +62,9 @@ pub enum GitError {
 impl fmt::Display for GitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::IgnoreEdit(reason)=>formatter.write_str(reason),
+            Self::StaleDiff=>formatter.write_str("Diff changed since it was displayed; no partial patch was applied. Refresh and select again"),
+            Self::UnreviewableDiff=>formatter.write_str("Diff is not valid UTF-8; partial operations are unavailable. Whole-file actions preserve raw bytes"),
             Self::UnsupportedStashStorage => formatter.write_str("stash removal requires bounded ordinary files storage with an unpacked direct stash ref and an external recovery profile"),
             Self::StashPublicationIncomplete => formatter.write_str("stash removal publication is incomplete; original ref/reflog are retained in this profile's recovery transaction; refresh and inspect before manual repair; do not replay apply"),
             Self::StaleSelection => formatter.write_str("stash list changed, is ambiguous, or reached the 200-entry bound; refresh and select again"),
