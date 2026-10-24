@@ -979,9 +979,18 @@ def main():
                     if y - start > 10:
                         segments.append((start, y))
                     start = None
-            if len(segments) != 4:
+            receipt["observed_border_segments"] = segments
+            panels = segments
+            if len(segments) == 5 and 0 < segments[2][1] - segments[2][0] <= round(40 * scale):
+                # The delivered Changes surface inserts one short action strip
+                # between Files and Branches. It is not a navigable list pane.
+                panels = [segments[index] for index in (0, 1, 3, 4)]
+            # Resource-only runs never consume focus/selection pixel targets.
+            # Do not make their counters depend on an old four-panel layout.
+            # Latency runs still require validated targets before sending input.
+            if not args.skip_latency and len(panels) != 4:
                 raise RuntimeError(f"expected 4 panel borders, observed {segments}")
-            points = {"Files": (margin, sum(segments[1]) // 2, 0x32), "Commits": (margin, sum(segments[3]) // 2, 0x34), "Main": (rect.right - margin - 1, sum(segments[1]) // 2, 0x0D)}
+            points = {} if args.skip_latency else {"Files": (margin, sum(panels[1]) // 2, 0x32), "Commits": (margin, sum(panels[3]) // 2, 0x34), "Main": (rect.right - margin - 1, sum(panels[1]) // 2, 0x0D)}
             receipt["latency_ms"] = {}
             if args.skip_latency:
                 receipt["latency_status"] = "NOT-RUN: explicitly disabled for resource/workflow measurement"
@@ -1018,7 +1027,7 @@ def main():
             user.ReleaseDC(hwnd, dc)
             user.ReleaseDC(None, screen_dc)
         if args.desktop_frames:
-            regions = {"Files": segments[1], "Commits": segments[3], "Main": (round(12 * scale), rect.bottom)} if args.selection_latency else None
+            regions = {"Files": panels[1], "Commits": panels[3], "Main": (round(12 * scale), rect.bottom)} if args.selection_latency else None
             receipt["latency_ms"] = desktop_focus(hwnd, user, gdi, key, points, receipt, tree if args.busy_latency else None, regions)
         if args.workflow:
             receipt["workflow"] = workflow(args.git, repo, root, hwnd, user, key)

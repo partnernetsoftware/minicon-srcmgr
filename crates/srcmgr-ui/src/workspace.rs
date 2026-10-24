@@ -264,6 +264,8 @@ pub struct Workspace {
     tab_action: Option<TabAction>,
     last_request: Option<MainRequest>,
     restore_position: Option<(u64, usize, usize)>,
+    /// A same-file refresh retains readable pixels, but no write authority.
+    retained_refresh_generation: Option<u64>,
     snapshot: Snapshot,
     focus: Pane,
     /// The list whose selection the main panel shows. It is set whenever a list
@@ -313,7 +315,7 @@ impl Workspace {
             tools: None,
             navigation_issue: None,
             filters: std::array::from_fn(|_| Default::default()), filter_anchors: [None, None, None], filter_editor: None, next_position: None,
-            tabs, closing_tab: false, tab_entry: false, tab_action: None, last_request: None, restore_position: None,
+            tabs, closing_tab: false, tab_entry: false, tab_action: None, last_request: None, restore_position: None, retained_refresh_generation: None,
             snapshot,
             focus: Pane::Files,
             source: Pane::Files,
@@ -1864,7 +1866,16 @@ impl Workspace {
                 if self.source == Pane::Stashes && self.snapshot.stage_result.is_none() {
                     self.notice = removed_stash.map(|id| format!("Selected stash {id} was removed; list refreshed"));
                 }
+                let retained = (self.focus == Pane::Main && self.source == Pane::Files && self.main_ready && !self.modal() && !interrupted_confirmation)
+                    .then(|| (self.last_request.clone(), std::mem::take(&mut self.main), self.cursor, self.scroll));
                 let effect = self.show_source();
+                if let Some((Some(request), view, cursor, scroll)) = retained
+                    && self.last_request.as_ref() == Some(&request) {
+                    self.main = view;
+                    self.cursor = cursor;
+                    self.scroll = scroll;
+                    self.retained_refresh_generation = Some(self.generation);
+                }
                 if interrupted_confirmation {
                     self.notice = Some("Repository state refreshed; confirmation cancelled. Preview the action again.".to_owned());
                     self.main = MainView::note("State refreshed. Press the pane number to reload details.");
@@ -1875,6 +1886,8 @@ impl Workspace {
             }
             Reply::Main { generation, view } => {
                 if generation == self.generation {
+                    let retained_position = (self.retained_refresh_generation.take() == Some(generation) && self.main == view)
+                        .then_some((self.cursor, self.scroll));
                     self.main = view;
                     self.main_ready = true;
                     self.scroll = 0;
@@ -1883,6 +1896,11 @@ impl Workspace {
                     let last = self.main.lines.len().saturating_sub(1);
                     self.cursor = if self.main.committed.as_ref().is_some_and(|list| !list.files.is_empty()) { 2 } else { self.main.hunks.first().map_or(0, |start| (start + 1).min(last)) };
                     self.follow();
+                    if let Some((cursor, scroll)) = retained_position {
+                        self.cursor = cursor;
+                        self.scroll = scroll;
+                        self.follow();
+                    }
                     if let Some((expected, cursor, scroll)) = self.restore_position.take() && expected == generation {
                         self.cursor = cursor.min(self.main.lines.len().saturating_sub(1));
                         self.scroll = scroll.min(self.main.lines.len().saturating_sub(self.view_rows.max(1)));
@@ -2353,6 +2371,7 @@ impl Workspace {
     /// Asks for the main-panel content of the source list. The main panel
     /// shows a loading note until the reply arrives.
     fn show_source(&mut self) -> Effect {
+        self.retained_refresh_generation = None;
         let previous_side=match &self.last_request {Some(MainRequest::File {path,staged_view,..})=>Some((path.clone(),*staged_view)),_=>None};
         self.main_ready = false;
         let position = self.next_position.take().filter(|(pane, identity, _, _)| *pane == self.source && *identity == self.selected_identity(self.source));
@@ -2439,6 +2458,34 @@ fn clamp_index(index: usize, length: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn same_file_refresh_keeps_navigation_but_changed_diff_resets_it() {
+        let mut workspace = Workspace::new(snapshot(None));
+        workspace.set_view_rows(6);
+        let Job::Main { generation, .. } = sent(workspace.open()) else { panic!() };
+        let mut view = MainView { lines: lines_of(12), hunks: vec![0], file: None, committed: None };
+        view.file = Some(crate::model::FileTarget { path: NativePath::new("a.txt"), staged_view: false });
+        workspace.reply(Reply::Main { generation, view: view.clone() });
+        workspace.key(Key::Enter);
+        workspace.key(Key::Home);
+        assert_eq!(workspace.key(Key::Char('r')), Effect::Send(Job::Reload));
+        workspace.key(Key::Down);
+        let Job::Main { generation, .. } = sent(workspace.reply(Reply::Full(snapshot(None)))) else { panic!() };
+        assert_eq!(workspace.cursor(), 1, "a background refresh must not erase current navigation");
+        assert!(!workspace.current_file_diff(), "retained pixels do not authorize stale writes");
+        assert_eq!(workspace.change(ChangesAction::Hunk), Effect::Nothing);
+        workspace.key(Key::Down);
+        workspace.reply(Reply::Main { generation, view: view.clone() });
+        assert_eq!(workspace.cursor(), 2, "navigation during the detail read survives identical content");
+        assert!(workspace.current_file_diff());
+
+        let Job::Main { generation, .. } = sent(workspace.reply(Reply::Full(snapshot(None)))) else { panic!() };
+        workspace.key(Key::Down);
+        view.lines[1].text = "different content".into();
+        workspace.reply(Reply::Main { generation, view });
+        assert_eq!(workspace.cursor(), 1, "changed content must not inherit the old line target");
+    }
+
     #[test]
     fn history_return_path_roundtrips_without_cached_diffs_and_back_precedes_filter_clear() {
         let mut workspace = Workspace::new(snapshot(None));
