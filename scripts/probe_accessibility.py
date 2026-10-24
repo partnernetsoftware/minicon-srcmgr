@@ -82,7 +82,9 @@ def main():
             def created_git(*argv):return sp.run([git,'-C',str(created),*argv],env=env,check=True,capture_output=True).stdout
             assert created_git('symbolic-ref','HEAD').strip()==b'refs/heads/feature/native'
             assert not (created/'.git/index').exists() and (created/'keep.bin').read_bytes()==b'preserved\x00content'
-            capture('created-separate-trust-uia');client('invoke',name='Cancel');title('MiniCon SrcMgr')
+            capture('created-separate-trust-uia');client('invoke',name='Cancel');title('MiniCon SrcMgr - Open repository | Ready')
+            assert not (profile/'trust.v1').exists(), 'init or cancelled trust granted repository authority'
+            client('invoke',name='Back');title('MiniCon SrcMgr')
         client('invoke',name='Open');title('MiniCon SrcMgr - Open repository | Ready')
         client('set',name='Repository path',value=str(repo)+' missing')
         client('set',name='Repository path',value=str(repo));nodes=client('list')['nodes'];assert any(n['name']=='Repository path' and n['value']==str(repo) for n in nodes),'ValuePattern did not edit the actual field'
@@ -105,9 +107,11 @@ def main():
             client('set',name='Name',value='Native identity 中文')
             client('set',name='Email',value='native@example.invalid')
             nodes=client('list')['nodes'];assert any(n['name']=='Name' and n['value']=='Native identity 中文' for n in nodes)
-            capture('identity-uia');client('invoke',name='Save local');opened()
+            capture('identity-uia');client('invoke',name='Save local')
+            wait_entry(lambda:native_title(hwnd,user).startswith('MiniCon SrcMgr - Trust review | '),'identity config change bypassed separate trust review')
             assert run('config','--local','--get','user.name').decode('utf-8').strip()=='Native identity 中文'
             assert run('config','--local','--get','user.email').strip()==b'native@example.invalid'
+            client('invoke',name='Trust and open');opened()
             assert run('rev-parse','HEAD')==head and run('write-tree')==initial and (repo/'a.txt').read_bytes()==b'changed\n'
             user.PostMessageW(hwnd,0x10,0,0);child.wait(timeout=15);assert child.returncode==0
             receipt['process_tree']=tree.receipt(sample);assert receipt['process_tree']['coverage']=='COMPLETE' and not receipt['process_tree']['accounting']['active_processes']
