@@ -6,6 +6,7 @@ members = [
     "crates/srcmgr-state",
     "crates/srcmgr-ui",
     "crates/srcmgr-cli",
+    "crates/srcmgr-platform-ext",
 ]
 
 [workspace.package]
@@ -27,6 +28,7 @@ srcmgr-domain = { path = "crates/srcmgr-domain" }
 srcmgr-git = { path = "crates/srcmgr-git" }
 srcmgr-state = { path = "crates/srcmgr-state" }
 srcmgr-ui = { path = "crates/srcmgr-ui" }
+srcmgr-platform-ext = { path = "crates/srcmgr-platform-ext" }
 # Trust fingerprints need a collision-resistant hash; MiniCon checksums are not one.
 sha2 = { version = "0.11", default-features = false }
 # Durable profile state (PRD 13). Bundled SQLite gives consistent native builds.

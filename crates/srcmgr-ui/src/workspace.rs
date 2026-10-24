@@ -88,6 +88,7 @@ pub enum PromptKind {
 /// text.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Prompt {
+    id:u64,
     kind: PromptKind,
     text: String,
     submitted: Option<PromptAction>,
@@ -138,6 +139,7 @@ pub struct CommitComposer {
 }
 
 impl Prompt {
+    fn next_id()->u64 {static NEXT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);NEXT.fetch_add(1,std::sync::atomic::Ordering::Relaxed)}
     pub fn pending(&self) -> bool { self.submitted.is_some() }
     #[must_use]
     pub const fn kind(&self) -> PromptKind {
@@ -697,7 +699,7 @@ impl Workspace {
             }
             TabAction::Quit => { self.tab_action = Some(TabAction::Quit); None }
         };
-        self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: path.as_ref().map(|p| p.display_label()).unwrap_or_default(), submitted: Some(PromptAction::OpenRepository) });
+        self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::OpenRepository, text: path.as_ref().map(|p| p.display_label()).unwrap_or_default(), submitted: Some(PromptAction::OpenRepository) });
         self.tab_entry = true;
         self.entry(path)
     }
@@ -753,6 +755,21 @@ impl Workspace {
         }
     }
 
+    /// Native accessibility replaces committed field text; it never submits.
+    /// Composer changes retain the existing selection/save/IME boundary.
+    pub(crate) fn replace_editable_text(&mut self,text:String)->Effect {
+        if let Some(form)=self.composer.as_ref() {
+            if form.focus!=CommitFocus::Message||!form.editor.preedit.is_empty()||self.prompt.as_ref().is_some_and(Prompt::pending)||text.len()>composer::PASTE_LIMIT_BYTES{return Effect::Nothing;}
+            self.key(Key::SelectAll);return self.key(Key::Text(text));
+        }
+        if let Some(prompt)=self.prompt.as_mut() {
+            if prompt.pending()||text.len()>32768||text.contains(['\r','\n','\0']){return Effect::Nothing;}
+            prompt.text=text;
+        }
+        Effect::Nothing
+    }
+    pub(crate) fn accessibility_context(&self)->u64 {self.prompt.as_ref().map_or(self.generation,|prompt|prompt.id|(1<<63))}
+
     pub fn ime_commit(&mut self, text: String) -> Effect {
         if let Some(form) = self.locate.as_mut() { form.editor.preedit.clear(); return form.edit(Key::Text(text)); }
         if let Some(form) = self.tools.as_mut() { form.editor_mut().preedit.clear(); return form.edit_key(Key::Text(text)); }
@@ -791,7 +808,7 @@ impl Workspace {
         editor.caret = text.len();
         editor.focused = true;
         self.composer = Some(CommitComposer { editor, review: None, selected: 0, focus: CommitFocus::Message, diff: MainView::note("Select a staged path to review its Diff"), diff_scroll: 0, diff_column: 0, diff_ready: false, diff_generation: self.generation, review_generation: self.generation, id: self.generation, saved: text.clone(), in_flight: None, dirty_since: None, save_error: None, closing: false, quit: false });
-        self.prompt = Some(Prompt { kind: PromptKind::Commit, text, submitted: None });
+        self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::Commit, text, submitted: None });
         self.notice = Some("Loading complete staged-index review...".into());
         Effect::Send(Job::LoadCommitReview { generation: self.generation })
     }
@@ -1034,7 +1051,7 @@ impl Workspace {
         if self.modal() { return Effect::Nothing; }
         self.notice = None;
         self.git_detail = "Loading application settings; no executable is being run.".into();
-        self.prompt = Some(Prompt { kind: PromptKind::GitSettings, text: String::new(), submitted: Some(PromptAction::GitSettings) });
+        self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::GitSettings, text: String::new(), submitted: Some(PromptAction::GitSettings) });
         Effect::Send(Job::LoadGitSettings)
     }
     pub fn focus_create_field(&mut self, branch: bool) -> Effect {
@@ -1156,7 +1173,7 @@ impl Workspace {
             self.notice = Some("This native path is unavailable with the current Git adapter; no lossy conversion was used".into());
             return Effect::Nothing;
         };
-        self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: text.into(), submitted: Some(PromptAction::OpenRepository) });
+        self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::OpenRepository, text: text.into(), submitted: Some(PromptAction::OpenRepository) });
         self.entry(Some(path))
     }
 
@@ -1502,7 +1519,7 @@ impl Workspace {
             Key::Char('a') => self.act_all(),
             Key::Char('c') => self.request_commit(),
             Key::Char('n') if self.focus == Pane::Branches => {
-                self.prompt = Some(Prompt { kind: PromptKind::NewBranch, text: String::new(), submitted: None });
+                self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::NewBranch, text: String::new(), submitted: None });
                 Effect::Nothing
             }
             Key::Char('d') if self.focus == Pane::Branches => self.ask_delete(),
@@ -1601,7 +1618,7 @@ impl Workspace {
             Reply::IdentitySaved { path, review, detail } => {
                 if self.identity.is_some() {
                     self.identity = None;
-                    self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: path.as_os_str().to_str().unwrap_or_default().into(), submitted: review.as_ref().map(|_| PromptAction::OpenRepository) });
+                    self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::OpenRepository, text: path.as_os_str().to_str().unwrap_or_default().into(), submitted: review.as_ref().map(|_| PromptAction::OpenRepository) });
                     self.trust = review;
                     self.trust_scroll = 0;
                     self.notice = Some(detail);
@@ -1654,7 +1671,7 @@ impl Workspace {
                 if self.create.as_ref().is_some_and(|form| form.submitted && form.review.is_some()) {
                     let path = review.worktree.as_os_str().to_str().unwrap_or_default().to_owned();
                     self.create = None;
-                    self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: path, submitted: Some(PromptAction::OpenRepository) });
+                    self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::OpenRepository, text: path, submitted: Some(PromptAction::OpenRepository) });
                     self.notice = Some("Repository created. Review trust before opening; existing files remain unstaged.".into());
                 }
                 if self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(PromptAction::OpenRepository)) {
@@ -1883,7 +1900,7 @@ impl Workspace {
     pub fn request_open(&mut self) -> Effect {
         if !self.modal() {
             self.notice = None;
-            self.prompt = Some(Prompt { kind: PromptKind::OpenRepository, text: String::new(), submitted: None });
+            self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::OpenRepository, text: String::new(), submitted: None });
         }
         Effect::Nothing
     }
@@ -2968,6 +2985,18 @@ mod tests {
         workspace.request_filter(Pane::Files);workspace.key(Key::SelectAll);workspace.key(Key::Text("no match".into()));workspace.key(Key::Enter);
         assert!(workspace.visible_rows(Pane::Files).is_empty());
         for action in [ChangesAction::StageFile,ChangesAction::UnstageFile,ChangesAction::Ignore,ChangesAction::Hunk,ChangesAction::Lines]{assert!(!workspace.change_available(action));assert_eq!(workspace.change(action),Effect::Nothing);}
+    }
+
+    #[test]
+    fn accessible_field_replacement_preserves_scope_and_never_submits_or_retargets_pending_open() {
+        let mut workspace=Workspace::new(snapshot(None));workspace.request_open();
+        assert_eq!(workspace.replace_editable_text("old path".into()),Effect::Nothing);
+        assert_eq!(workspace.replace_editable_text("new 中文 path".into()),Effect::Nothing);
+        assert_eq!(workspace.prompt().unwrap().text(),"new 中文 path");
+        workspace.replace_editable_text("invalid\npath".into());assert_eq!(workspace.prompt().unwrap().text(),"new 中文 path");
+        let Job::EnterRepository {path:Some(path),current:Some((source,_))}=sent(workspace.key(Key::Enter))else{panic!("open must retain the source context through the entry coordinator");};
+        assert_eq!(path,NativePath::new("new 中文 path"));assert_eq!(source,NativePath::new("fixture-repository"));
+        workspace.replace_editable_text("late target".into());assert_eq!(workspace.prompt().unwrap().text(),"new 中文 path");
     }
 
     #[test]

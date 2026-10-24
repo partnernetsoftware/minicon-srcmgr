@@ -24,6 +24,7 @@ use minicon_ui_core::pixel::{blend_mask_xrgb, fill_xrgb_rect};
 
 use crate::model::{Backend, Job, Line, PromptAction, Reply, Snapshot, Tone, short};
 use crate::workspace::{ChangesAction, CommitFocus, Confirm, Effect, Key, Pane, PromptKind, Workspace};
+mod accessibility;
 
 enum ClipboardRequest { Read, Write { text: String, cut: bool } }
 enum ClipboardTask {
@@ -109,6 +110,9 @@ pub fn show_entry(initial_path: Option<srcmgr_domain::NativePath>, backend: Box<
 }
 
 struct StatusWindow {
+    accessibility: Option<srcmgr_platform_ext::Publisher>,
+    accessible_scene: Option<accessibility::Scene>,
+    accessibility_revision: u64,
     workspace: Workspace,
     backend: Option<Box<dyn Backend>>,
     jobs: Option<Sender<Job>>,
@@ -136,6 +140,9 @@ impl StatusWindow {
     fn new(snapshot: Snapshot, backend: Box<dyn Backend>) -> Self {
         let native_title = snapshot.title.clone();
         Self {
+            accessibility: None,
+            accessible_scene: None,
+            accessibility_revision: 0,
             workspace: Workspace::new(snapshot),
             backend: Some(backend),
             jobs: None,
@@ -718,6 +725,14 @@ fn blit_mask(canvas: &mut Canvas<'_>, glyph: &RasterGlyph, left: i64, top: i64, 
 
 impl PixelWindowApplication for StatusWindow {
     fn opened(&mut self, window: &PixelWindow) -> Result<PixelWindowDirective, PixelWindowError> {
+        let wake=window.waker();
+        {
+            match srcmgr_platform_ext::Publisher::attach(window.native_identity(),&self.native_title,Arc::new(move||wake.wake().is_ok())) {
+                Ok(publisher)=>self.accessibility=Some(publisher),
+                Err(srcmgr_platform_ext::Error::Unsupported)=>{},
+                Err(error)=>{let _=self.workspace.reply(Reply::Notice(format!("Accessibility publication unavailable: {error}")));},
+            }
+        }
         self.start_worker(window)?;
         let effect = self.workspace.open();
         let directive = self.dispatch(effect);
@@ -731,6 +746,12 @@ impl PixelWindowApplication for StatusWindow {
         event: PixelWindowEvent,
     ) -> Result<PixelWindowDirective, PixelWindowError> {
         let started = self.timing.as_ref().map(|_| Instant::now());
+        let changes_accessibility=match &event {
+            PixelWindowEvent::Keyboard(key)=>key_of(key).is_some(),
+            PixelWindowEvent::Ime(_)|PixelWindowEvent::PointerButton {button:PointerButton::Left,state:PointerButtonState::Pressed,..}|PixelWindowEvent::MouseWheel {..}|PixelWindowEvent::GeometryChanged {..}=>true,
+            _=>false,
+        };
+        if changes_accessibility {self.invalidate_accessibility();window.request_redraw();}
         let category = started.map(|_| match &event {
             PixelWindowEvent::Keyboard(key) if key_of(key).is_some() => if self.workspace.prompt().is_some() || self.workspace.filter_editor().is_some() { Category::Text } else { Category::Keyboard },
             PixelWindowEvent::PointerButton { .. } | PixelWindowEvent::MouseWheel { .. } => Category::Pointer,
@@ -745,12 +766,14 @@ impl PixelWindowApplication for StatusWindow {
                     self.replies.as_ref().map_or_else(Vec::new, |receiver| receiver.try_iter().collect());
                 let mut directive = PixelWindowDirective::Continue;
                 for reply in replies {
+                    self.invalidate_accessibility();
                     self.pending = self.pending.saturating_sub(1);
                     let effect = self.workspace.reply(reply);
                     if matches!(self.dispatch(effect), PixelWindowDirective::Exit) {
                         directive = PixelWindowDirective::Exit;
                     }
                 }
+                self.accessibility_requests(window)?;
                 if self.pending == 0 && self.queued.is_empty()
                     && let Some(path) = self.initial_path.take() && !self.workspace.modal() {
                     let effect = self.workspace.open_path(path);
@@ -933,6 +956,7 @@ impl PixelWindowApplication for StatusWindow {
         let main_rows = inner_of(diff_body(&self.workspace,layout(i64::from(width),i64::from(height),grid).main,grid),grid).rows;
         self.workspace.set_view_rows(main_rows.max(0) as usize);
         let draws = scene(&self.workspace, i64::from(width), i64::from(height), grid, self.pending + self.queued.len());
+        self.publish_accessibility(window,Surface {width:i64::from(width),height:i64::from(height),grid});
         let mut canvas = Canvas { pixels: frame.pixels_mut(), stride: width, height };
         fill_xrgb_rect(canvas.pixels, width, 0, 0, width, height, BACKGROUND);
         for draw in draws {
@@ -2058,7 +2082,7 @@ mod tests {
         assert_eq!(window.workspace.locate_form().unwrap().editor.text,"new local directory");
     }
 
-    const GRID: Grid = Grid { row: 20, ascent: 15, advance: 8.0, margin: 10, gap: 6 };
+    pub(super) const GRID: Grid = Grid { row: 20, ascent: 15, advance: 8.0, margin: 10, gap: 6 };
 
     #[test]
     fn create_repository_queue_guard_preserves_form_and_welcome_has_named_entry() {
@@ -2138,7 +2162,7 @@ mod tests {
         assert_eq!(hit_test(&window.workspace, surface, x + 4, GRID.margin + 4), Hit::Open);
     }
 
-    fn snapshot(files: usize) -> Snapshot {
+    pub(super) fn snapshot(files: usize) -> Snapshot {
         Snapshot {
             history_limit: 200,
             navigation: None,

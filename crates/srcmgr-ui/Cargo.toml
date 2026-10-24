@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 srcmgr-domain.workspace = true
+srcmgr-platform-ext.workspace = true
 minicon-core.workspace = true
 minicon-ui-core.workspace = true
 minicon-platform = { workspace = true, features = ["native-pixel-window", "input", "ime", "font", "clipboard"] }

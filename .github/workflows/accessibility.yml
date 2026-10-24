@@ -1,0 +1,39 @@
+name: Accessibility publication contracts
+
+on:
+  push:
+    paths:
+      - 'crates/srcmgr-platform-ext/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.github/workflows/accessibility.yml'
+  pull_request:
+    paths:
+      - 'crates/srcmgr-platform-ext/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.github/workflows/accessibility.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pinned toolchain
+        run: rustup show active-toolchain
+      - name: Bounded publication and request contracts
+        run: cargo test --locked -p srcmgr-platform-ext --lib
+      - name: Private adapter static checks
+        run: cargo clippy --locked -p srcmgr-platform-ext --all-targets -- -D warnings
