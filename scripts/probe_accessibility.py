@@ -17,7 +17,9 @@ def main():
     parser.add_argument('--owned-topmost',action='store_true')
     parser.add_argument('--smoke',action='store_true',help='Only provider startup, live value, Back and normal exit; no repository trust or Git work')
     parser.add_argument('--entry-forms',action='store_true',help='Actual Create review/Back/init/separate trust and local identity UIA journey')
+    parser.add_argument('--keyboard-entry',action='store_true',help='With entry-forms, verify actual Ctrl+A replacement and Home insertion through owned keyboard input')
     args=parser.parse_args()
+    if args.keyboard_entry and not args.entry_forms:parser.error('keyboard-entry requires entry-forms')
     if args.smoke and args.entry_forms:parser.error('select only one scoped mode')
     workspace=Path(__file__).resolve().parents[1];root=Path(args.out).resolve()
     if not root.is_relative_to(workspace/'target/qualification'):parser.error('out must be a new owned qualification directory')
@@ -70,6 +72,9 @@ def main():
             client('invoke',name='Create');title('MiniCon SrcMgr - Create repository')
             assert client('disabled',name='Review creation')['verdict']=='REFUSED_DISABLED'
             client('set',name='Directory (parent must exist)',value=str(created))
+            if args.keyboard_entry:
+                key(hwnd,0x41,ctrl=True);key(hwnd,str(created))
+                nodes=client('list')['nodes'];assert any(n['name']=='Directory (parent must exist)' and n['value']==str(created) for n in nodes),'actual Ctrl+A did not replace the existing path'
             client('set',name='Initial branch',value='feature/native')
             client('invoke',name='Review creation');wait_entry(lambda:native_title(hwnd,user).startswith('MiniCon SrcMgr - Create review | '),'creation review missing')
             nodes=client('list')['nodes'];assert not any(n['name']=='Initial branch' for n in nodes),'review exposes editable creation fields'
@@ -104,12 +109,16 @@ def main():
         client('invoke',name='Trust and open');opened();nodes=client('list')['nodes'];assert any(n['name']=='Stage' and n['enabled'] for n in nodes)
         if args.entry_forms:
             client('invoke',name='Identity settings');title('MiniCon SrcMgr - Identity settings | Ready')
-            client('set',name='Name',value='Native identity 中文')
+            edit_started=time.time_ns()//100+116444736000000000
+            identity_name='Native identity 中文'
+            client('set',name='Name',value=identity_name)
+            if args.keyboard_entry:
+                key(hwnd,0x24);key(hwnd,'Edited ');identity_name='Edited '+identity_name
             client('set',name='Email',value='native@example.invalid')
-            nodes=client('list')['nodes'];assert any(n['name']=='Name' and n['value']=='Native identity 中文' for n in nodes)
-            capture('identity-uia');client('invoke',name='Save local')
+            nodes=client('list')['nodes'];assert any(n['name']=='Name' and n['value']==identity_name for n in nodes)
+            capture('identity-uia');edit_finished=time.time_ns()//100+116444736000000000;client('invoke',name='Save local')
             wait_entry(lambda:native_title(hwnd,user).startswith('MiniCon SrcMgr - Trust review | '),'identity config change bypassed separate trust review')
-            assert run('config','--local','--get','user.name').decode('utf-8').strip()=='Native identity 中文'
+            assert run('config','--local','--get','user.name').decode('utf-8').strip()==identity_name
             assert run('config','--local','--get','user.email').strip()==b'native@example.invalid'
             client('invoke',name='Trust and open');opened()
             assert run('rev-parse','HEAD')==head and run('write-tree')==initial and (repo/'a.txt').read_bytes()==b'changed\n'
@@ -118,7 +127,9 @@ def main():
             git_events=[p for p in receipt['process_tree']['processes'] if p.get('image','').casefold()=='git.exe']
             assert not [p for p in git_events if p['created_100ns']<first_authority],'Git ran before creation authority'
             assert any(p['created_100ns']>=before_authority for p in git_events),'explicit existing-repository trust did not execute Git'
+            assert not [p for p in git_events if edit_started<=p['created_100ns']<edit_finished],'field editing scheduled Git work'
             receipt['cases']=['PASS: real UIA Create field replacement, initial disabled review, Back preserving input/no metadata, explicit init with exact branch and untouched existing bytes, then separate trust cancellation', 'PASS: real UIA local identity fields and deliberate Save reach exact local Git config; existing HEAD/index/source remain unchanged']
+            if args.keyboard_entry:receipt['cases'].append('PASS: actual owned Ctrl+A replaces the full existing path; Home inserts at the identity start; exact UIA/config values observed and no Git scheduled during field edits; native clipboard/IME composition remain NOT-RUN')
             receipt['verdict']='PASS'
             print(json.dumps({k:v for k,v in receipt.items() if k!='process_tree'}))
             return
@@ -145,8 +156,21 @@ def main():
         if child and child.poll() is None:
             try:
                 if hwnd:
-                    key(hwnd,0x1B)
-                    wait_entry(lambda:not native_title(hwnd,user).startswith('MiniCon SrcMgr - Review'),'cleanup review cancellation did not settle');settled()
+                    def ordinary():
+                        current=native_title(hwnd,user)
+                        return current=='MiniCon SrcMgr' or (current.startswith('MiniCon SrcMgr - '+repo.name+' | ') and current.endswith(' Ready'))
+                    for _ in range(4):
+                        if ordinary():break
+                        try:key(hwnd,0x1B)
+                        except Exception as error:
+                            receipt.setdefault('cleanup_key_errors',[]).append(repr(error))
+                            owner=w.DWORD();user.GetWindowThreadProcessId(hwnd,c.byref(owner))
+                            assert owner.value==child.pid,'cleanup window no longer belongs to the launched process'
+                            assert user.PostMessageW(hwnd,0x100,0x1B,1),'owned Escape cleanup was refused'
+                            user.PostMessageW(hwnd,0x101,0x1B,0xC0000001)
+                            receipt['cleanup_posted_escapes']=receipt.get('cleanup_posted_escapes',0)+1
+                        time.sleep(0.1)
+                    wait_entry(ordinary,'cleanup did not leave the nested modal path')
             except Exception as error:receipt['cleanup_readiness_error']=repr(error)
             if hwnd:user.PostMessageW(hwnd,0x10,0,0)
             try:child.wait(timeout=15)

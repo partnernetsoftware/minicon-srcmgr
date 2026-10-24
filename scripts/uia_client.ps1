@@ -15,11 +15,32 @@ function Find-Node([string]$name) {
     if ($null -eq $node) { throw "Missing native UIA node: $name" }
     return $node
 }
+function Ready-Node([string]$name) {
+    $until = [DateTime]::UtcNow.AddSeconds(10)
+    $started = [DateTime]::UtcNow
+    $script:readiness = @{ name = $name; polls = 0; initial = $null }
+    do {
+        $script:readiness.polls++
+        try {
+            $node = Find-Node $name
+            $state = @{ name = $node.Current.Name; enabled = $node.Current.IsEnabled; automation_id = $node.Current.AutomationId }
+            if ($null -eq $script:readiness.initial) { $script:readiness.initial = $state }
+            $script:readiness.last = $state
+            if ($state.enabled) {
+                $script:readiness.wait_ms = ([DateTime]::UtcNow - $started).TotalMilliseconds
+                return $node
+            }
+        } catch { $script:readiness.last_error = $_.Exception.Message }
+        Start-Sleep -Milliseconds 50
+    } while ([DateTime]::UtcNow -lt $until)
+    throw "Native control did not become enabled: $name"
+}
 function Invoke-Node($node) {
     $pattern = $node.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $pattern.Invoke()
 }
 $result = @{ mode = $request.mode; root_name = $root.Current.Name; owner = $OwnerPid }
+try {
 switch ($request.mode) {
     'list' {
         $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
@@ -30,9 +51,11 @@ switch ($request.mode) {
             @{ name = $_.Current.Name; enabled = $_.Current.IsEnabled; role = $_.Current.ControlType.ProgrammaticName; value = $value; automation_id = $_.Current.AutomationId }
         })
     }
-    'invoke' { Invoke-Node (Find-Node $request.name); $result.verdict = 'QUEUED' }
+    'invoke' { $target = Ready-Node $request.name; $result.readiness = $script:readiness; Invoke-Node $target; $result.verdict = 'QUEUED' }
     'set' {
-        $pattern = (Find-Node $request.name).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+        $target = Ready-Node $request.name
+        $result.readiness = $script:readiness
+        $pattern = $target.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
         $pattern.SetValue($request.value)
         $result.verdict = 'QUEUED'
     }
@@ -55,5 +78,13 @@ switch ($request.mode) {
         catch [System.Windows.Automation.ElementNotAvailableException] { $result.verdict = 'REFUSED_STALE' }
     }
     default { throw 'Unsupported UIA probe mode' }
+}
+} catch {
+    $result.verdict = 'FAIL'
+    $result.error_type = $_.Exception.GetType().FullName
+    $result.error = $_.Exception.Message
+    if ($null -ne $script:readiness) { $result.readiness = $script:readiness }
+    [IO.File]::WriteAllText($OutputFile, ($result | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    throw
 }
 [IO.File]::WriteAllText($OutputFile, ($result | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
