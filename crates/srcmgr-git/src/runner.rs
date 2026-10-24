@@ -280,12 +280,22 @@ mod tests {
 
     #[test]
     fn deadline_terminates_and_reports_timeout() {
+        // A real `git --version` may finish before the first deadline poll,
+        // especially on Linux. Use this test executable as an owned blocking
+        // child instead; the marker is carried through libtest's --skip value
+        // without changing process-global environment or skipping this test.
+        const CHILD_MARKER: &str = "srcmgr-owned-deadline-fixture";
+        if env::args().any(|argument| argument == CHILD_MARKER) {
+            thread::sleep(Duration::from_secs(2));
+            return;
+        }
         let limits = Limits {
-            timeout: Duration::from_nanos(1),
+            timeout: Duration::from_millis(20),
             ..Limits::PROBE
         };
         assert!(matches!(
-            run(&git_executable(), None, &["--version"], None, limits),
+            run(&env::current_exe().expect("owned test executable"), None,
+                &["--exact", "runner::tests::deadline_terminates_and_reports_timeout", "--skip", CHILD_MARKER], None, limits),
             Err(GitError::Timeout)
         ));
     }
