@@ -1,0 +1,51 @@
+name: Windows candidate build contracts
+
+on:
+  push:
+    paths:
+      - 'scripts/build_windows_candidate.py'
+      - 'scripts/prepare_windows_candidate.py'
+      - 'build-support/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.github/workflows/windows-candidate.yml'
+  pull_request:
+    paths:
+      - 'scripts/build_windows_candidate.py'
+      - 'scripts/prepare_windows_candidate.py'
+      - 'build-support/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.github/workflows/windows-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-identity:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pinned toolchain and locked source cache
+        run: |
+          rustup show active-toolchain
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo fetch --locked --target x86_64-pc-windows-msvc
+      - name: Optimized candidate, source binding and known build-root removal
+        run: python scripts/build_windows_candidate.py --out target/qualification/ci-windows-candidate
+      - name: Start exact frozen executable with an independent fresh profile
+        shell: pwsh
+        run: |
+          $startupProfile = Join-Path $env:RUNNER_TEMP ('srcmgr-candidate-' + [guid]::NewGuid().ToString('N'))
+          $output = & target/qualification/ci-windows-candidate/candidate/minicon-srcmgr.exe --profile $startupProfile setting get history.limit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($output -ne 'unset') { throw 'Frozen candidate did not return the fresh-profile setting' }
+      - name: Relevant build failure excerpt
+        if: failure()
+        shell: pwsh
+        run: Get-Content target/qualification/ci-windows-candidate/build.log -Tail 30 -ErrorAction SilentlyContinue
