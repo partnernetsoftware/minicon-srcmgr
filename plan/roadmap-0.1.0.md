@@ -1,6 +1,6 @@
 # 0.0.x → 0.1.0 usable-client roadmap
 
-Status: `[-]` product planning; version allocation below is a target sequence, not implemented or shipped status. Current package version is **0.0.6**, under implementation; no new version is released. Latest release status belongs to [12](../prd/PRD_12_platform_delivery.md); this document performs no promotion. Product scope is owned by [01](../prd/PRD_01_product.md#010-first-user-feature-tree), UI/UX by [10](../prd/PRD_10_desktop_ux.md#first-user-workspace-and-journeys). The documentation baseline number is unrelated to application versions.
+Status: `[-]` first-user roadmap; future version allocation is a target sequence, not shipped status. Current source checkpoint is **0.0.6**, with implemented local-client functions and scoped evidence in its plan; qualified runnable delivery remains open. Actual release status belongs to [12](../prd/PRD_12_platform_delivery.md); this document performs no promotion. Product scope is owned by [01](../prd/PRD_01_product.md#010-first-user-feature-tree), UI/UX by [10](../prd/PRD_10_desktop_ux.md#first-user-workspace-and-journeys). The documentation baseline number is unrelated to application versions.
 
 ## Outcome and critical path
 
@@ -44,8 +44,8 @@ Basic history is visible from the start, clone belongs in 0.0.7, and available n
 
 | Workstream | Allocated target | Ownership | State |
 |---|---|---|---|
-| Enter, reopen, switch repos; app/Git settings | 0.0.6 | 03/10/13 | `[_]` |
-| Coherent local Changes/Diff/composer and filters | 0.0.6, reusing 0.0.5 | 04/05/10 | `[_]` |
+| Enter, reopen, switch repos; app/Git settings | 0.0.6 | 03/10/13 | `[-]` · delivered source functions and named native/Git evidence in the active plan; source publication and full first-user qualification are tracked separately |
+| Coherent local Changes/Diff/composer and filters | 0.0.6, reusing 0.0.5 | 04/05/10 | `[-]` · implemented local source paths, corrected refresh navigation and scoped quality evidence in the active plan |
 | Authenticated clone/fetch/FF-pull/reviewed push | 0.0.7 | 07/11 | `[_]` |
 | Branch tracking/upstream; remote result reconciliation | 0.0.7 | 06/07/13 | `[_]` |
 | Merge/rebase/conflicts and restart | 0.0.8 | 06/08/13 | `[_]` |
@@ -54,7 +54,7 @@ Basic history is visible from the start, clone belongs in 0.0.7, and available n
 | Branch rename/tags; pick/revert/reset; amend/sign-off | 0.0.9 latest | 04/06/08 | `[_]` |
 | LFS/submodule/worktree compatibility floor | As each relevant entry/action lands; review by 0.0.9 | 03/09/11 | `[_]` |
 | Semantic controls, IME, localization keys and compact layouts | Start 0.0.6; primary-flow closure by 0.1.0 | 02/10 | `[-]` · selected Windows semantics/input and typed control-caption keys have scoped evidence in the active plan; full native/language/layout closure stays open |
-| Packaging and representative environment | Feasibility starts 0.0.6; first qualified trial package as available; final 0.1.0 | 12/14 | `[_]` |
+| Packaging and representative environment | Feasibility starts 0.0.6; first qualified trial package as available; final 0.1.0 | 12/14 | `[-]` · exact-source private builds/archive/startup and available-host measurements exist; qualified supported-image/reference/signing delivery remains open |
 
 Unscheduled beyond this first usable target: interactive rebase editor, advanced multi-commit editing, full LFS administration, submodule create/update management, worktree create/remove, advanced author/date/ref/path query language, patch exchange, S3 and real non-Git adapters. Their existing cumulative PRD requirements are retained; this roadmap does not erase them or invent parity.
 

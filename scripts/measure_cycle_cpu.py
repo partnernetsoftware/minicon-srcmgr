@@ -52,11 +52,13 @@ def main():
         captured["dirty"] = {path.name: path.read_bytes() for path in repo.glob("f*.txt")
                              if int(path.stem[1:]) < 200}
         tree = captured["tree"]
+        assert not any(tree.images.get(pid, "").lower() == "git.exe" for pid in tree.pids(active_only=True)), "Git was still active before the measured cycle"
         before = tree.accounting()
         captured["begin"] = time.time_ns() // 1000
         result = original_sustained(git, repo, out, *positional)
         captured["end"] = time.time_ns() // 1000
         after = tree.accounting()
+        assert not any(tree.images.get(pid, "").lower() == "git.exe" for pid in tree.pids(active_only=True)), "Git was still active after the measured cycle"
         captured["gui_cpu_s"] = after["cpu_s"] - before["cpu_s"]
         captured["final_head"] = read("rev-parse", "HEAD").strip().decode()
         captured["final_tree"] = read("write-tree").strip().decode()
@@ -66,12 +68,17 @@ def main():
     OwnedTree.__init__, OwnedTree.receipt, probe.sustained = initialize, receipt, sustained
     sys.argv = [str(Path(probe.__file__)), "--exe", args.exe, "--git", args.git,
                 "--out", str(root / "native"), "--tree", "--cycles", "1",
-                "--idle-seconds", "1", "--settle-seconds", "30", "--skip-latency"]
+                "--idle-seconds", "1", "--settle-seconds", "0", "--skip-latency"]
     try:
         probe.main()
     finally:
         OwnedTree.__init__, OwnedTree.receipt, probe.sustained = original_init, original_receipt, original_sustained
     native = json.loads((root / "native" / "receipt.json").read_text())
+    # Retain the actual measured interval even if a later replay oracle fails.
+    # No idle/retention claim is made by this active-CPU-only comparison.
+    (root / "cycle-capture.json").write_text(json.dumps({
+        key: captured[key] for key in ("begin", "end", "gui_cpu_s", "initial_head", "final_head", "final_tree", "final_status")
+    }, indent=2), encoding="utf-8")
     job = captured["job_receipt"]
     assert job["coverage"] == "COMPLETE", "GUI tree accounting incomplete"
     assert all(row["image"] != "unavailable at notification" for row in job["processes"]), "incomplete process identity capture"
@@ -79,7 +86,7 @@ def main():
     assert all("argv" in row.get("command_capture", {}) for row in git_rows), "incomplete Git command capture"
     rows = [row for row in git_rows if row["command_capture"]["parent_pid"] == native["product_pid"]
             and captured["begin"] <= (row["created_100ns"] - 116444736000000000) // 10 <= captured["end"]]
-    assert all(os.path.normcase(str(Path(row["command_capture"]["argv"][0]).resolve())) == os.path.normcase(str(Path(args.git).resolve())) for row in rows), "captured root uses a different Git installation"
+    assert all(os.path.samefile(row["command_capture"]["argv"][0], args.git) for row in rows), "captured root uses a different Git installation"
     commands = [row["command_capture"]["argv"][1:] for row in sorted(rows, key=lambda row: row["created_100ns"])]
     assert commands and sum(argv[:1] == ["commit"] for argv in commands) == 1, "missing/ambiguous actual commit sequence"
     repo = captured["repo"]

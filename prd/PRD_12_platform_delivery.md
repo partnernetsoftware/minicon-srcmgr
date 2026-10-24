@@ -60,6 +60,12 @@ Freeze source before qualification. Build once per cell, package/sign, then hash
 
 A receipt records source/artifact identity, environment, actual ISA/translation, enabled features, test cases, timestamps and verdict. Missing native court, signing authority or evidence is BLOCKED. Do not fabricate a pass or silently drop a target. M3 stable promotion requires every baseline requirement, all six cells and explicit human authority for the named version. Creating this repository is authorized; publishing a future binary version is not authorized by this PRD task. Promotion publishes the already qualified bytes without rebuilding.
 
+## Development source checkpoints
+
+The existing source-only 0.0.x delivery line is distinct from the first qualified runnable beta below. A public development source checkpoint requires the version's delivered local tasks, affected correctness/safety checks, real changed-path execution on the available host, passing applicable source CI, source/version identity and explicit known limitations. Observed product correctness or data-loss defects in those paths are repaired before publication. Source publication does not qualify a supported Windows binary, cumulative M1/M2 acceptance or any unmeasured performance/platform claim.
+
+For 0.0.6, the owner has instructed development and public release to continue without supplying another test machine. Use the available native host for actual measurements and repairs and publish the completed development source checkpoint with its scoped evidence. Do not make owner-provided Windows 11 hardware a prerequisite for publishing source. The supported-image, CJK/clipboard/screen-reader/DPI, 60 Hz presentation, long-session and signed-package requirements remain open for their qualified first-user delivery scope; no threshold or target platform is lowered. Known failed observations remain visible. Do not attach the unsigned private ZIP/executable or advertise reference-platform certification as part of this source release. A source-only checkpoint still does not satisfy the 0.1.0 runnable-client outcome.
+
 ## 0.1.0 first-user beta delivery target
 
 Status: planned, not built, signed, qualified or published. Product admission is owned by [01](PRD_01_product.md#010-first-user-feature-tree) and sequencing by [the roadmap](../plan/roadmap-0.1.0.md). Existing 0.0.x source releases retain their original scope; a source archive alone does not satisfy the new first-user runnable-client target.
@@ -163,7 +169,7 @@ Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Rele
 
 ## Development 0.0.6 status
 
-Workspace version: **0.0.6**, partial implementation under the [active plan](../plan/plan-0.0.6.md). The owner authorizes sequential public releases through 0.0.9 after their applicable gates. No 0.0.6 tag/release or distributed binary exists at implementation start; latest published version remains 0.0.4. Recents storage and contract CI are initial work, not completion of repository entry, tabs, commit review or runtime qualification. Public binary first-user delivery remains the separately qualified 0.1.0 target above.
+Workspace version: **0.0.6**. The [active plan](../plan/plan-0.0.6.md) records implemented repository entry/setup, coherent Changes/full-index composition, tabs/context, quick filters and external handoff, together with scoped native/Git/UIA and available-host resource evidence. The refresh-navigation defect found during measurement is repaired with a discriminating regression and actual native follow-up. Public development source promotion is being prepared under the source-checkpoint contract above and the owner's named 0.0.6 release authority; no distributed binary or supported-platform certification is claimed. Publication is recorded only after the public tag/release is verified. Qualified runnable delivery remains the separate 0.1.0 target.
 
 ## 0.0.5 source checkpoint
 

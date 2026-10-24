@@ -817,6 +817,7 @@ def main():
     p.add_argument("--desktop-frames", action="store_true", help="observe DXGI desktop pixels paired with OS update timestamps; fail if unavailable")
     p.add_argument("--busy-latency", action="store_true", help="require owned live Git at each desktop-input trial and verify kernel lifetime overlap")
     p.add_argument("--selection-latency", action="store_true", help="measure selected rows and the diff cursor instead of only focus borders")
+    p.add_argument("--latency-pane", choices=("Files", "Commits", "Main"), help="limit desktop feedback follow-up to the affected pane")
     p.add_argument("--skip-latency", action="store_true", help="resource/workflow-only probe; records latency as NOT-RUN")
     p.add_argument("--postcommit-profile-fault", action="store_true", help="one-cycle owned post-commit storage failure and completion-guidance capture")
     p.add_argument("--cycles", type=int, default=0)
@@ -847,6 +848,8 @@ def main():
         p.error("busy-latency requires tree accounting and desktop-frames")
     if args.selection_latency and (not args.desktop_frames or min(args.files, args.commits) < 2):
         p.error("selection-latency requires desktop-frames and at least two files/commits")
+    if args.latency_pane and not args.desktop_frames:
+        p.error("latency-pane requires desktop-frames")
     if args.postcommit_profile_fault and (args.cycles != 1 or args.soak_seconds or args.exercise_faults or args.workflow):
         p.error("postcommit-profile-fault requires one cycle without other workflow/fault/soak modes")
     root = Path(args.out).resolve()
@@ -991,6 +994,8 @@ def main():
             if not args.skip_latency and len(panels) != 4:
                 raise RuntimeError(f"expected 4 panel borders, observed {segments}")
             points = {} if args.skip_latency else {"Files": (margin, sum(panels[1]) // 2, 0x32), "Commits": (margin, sum(panels[3]) // 2, 0x34), "Main": (rect.right - margin - 1, sum(panels[1]) // 2, 0x0D)}
+            if args.latency_pane:
+                points = {args.latency_pane: points[args.latency_pane]}
             receipt["latency_ms"] = {}
             if args.skip_latency:
                 receipt["latency_status"] = "NOT-RUN: explicitly disabled for resource/workflow measurement"
@@ -1136,8 +1141,9 @@ def main():
                             tick = epoch * 10 + 116444736000000000
                             overlaps.append(any(pid in rows and rows[pid]["created_100ns"] <= tick < rows[pid]["exited_100ns"] for pid in pids))
                         coverage[name] = {"samples": len(overlaps), "verified_overlap": sum(overlaps), "all_overlaps": overlaps}
-                    complete = receipt["process_tree"]["coverage"] == "COMPLETE" and len(coverage) == 3 and all(data["samples"] == 30 and data["verified_overlap"] == 30 for data in coverage.values())
-                    receipt["busy_latency"] = {"coverage": "COMPLETE" if complete else "BLOCKED", "panels": coverage, "method": "Every retained input must overlap a recorded owned Git kernel lifetime; all trials retained, no slow-trial exclusion or automatic retry"}
+                    expected_panels = {args.latency_pane} if args.latency_pane else {"Files", "Commits", "Main"}
+                    complete = receipt["process_tree"]["coverage"] == "COMPLETE" and set(coverage) == expected_panels and all(data["samples"] == 30 and data["verified_overlap"] == 30 for data in coverage.values())
+                    receipt["busy_latency"] = {"coverage": "COMPLETE" if complete else "BLOCKED", "selected_panels": sorted(expected_panels), "panels": coverage, "method": "Every retained input must overlap a recorded owned Git kernel lifetime; all trials retained, no slow-trial exclusion or automatic retry"}
             finally:
                 tree.close()
         if args.measure_ui:
