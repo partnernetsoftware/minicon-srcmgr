@@ -141,7 +141,7 @@ fn commit_without_anything_staged_is_refused() {
     assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
     let output = cli(&profile, &["commit", path_str(&repo), "-m", "empty"]);
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("nothing is staged"));
+    assert!(stderr(&output).to_ascii_lowercase().contains("nothing is staged"));
 }
 
 #[test]

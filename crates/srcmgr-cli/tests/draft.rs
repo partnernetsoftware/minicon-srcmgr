@@ -112,7 +112,7 @@ fn a_refused_commit_keeps_the_draft_for_the_next_attempt() {
     // Nothing is staged, so the commit is refused and the draft must remain.
     let refused = cli(&profile, &["commit", p(&repo)]);
     assert!(!refused.status.success());
-    assert!(err(&refused).contains("nothing is staged"), "{}", err(&refused));
+    assert!(err(&refused).to_ascii_lowercase().contains("nothing is staged"), "{}", err(&refused));
     assert_eq!(text(&cli(&profile, &["draft", p(&repo), "show"])), "keep me");
 }
 

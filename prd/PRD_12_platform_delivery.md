@@ -171,6 +171,10 @@ Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Rele
 - No IME composition beyond committed text, no screen-reader bridge, no checkout of a commit, no commit files, no search or filter, no discard, stash or rebase.
 - Linux and macOS cells are not run.
 
+## Development 0.0.7 status
+
+Status: source checkpoint delivered for remote observation and explicit fetch. It adds redacted remote listing with configured refspecs, upstream distance, one-remote fetch with per-ref results, cancellation, filtered progress, the `f` window action and `remote`/`fetch` CLI commands. Clone and remote configuration writes are 0.0.8; pull, push and authentication qualification are 0.0.9. No executable is distributed: authenticated transports are BLOCKED without a controlled fixture host, the window has no dedicated Remotes surface or live progress, and no native remote journey, reference-host, signing or platform certification is claimed. Scoped evidence is in [the 0.0.7 plan](../plan/plan-0.0.7.md).
+
 ## Development 0.0.6 status
 
 Workspace version: **0.0.6**, publicly released as a [development source checkpoint](https://github.com/partnernetsoftware/minicon-srcmgr/releases/tag/v0.0.6) on 2026-10-24 at 14:58:21 UTC. Annotated tag `v0.0.6` resolves to source `fc57042651a35add655141c0f5e04f1a2ca2a066`; the public release is neither draft nor prerelease and has no uploaded binary assets. The [execution plan](../plan/plan-0.0.6.md) records implemented entry/setup, coherent Changes/full-index composition, tabs/context, quick filters and external handoff, together with actual native/Git/UIA and available-host measurements. The measured refresh-navigation defect is repaired and its regression/negative control and native follow-up pass. No supported-platform, presentation-budget or signed-binary certification is claimed; qualified runnable delivery remains the separate 0.1.0 target.

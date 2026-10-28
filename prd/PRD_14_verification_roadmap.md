@@ -417,7 +417,7 @@ The revised [0.0.6 plan](../plan/plan-0.0.6.md) combines repository entry/contex
 
 ### 0.0.7 proposed plan
 
-The [0.0.7 plan](../plan/plan-0.0.7.md) sequences clone with deferred checkout, remote configuration, explicit fetch with progress and cancel, timestamped ahead/behind and remote-tracking listing; upstream, fast-forward-only pull and reviewed push move to 0.0.8. It is a proposal, not implemented behavior: no 0.0.7 source, version, candidate or release exists, and authenticated HTTPS/SSH paths remain BLOCKED until a controlled fixture host exists. The 2026-10-28 product-development-manager review set the wedge to the low-specification native client, cut the conflict center from 0.1.0, and limited 0.1.0 to three Must outcomes. Reuse 0.0.6 evidence only within its recorded source, artifact and host scope.
+The [0.0.7 plan](../plan/plan-0.0.7.md) records the delivered remote-observation slice: redacted remote listing, upstream distance and explicit fetch with per-ref results, cancellation and progress filtering. Clone and remote configuration writes move to 0.0.8; upstream, fast-forward-only pull and reviewed push move to 0.0.9. Authenticated HTTPS/SSH paths remain BLOCKED until a controlled fixture host exists, and the window has no native remote journey yet. The 2026-10-28 product-development-manager review set the wedge to the low-specification native client, cut the conflict center from 0.1.0, and limited 0.1.0 to three Must outcomes. Reuse 0.0.6 evidence only within its recorded source, artifact and host scope.
 
 ### Requirements baseline 1.5 review disposition
 

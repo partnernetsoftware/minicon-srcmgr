@@ -120,13 +120,13 @@ States are consistent: loading retains context; refresh labels cached data stale
 
 ## 0.0.7 remote observation slice
 
-Status: target contract for the planned slice, not implemented. [07](../prd/PRD_07_remotes.md) owns remote behavior and [03](../prd/PRD_03_workspace.md) owns targets.
+Status: delivered for remote observation and explicit fetch in 0.0.7. Clone and remote configuration writes are 0.0.8 scope and have no surface yet.
 
-- Status bar shows repository, branch, upstream or "no upstream", ahead/behind with the time of the last successful fetch, and operation state. Ahead/behind is never presented as live server truth.
-- Remotes surface: name, redacted fetch/push URL labels and the refspec. Actions: Add, Set URL, Rename, Remove, each with a local-effect preview. Fetch selected or Fetch all. Pull and Push are absent in this slice, not shown disabled.
-- Clone from Welcome: URL, destination, branch and depth. The review shows the resolved destination, the transport, and that checkout waits for filter approval. Cancel writes nothing beyond an identified partial target; a partial target offers Inspect and Remove.
-- Progress is determinate when the transport reports it and indeterminate otherwise, with a visible Cancel. After a failed or cancelled fetch, rows keep the last fetched values with their timestamp and a stale marker instead of clearing.
-- Keys: `f` fetch selected, `F` fetch all, `R` focus Remotes. No pull or push binding exists before 0.0.8.
+- The status line shows the branch and, when an upstream exists, `upstream ahead N behind M`. It is a statement about the fetched tracking ref, never live server truth. A persisted fetch timestamp is not shown yet.
+- `f` fetches one named remote: the remote of the current upstream, otherwise the first configured remote. With no configured remote the window explains instead of acting.
+- The result line reports the actual outcome ("N refs updated" or "up to date") and keeps Git's first error line on refusal. A cancelled or failed fetch leaves the previous refs and the previous status line in place.
+- Transfer progress is filtered to Git's transfer lines and streamed by the CLI; the window currently shows only the final result, so live in-window progress is not claimed.
+- A dedicated Remotes surface with Add, Set URL, Rename, Remove, per-remote selection and Fetch all arrives with 0.0.8. Inactive features are absent, not shown disabled.
 - Freshness: only the active repository may watch. Inactive tabs show last observed values and refresh before display on return; there is no global timer and no background fetch.
 - Authenticated transports report the missing prerequisite explicitly. A success claim requires the controlled fixture evidence; a local-path remote is never displayed as authentication.
 
