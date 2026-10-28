@@ -113,6 +113,20 @@ pub struct Snapshot {
     /// Last observed stage/unstage result, naming its own path scope.
     pub stage_result: Option<String>,
     pub stashes: Vec<StashRow>,
+    /// The current branch's upstream and its distance from the fetched ref.
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    /// Configured remotes, already redacted for display.
+    pub remotes: Vec<RemoteRow>,
+}
+
+/// One configured remote as the window displays it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteRow {
+    pub name: String,
+    pub fetch_url: String,
+    pub push_url: Option<String>,
 }
 
 impl Snapshot {
@@ -138,6 +152,10 @@ impl Snapshot {
             draft,
             stage_result: None,
             stashes: Vec::new(),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            remotes: Vec::new(),
         }
     }
 
@@ -149,6 +167,7 @@ impl Snapshot {
             head: "Open a local repository. No account required.".into(),
             files: Vec::new(), branches: Vec::new(), commits: Vec::new(),
             draft: None, stage_result: None, stashes: Vec::new(),
+            upstream: None, ahead: 0, behind: 0, remotes: Vec::new(),
         }
     }
 }
@@ -300,6 +319,8 @@ pub enum Job {
         path: NativePath,
         index: usize,
     },
+    /// Fetches one configured remote and reports the refs Git updated.
+    Fetch { remote: String },
     /// Saves tracked changes as a stash.
     Stash,
     /// Checks out a commit by its full id, leaving HEAD detached.

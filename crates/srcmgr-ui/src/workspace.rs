@@ -408,6 +408,11 @@ impl Workspace {
         }
         Effect::Nothing
     }
+    /// Fetches the current branch upstream's remote, else the first configured remote.
+    pub fn fetch_remote(&mut self) -> Effect {
+        let target = self.snapshot.upstream.as_ref().and_then(|upstream| upstream.split('/').next().filter(|name| !name.is_empty()).map(str::to_owned)).or_else(|| self.snapshot.remotes.first().map(|remote| remote.name.clone()));
+        target.map_or_else(|| { self.notice = Some("No remote is configured; add one with Git or clone a repository".into()); Effect::Nothing }, |remote| Effect::Send(Job::Fetch { remote }))
+    }
     pub fn forget_recent(&mut self) -> Effect {
         if !self.is_welcome() || self.modal() { return Effect::Nothing; }
         self.snapshot.recents.get(self.files).map_or(Effect::Nothing, |entry| Effect::Send(Job::ForgetRecent { backend: entry.backend.clone(), path: entry.path.clone() }))
@@ -1632,6 +1637,7 @@ impl Workspace {
                 self.focus_list(Pane::Stashes)
             }
             Key::Char('S') if self.focus == Pane::Stashes => self.ask_stash_action("apply"),
+            Key::Char('f') if !self.modal() => self.fetch_remote(),
             Key::Char('r') => Effect::Send(Job::Reload),
             _ => Effect::Nothing,
         }
@@ -2845,6 +2851,10 @@ mod tests {
             draft: draft.map(str::to_owned),
             stage_result: None,
             stashes: Vec::new(),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            remotes: Vec::new(),
         }
     }
 
@@ -2853,6 +2863,29 @@ mod tests {
             Effect::Send(job) => job,
             other => panic!("expected a job, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn f_fetches_the_remote_named_by_the_upstream() {
+        let mut state = snapshot(None);
+        state.upstream = Some("origin/main".into());
+        state.remotes = vec![crate::RemoteRow {
+            name: "backup".into(),
+            fetch_url: "https://example.test/backup.git".into(),
+            push_url: None,
+        }];
+        let mut workspace = Workspace::new(state);
+        match sent(workspace.key(Key::Char('f'))) {
+            Job::Fetch { remote } => assert_eq!(remote, "origin"),
+            other => panic!("expected a fetch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn f_without_any_remote_explains_instead_of_sending_a_job() {
+        let mut workspace = Workspace::new(snapshot(None));
+        assert_eq!(workspace.key(Key::Char('f')), Effect::Nothing);
+        assert!(workspace.notice().is_some_and(|text| text.contains("No remote")));
     }
 
     #[test]

@@ -142,6 +142,14 @@ impl WindowBackend {
         snapshot.history_limit = limit;
         snapshot.stashes = srcmgr_git::stash_list(installation, identity).map_err(|e| e.to_string())?.into_iter()
             .map(|s| srcmgr_ui::StashRow { id: s.id, subject: s.subject }).collect();
+        snapshot.remotes = srcmgr_git::list_remotes(installation, identity).map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|remote| srcmgr_ui::RemoteRow { name: remote.name, fetch_url: remote.fetch_url, push_url: remote.push_url })
+            .collect();
+        let tracking = srcmgr_git::tracking(installation, identity).map_err(|e| e.to_string())?;
+        snapshot.upstream = tracking.upstream;
+        snapshot.ahead = tracking.ahead;
+        snapshot.behind = tracking.behind;
         Ok(snapshot)
     }
 
@@ -156,6 +164,18 @@ impl WindowBackend {
                 let note = srcmgr_git::stash_selected(&session.installation, &session.identity, &id, &expected, &operation, &transaction).map_err(|e| e.to_string())?;
                 let mut snapshot = self.snapshot()?;
                 snapshot.stage_result = Some(note);
+                Reply::Full(snapshot)
+            }
+            Job::Fetch { remote } => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let report = srcmgr_git::fetch(&session.installation, &session.identity, &remote, &cancel, None).map_err(|e| e.to_string())?;
+                let mut snapshot = self.snapshot()?;
+                snapshot.stage_result = Some(if report.updates.is_empty() {
+                    format!("{remote}: up to date")
+                } else {
+                    format!("{remote}: {} refs updated", report.updates.len())
+                });
                 Reply::Full(snapshot)
             }
             Job::Prepare { .. } | Job::ExecutePrepared(_) | Job::CancelPrepared => return Err("nested confirmation is not allowed".to_owned()),

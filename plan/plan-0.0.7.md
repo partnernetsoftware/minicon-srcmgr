@@ -98,4 +98,10 @@ Selected evidence (MinGit 2.56.0 via `SRCMGR_TEST_GIT`):
 - `cargo test -p srcmgr-cli --test remotes_m1`: 2 cases pass. The configured credential never appears in listing output, the fetched tracking ref equals the second copy's HEAD, tracking reports `ahead 0 / behind 1`, and an unknown remote leaves HEAD unchanged.
 - `cargo clippy -p srcmgr-git -p srcmgr-cli --all-targets`: zero warnings. `python scripts/check_docs.py`: PASS.
 
-Not delivered yet: the window's Remotes surface and keys, clone, remote CRUD writes, persisted fetch time, authenticated transport evidence, native journey, version bump and release. Authenticated HTTPS/SSH remains BLOCKED for lack of a controlled fixture host; the file-path remote is used for ref semantics only. No 0.0.7 artifact or release is claimed.
+### Window observation and fetch action
+
+The status panel now appends the upstream and its distance (`ahead N behind M`) to the branch line, and the window refreshes remote/tracking data with each snapshot. `f` sends an explicit fetch for the remote named by the upstream, or the first configured remote, and reports the actual result ("N refs updated" or "up to date") in the result line; with no configured remote it explains instead of sending a job.
+
+Selected evidence: 94 `srcmgr-ui` library tests pass, including two new cases (upstream-named remote selection; no-remote explanation), and `cargo clippy -p srcmgr-ui -p srcmgr-cli --all-targets` reports no warnings.
+
+Not delivered yet: the Remotes surface with Add/Set URL/Rename/Remove and per-remote selection, clone, persisted fetch time, live transfer progress inside the window (the CLI streams filtered progress; the window currently shows only the final result), authenticated transport evidence, native journey, version bump and release. Authenticated HTTPS/SSH remains BLOCKED for lack of a controlled fixture host; the file-path remote is used for ref semantics only. No 0.0.7 artifact or release is claimed.

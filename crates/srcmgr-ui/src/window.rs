@@ -1142,7 +1142,10 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         status_rect,
         grid,
         Panel { focused: focus == Pane::Status, title: "[1] Status", empty: "" },
-        &[Line { tone: Tone::Text, text: snapshot.head.clone() }],
+        &[Line { tone: Tone::Text, text: match &snapshot.upstream {
+            Some(upstream) => format!("{} | {upstream} ahead {} behind {}", snapshot.head, snapshot.ahead, snapshot.behind),
+            None => snapshot.head.clone(),
+        } }],
         selected(Pane::Status),
     );
     let file_pane = if workspace.stash_list_visible() { Pane::Stashes } else { Pane::Files };
@@ -2008,7 +2011,7 @@ fn hints(workspace: &Workspace) -> String {
         };
     }
     let focus = match workspace.focus() {
-        Pane::Status => "2 3 4 focus lists",
+        Pane::Status => "f fetch   2 3 4 focus lists",
         Pane::Files => "Space stage/unstage   a all   d discard   s stash   5 stashes   c commit",
         Pane::Stashes => "Space/S apply and keep   p pop   d drop   2 files   Enter inspect",
         Pane::Branches => "Space checkout   n new   d delete   Enter details",
@@ -2242,6 +2245,10 @@ mod tests {
             draft: None,
             stage_result: None,
             stashes: Vec::new(),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            remotes: Vec::new(),
         }
     }
 

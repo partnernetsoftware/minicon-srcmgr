@@ -18,7 +18,7 @@ mod workspace;
 mod timing_receipt;
 
 pub use model::{
-    Backend, BranchRow, CommitRow, FileRow, FileTarget, Job, Line, MainRequest, MainView, Reply, Snapshot, Tone,
+    Backend, BranchRow, CommitRow, FileRow, FileTarget, Job, Line, MainRequest, MainView, RemoteRow, Reply, Snapshot, Tone,
     diff_lines,
 };
 pub use window::{show, show_entry, show_with_timing};
