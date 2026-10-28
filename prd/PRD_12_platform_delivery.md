@@ -171,6 +171,10 @@ Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Rele
 - No IME composition beyond committed text, no screen-reader bridge, no checkout of a commit, no commit files, no search or filter, no discard, stash or rebase.
 - Linux and macOS cells are not run.
 
+## Development 0.0.9 status
+
+Status: source checkpoint delivered for explicit upstream, fetch-then-fast-forward pull and current-branch push. Pull refuses divergence instead of merging, push sends one explicit refspec and reports per-ref Updated/UpToDate/Rejected, and a cancelled or timed-out push is reconciled once with `ls-remote` and never retried. Window `p`/`P` report the final outcome. Clone/Remotes panels, authenticated HTTPS/SSH qualification, a killed-transfer receipt, JSON for the new CLI verbs, native journeys and signing remain open. No executable is distributed and no platform certification is claimed. Scoped evidence is in [the 0.0.9 plan](../plan/plan-0.0.9.md).
+
 ## Development 0.0.8 status
 
 Status: source checkpoint delivered for clone and reviewed remote configuration. Clone validates transport, destination, branch and depth before transfer, disables checkout until review, refuses a nonempty target without touching it and retains a partial target. Remote add/set-URL/rename/remove preview the local effect, apply only with an explicit `--yes`, preserve unrelated keys and report the trust-fingerprint change. Both are delivered through the Git layer and CLI; the window has no Clone form or Remotes surface yet, so window surfaces, pull and push remain 0.0.9. No executable is distributed, authenticated transports are BLOCKED without a fixture host, and no native, reference-host or signing certification is claimed. Scoped evidence is in [the 0.0.8 plan](../plan/plan-0.0.8.md).

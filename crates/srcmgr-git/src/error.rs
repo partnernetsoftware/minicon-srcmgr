@@ -28,6 +28,10 @@ pub enum GitError {
     InvalidRemoteUrl,
     /// The clone destination or option is not acceptable.
     CloneTarget(&'static str),
+    /// The current branch has no configured upstream.
+    NoUpstream,
+    /// The repository is on a detached HEAD, so there is no current branch.
+    DetachedHead,
     /// A captured stream exceeded its byte bound and was terminated.
     OutputLimit,
     /// Git exited unsuccessfully. `detail` is the first error line Git printed,
@@ -90,6 +94,8 @@ impl fmt::Display for GitError {
             Self::RemotePolicy(reason) => formatter.write_str(reason),
             Self::InvalidRemoteUrl => formatter.write_str("the remote URL must be HTTPS, SSH, git+ssh, file or a local path without spaces or control characters"),
             Self::CloneTarget(reason) => formatter.write_str(reason),
+            Self::NoUpstream => formatter.write_str("the current branch has no upstream; set one before pulling or pushing"),
+            Self::DetachedHead => formatter.write_str("HEAD is detached; switch to a branch before pulling or pushing"),
             Self::OutputLimit => formatter.write_str("Git produced more output than allowed; it was terminated"),
             Self::Exit { code, detail } if detail.is_empty() => write!(formatter, "Git exited with status {code}"),
             Self::Exit { code, detail } => write!(formatter, "{detail} (Git exited with status {code})"),

@@ -178,6 +178,32 @@ impl WindowBackend {
                 });
                 Reply::Full(snapshot)
             }
+            Job::Pull => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let report = srcmgr_git::pull_ff(&session.installation, &session.identity, &cancel, None).map_err(|e| e.to_string())?;
+                let mut snapshot = self.snapshot()?;
+                snapshot.stage_result = Some(if report.updated {
+                    format!("fast-forwarded {}..{}", &report.before[..7.min(report.before.len())], &report.after[..7.min(report.after.len())])
+                } else {
+                    "already up to date".to_owned()
+                });
+                Reply::Full(snapshot)
+            }
+            Job::Push { remote } => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let report = srcmgr_git::push_current(&session.installation, &session.identity, &remote, &cancel, None).map_err(|e| e.to_string())?;
+                let mut snapshot = self.snapshot()?;
+                snapshot.stage_result = Some(match report.state {
+                    srcmgr_git::PushState::Updated => format!("{}: pushed to {remote}", report.branch),
+                    srcmgr_git::PushState::UpToDate => format!("{}: {remote} already has this commit", report.branch),
+                    srcmgr_git::PushState::Rejected => format!("{}: rejected by {remote}; fetch and review before retrying", report.branch),
+                    srcmgr_git::PushState::Unknown { reconciled: true } => format!("{}: unknown result; {remote} already has this commit", report.branch),
+                    srcmgr_git::PushState::Unknown { reconciled: false } => format!("{}: unknown result; observe {remote} before retrying", report.branch),
+                });
+                Reply::Full(snapshot)
+            }
             Job::Prepare { .. } | Job::ExecutePrepared(_) | Job::CancelPrepared => return Err("nested confirmation is not allowed".to_owned()),
             Job::Ignore {..}=>return Err("Ignore needs a fresh reviewed confirmation".into()),
             Job::LoadCommitReview { .. } | Job::CommitDiff { .. } => return Err("commit review must use its isolated worker path".into()),

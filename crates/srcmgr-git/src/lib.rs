@@ -27,6 +27,8 @@ mod status;
 mod stash;
 mod stash_removal;
 mod commit_files;
+mod push;
+mod sync;
 
 use srcmgr_domain::{BackendKind, Capability, CapabilityState, VcsBackend};
 
@@ -50,6 +52,8 @@ pub use repository::{
 pub use status::parse_status;
 pub use stash::{StashEntry, check_stash_selection, stash_list, stash_selected, stash_diff};
 pub use commit_files::{CommitFile, CommitFiles, commit_files, commit_file_diff};
+pub use push::{PushReport, PushState, push_current};
+pub use sync::{PullReport, clear_upstream, pull_ff, set_upstream};
 
 /// Capability routing for an installed Git.
 #[derive(Clone, Debug)]

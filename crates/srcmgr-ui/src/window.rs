@@ -2011,7 +2011,7 @@ fn hints(workspace: &Workspace) -> String {
         };
     }
     let focus = match workspace.focus() {
-        Pane::Status => "f fetch   2 3 4 focus lists",
+        Pane::Status => "f fetch   p pull   P push   2 3 4 focus lists",
         Pane::Files => "Space stage/unstage   a all   d discard   s stash   5 stashes   c commit",
         Pane::Stashes => "Space/S apply and keep   p pop   d drop   2 files   Enter inspect",
         Pane::Branches => "Space checkout   n new   d delete   Enter details",

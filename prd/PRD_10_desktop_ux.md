@@ -126,7 +126,7 @@ Status: delivered for remote observation and explicit fetch in 0.0.7. Clone and 
 - `f` fetches one named remote: the remote of the current upstream, otherwise the first configured remote. With no configured remote the window explains instead of acting.
 - The result line reports the actual outcome ("N refs updated" or "up to date") and keeps Git's first error line on refusal. A cancelled or failed fetch leaves the previous refs and the previous status line in place.
 - Transfer progress is filtered to Git's transfer lines and streamed by the CLI; the window currently shows only the final result, so live in-window progress is not claimed.
-- A dedicated Remotes surface with Add, Set URL, Rename, Remove, per-remote selection and Fetch all, plus the Welcome Clone form, arrive with 0.0.9; 0.0.8 delivered those operations only through the CLI. Inactive features are absent, not shown disabled.
+- `p` performs a fetch-then-fast-forward pull of the current upstream and `P` pushes the current branch to its upstream remote; both report the final outcome in the result line and refuse with Git's reason. A dedicated Remotes surface with Add, Set URL, Rename, Remove, per-remote selection and Fetch all, plus the Welcome Clone form, remain 0.1.0 scope; 0.0.8 delivered those operations through the CLI. Inactive features are absent, not shown disabled.
 - Freshness: only the active repository may watch. Inactive tabs show last observed values and refresh before display on return; there is no global timer and no background fetch.
 - Authenticated transports report the missing prerequisite explicitly. A success claim requires the controlled fixture evidence; a local-path remote is never displayed as authentication.
 

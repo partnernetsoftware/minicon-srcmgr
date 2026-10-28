@@ -53,6 +53,12 @@ Not in 0.0.8: pull, push, upstream writes, merge/rebase, conflict center, backgr
 
 Local bare remote plus two disposable copies; compare refs, worktree emptiness after clone and `.git/config` bytes. Run the affected workspace selection with `SRCMGR_TEST_GIT`, Clippy and `check_docs.py`; stop when the selected cases pass or are recorded `BLOCKED`.
 
+## Public 0.0.8 publication receipt
+
+Release commit `926e63a` on `main`, annotated tag `v0.0.8` pushed to `origin`. [GitHub Release](https://github.com/partnernetsoftware/minicon-srcmgr/releases/tag/v0.0.8) is public, non-draft and non-prerelease with no uploaded binary assets. Gate at that commit: `cargo test --workspace` passes with MinGit 2.56.0 and `GIT_CONFIG_COUNT=0`; `cargo clippy --workspace --all-targets` is clean; `check_docs.py` passes.
+
+No binary, signature, reference-host or authenticated-transport claim follows. Window Clone/Remotes surfaces remain 0.0.9 scope.
+
 ## Execution record
 
 ### Clone and CLI measurement

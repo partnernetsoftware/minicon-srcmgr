@@ -421,6 +421,8 @@ The [0.0.7 plan](../plan/plan-0.0.7.md) records the delivered remote-observation
 
 The [0.0.8 plan](../plan/plan-0.0.8.md) records the delivered clone (deferred checkout, destination preflight) and remote add/set-url/rename/remove path with previews, verified through the Git layer and CLI. Window surfaces for clone and remote editing move to 0.0.9. Authenticated transports remain BLOCKED without a controlled fixture host.
 
+The [0.0.9 plan](../plan/plan-0.0.9.md) records the delivered upstream, fetch-then-fast-forward pull, current-branch push and unknown reconciliation, with window `p`/`P` result lines. Clone/Remotes panels, authenticated transports, a killed-transfer receipt and native journeys remain open; no binary or signing is claimed.
+
 ### Requirements baseline 1.5 review disposition
 
 Review scope: the 15-module ownership/dependency map, current-entry status statements, near-term admission and the proposed 0.0.6 task tree. This is documentation/product review, not a new runtime audit or certification of every historical clause.

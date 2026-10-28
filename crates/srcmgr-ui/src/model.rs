@@ -321,6 +321,10 @@ pub enum Job {
     },
     /// Fetches one configured remote and reports the refs Git updated.
     Fetch { remote: String },
+    /// Fast-forward only pull of the configured upstream.
+    Pull,
+    /// Pushes the current branch to one configured remote.
+    Push { remote: String },
     /// Saves tracked changes as a stash.
     Stash,
     /// Checks out a commit by its full id, leaving HEAD detached.

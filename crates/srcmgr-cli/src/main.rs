@@ -87,6 +87,9 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "remote" => remote_command(&options),
         "fetch" => fetch_command(&options),
         "clone" => clone_command(&options),
+        "upstream" => upstream_command(&options),
+        "pull" => pull_command(&options),
+        "push" => push_command(&options),
         "hunk" => hunk_command(&options),
         "ignore" => ignore_command(&options),
         "history" => history_command(&options),
@@ -143,6 +146,75 @@ fn branch_command(options: &Options) -> Result<(), String> {
             println!("switched to {}", name.to_string_lossy());
         }
         _ => return Err(USAGE.to_owned()),
+    }
+    Ok(())
+}
+
+/// `upstream <worktree> set <remote>/<branch> | clear`.
+fn upstream_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
+    let session = open_trusted(options, worktree)?;
+    match action {
+        "set" => {
+            let upstream = options.positional.get(3).and_then(|word| word.to_str()).ok_or(USAGE)?;
+            srcmgr_git::set_upstream(&session.installation, &session.identity, upstream)
+                .map_err(|error| error.to_string())?;
+            println!("upstream set to {upstream}");
+        }
+        "clear" => {
+            srcmgr_git::clear_upstream(&session.installation, &session.identity)
+                .map_err(|error| error.to_string())?;
+            println!("upstream cleared");
+        }
+        _ => return Err(USAGE.to_owned()),
+    }
+    Ok(())
+}
+
+/// `pull <worktree>`: fetch facts are assumed current; the merge is fast-forward only.
+fn pull_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let session = open_trusted(options, worktree)?;
+    let cancel = AtomicBool::new(false);
+    let sink: srcmgr_git::ProgressSink = Arc::new(|chunk: &str| {
+        if let Some(line) = srcmgr_git::progress_line(chunk) {
+            eprintln!("{line}");
+        }
+    });
+    let report = srcmgr_git::pull_ff(&session.installation, &session.identity, &cancel, Some(&sink))
+        .map_err(|error| error.to_string())?;
+    if report.updated {
+        println!("fast-forwarded {}..{}", short_object_id(&report.before), short_object_id(&report.after));
+    } else {
+        println!("already up to date");
+    }
+    Ok(())
+}
+
+/// `push <worktree> <remote>`: one explicit branch ref, per-ref state reported.
+fn push_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let remote = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
+    let session = open_trusted(options, worktree)?;
+    let cancel = AtomicBool::new(false);
+    let sink: srcmgr_git::ProgressSink = Arc::new(|chunk: &str| {
+        if let Some(line) = srcmgr_git::progress_line(chunk) {
+            eprintln!("{line}");
+        }
+    });
+    let report = srcmgr_git::push_current(&session.installation, &session.identity, remote, &cancel, Some(&sink))
+        .map_err(|error| error.to_string())?;
+    let state = match report.state {
+        srcmgr_git::PushState::Updated => "updated".to_owned(),
+        srcmgr_git::PushState::UpToDate => "up to date".to_owned(),
+        srcmgr_git::PushState::Rejected => "rejected by the remote; fetch and review before retrying".to_owned(),
+        srcmgr_git::PushState::Unknown { reconciled: true } => "unknown result; the remote already has this commit".to_owned(),
+        srcmgr_git::PushState::Unknown { reconciled: false } => "unknown result; observe the remote before retrying".to_owned(),
+    };
+    println!("{} {}: {state}", report.branch, report.reference);
+    if let Some(observed) = &report.observed {
+        println!("remote {observed}");
     }
     Ok(())
 }

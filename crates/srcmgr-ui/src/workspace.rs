@@ -413,6 +413,16 @@ impl Workspace {
         let target = self.snapshot.upstream.as_ref().and_then(|upstream| upstream.split('/').next().filter(|name| !name.is_empty()).map(str::to_owned)).or_else(|| self.snapshot.remotes.first().map(|remote| remote.name.clone()));
         target.map_or_else(|| { self.notice = Some("No remote is configured; add one with Git or clone a repository".into()); Effect::Nothing }, |remote| Effect::Send(Job::Fetch { remote }))
     }
+    /// Fast-forward pull of the current upstream; local only, no hidden merge.
+    pub fn pull(&mut self) -> Effect {
+        if self.snapshot.repository.is_none() { self.notice = Some("Open a repository before pulling".into()); return Effect::Nothing; }
+        Effect::Send(Job::Pull)
+    }
+    /// Pushes the current branch to the upstream-named remote, else the first one.
+    pub fn push_branch(&mut self) -> Effect {
+        let target = self.snapshot.upstream.as_ref().and_then(|upstream| upstream.split('/').next().filter(|name| !name.is_empty()).map(str::to_owned)).or_else(|| self.snapshot.remotes.first().map(|remote| remote.name.clone()));
+        target.map_or_else(|| { self.notice = Some("No remote is configured; add one with Git or clone a repository".into()); Effect::Nothing }, |remote| Effect::Send(Job::Push { remote }))
+    }
     pub fn forget_recent(&mut self) -> Effect {
         if !self.is_welcome() || self.modal() { return Effect::Nothing; }
         self.snapshot.recents.get(self.files).map_or(Effect::Nothing, |entry| Effect::Send(Job::ForgetRecent { backend: entry.backend.clone(), path: entry.path.clone() }))
@@ -1637,6 +1647,8 @@ impl Workspace {
                 self.focus_list(Pane::Stashes)
             }
             Key::Char('S') if self.focus == Pane::Stashes => self.ask_stash_action("apply"),
+            Key::Char('p') if !self.modal() && self.focus != Pane::Stashes => self.pull(),
+            Key::Char('P') if !self.modal() => self.push_branch(),
             Key::Char('f') if !self.modal() => self.fetch_remote(),
             Key::Char('r') => Effect::Send(Job::Reload),
             _ => Effect::Nothing,
@@ -2879,6 +2891,26 @@ mod tests {
             Job::Fetch { remote } => assert_eq!(remote, "origin"),
             other => panic!("expected a fetch, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn p_requests_a_fast_forward_pull() {
+        let mut workspace = Workspace::new(snapshot(None));
+        assert_eq!(sent(workspace.key(Key::Char('p'))), Job::Pull);
+    }
+
+    #[test]
+    fn shift_p_pushes_the_upstream_remote_and_without_any_remote_explains() {
+        let mut state = snapshot(None);
+        state.upstream = Some("origin/main".into());
+        let mut workspace = Workspace::new(state);
+        match sent(workspace.key(Key::Char('P'))) {
+            Job::Push { remote } => assert_eq!(remote, "origin"),
+            other => panic!("expected a push, got {other:?}"),
+        }
+        let mut empty = Workspace::new(snapshot(None));
+        assert_eq!(empty.key(Key::Char('P')), Effect::Nothing);
+        assert!(empty.notice().is_some_and(|text| text.contains("No remote")));
     }
 
     #[test]
