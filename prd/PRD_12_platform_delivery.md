@@ -171,6 +171,10 @@ Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Rele
 - No IME composition beyond committed text, no screen-reader bridge, no checkout of a commit, no commit files, no search or filter, no discard, stash or rebase.
 - Linux and macOS cells are not run.
 
+## Development 0.0.8 status
+
+Status: source checkpoint delivered for clone and reviewed remote configuration. Clone validates transport, destination, branch and depth before transfer, disables checkout until review, refuses a nonempty target without touching it and retains a partial target. Remote add/set-URL/rename/remove preview the local effect, apply only with an explicit `--yes`, preserve unrelated keys and report the trust-fingerprint change. Both are delivered through the Git layer and CLI; the window has no Clone form or Remotes surface yet, so window surfaces, pull and push remain 0.0.9. No executable is distributed, authenticated transports are BLOCKED without a fixture host, and no native, reference-host or signing certification is claimed. Scoped evidence is in [the 0.0.8 plan](../plan/plan-0.0.8.md).
+
 ## Development 0.0.7 status
 
 Status: source checkpoint delivered for remote observation and explicit fetch. It adds redacted remote listing with configured refspecs, upstream distance, one-remote fetch with per-ref results, cancellation, filtered progress, the `f` window action and `remote`/`fetch` CLI commands. Clone and remote configuration writes are 0.0.8; pull, push and authentication qualification are 0.0.9. No executable is distributed: authenticated transports are BLOCKED without a controlled fixture host, the window has no dedicated Remotes surface or live progress, and no native remote journey, reference-host, signing or platform certification is claimed. Scoped evidence is in [the 0.0.7 plan](../plan/plan-0.0.7.md).

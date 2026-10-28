@@ -26,6 +26,8 @@ pub enum GitError {
     RemotePolicy(&'static str),
     /// The remote URL uses an unsupported or insecure transport.
     InvalidRemoteUrl,
+    /// The clone destination or option is not acceptable.
+    CloneTarget(&'static str),
     /// A captured stream exceeded its byte bound and was terminated.
     OutputLimit,
     /// Git exited unsuccessfully. `detail` is the first error line Git printed,
@@ -87,6 +89,7 @@ impl fmt::Display for GitError {
             Self::UnknownRemote => formatter.write_str("the selected remote is not configured in this repository"),
             Self::RemotePolicy(reason) => formatter.write_str(reason),
             Self::InvalidRemoteUrl => formatter.write_str("the remote URL must be HTTPS, SSH, git+ssh, file or a local path without spaces or control characters"),
+            Self::CloneTarget(reason) => formatter.write_str(reason),
             Self::OutputLimit => formatter.write_str("Git produced more output than allowed; it was terminated"),
             Self::Exit { code, detail } if detail.is_empty() => write!(formatter, "Git exited with status {code}"),
             Self::Exit { code, detail } => write!(formatter, "{detail} (Git exited with status {code})"),

@@ -172,7 +172,7 @@ fn validate_name(
 /// Accepts the transports the product supports: HTTPS, SSH, git+ssh, file and
 /// deliberate local paths. Unknown or insecure protocols are refused rather
 /// than handed to a helper.
-fn validate_url(url: &str) -> Result<(), GitError> {
+pub(crate) fn validate_url(url: &str) -> Result<(), GitError> {
     if url.is_empty() || url.chars().any(|character| character.is_control() || character == ' ') {
         return Err(GitError::InvalidRemoteUrl);
     }

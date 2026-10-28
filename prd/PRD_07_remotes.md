@@ -50,7 +50,7 @@ This section owns provider admission behavior. [15](PRD_15_vcs_backends.md#vcs-v
 
 ## Version split 0.0.7–0.1.0
 
-0.0.7 delivers remote listing with redacted URLs and refspecs, upstream distance, and explicit fetch with progress, cancel and per-ref results. Clone (checkout deferred until filter approval) and remote configuration writes follow in 0.0.8. Pull, push, upstream writes and authentication qualification follow in 0.0.9. Pull is one named action that fetches first and integrates fast-forward only; divergence stops with a review. Merge, rebase, conflict resolution and lease-protected rewrites remain unallocated after 0.1.0. Authenticated HTTPS/SSH paths stay BLOCKED until a controlled fixture host exists; a local-path remote is never counted as authentication evidence.
+0.0.7 delivers remote listing with redacted URLs and refspecs, upstream distance, and explicit fetch with progress, cancel and per-ref results. Clone (checkout deferred until filter approval) and remote configuration writes were delivered in 0.0.8 through the Git layer and CLI; their window surfaces follow in 0.0.9. Pull, push, upstream writes and authentication qualification follow in 0.0.9. Pull is one named action that fetches first and integrates fast-forward only; divergence stops with a review. Merge, rebase, conflict resolution and lease-protected rewrites remain unallocated after 0.1.0. Authenticated HTTPS/SSH paths stay BLOCKED until a controlled fixture host exists; a local-path remote is never counted as authentication evidence.
 
 ## Delivery contracts
 

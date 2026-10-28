@@ -419,7 +419,7 @@ The revised [0.0.6 plan](../plan/plan-0.0.6.md) combines repository entry/contex
 
 The [0.0.7 plan](../plan/plan-0.0.7.md) records the delivered remote-observation slice: redacted remote listing, upstream distance and explicit fetch with per-ref results, cancellation and progress filtering. Clone and remote configuration writes move to 0.0.8; upstream, fast-forward-only pull and reviewed push move to 0.0.9. Authenticated HTTPS/SSH paths remain BLOCKED until a controlled fixture host exists, and the window has no native remote journey yet. The 2026-10-28 product-development-manager review set the wedge to the low-specification native client, cut the conflict center from 0.1.0, and limited 0.1.0 to three Must outcomes. Reuse 0.0.6 evidence only within its recorded source, artifact and host scope.
 
-The [0.0.8 plan](../plan/plan-0.0.8.md) sequences clone with deferred checkout and remote add/set-url/rename/remove with a local preview. It is a proposal with no implementation, artifact or release yet; authenticated transports remain BLOCKED without a controlled fixture host.
+The [0.0.8 plan](../plan/plan-0.0.8.md) records the delivered clone (deferred checkout, destination preflight) and remote add/set-url/rename/remove path with previews, verified through the Git layer and CLI. Window surfaces for clone and remote editing move to 0.0.9. Authenticated transports remain BLOCKED without a controlled fixture host.
 
 ### Requirements baseline 1.5 review disposition
 

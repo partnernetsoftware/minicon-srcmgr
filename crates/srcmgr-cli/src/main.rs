@@ -41,6 +41,8 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] remote <worktree> list [--json]
   minicon-srcmgr [--profile DIR] [--git EXE] remote <worktree> tracking [--json]
   minicon-srcmgr [--profile DIR] [--git EXE] fetch <worktree> <remote> [--json]
+  minicon-srcmgr [--git EXE] clone <url> <destination> [--branch N] [--depth N] [--json]
+  minicon-srcmgr [--profile DIR] [--git EXE] remote <worktree> add|set-url|rename|remove ... [--yes]
   minicon-srcmgr [--profile DIR] [--git EXE] history <worktree> [--skip N] [--limit N]
   minicon-srcmgr [--profile DIR] setting get|set <key> [value]   (keys: history.limit)
   minicon-srcmgr [--profile DIR] [--git EXE] ignore <worktree> <path>
@@ -84,6 +86,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "branch" => branch_command(&options),
         "remote" => remote_command(&options),
         "fetch" => fetch_command(&options),
+        "clone" => clone_command(&options),
         "hunk" => hunk_command(&options),
         "ignore" => ignore_command(&options),
         "history" => history_command(&options),
@@ -144,6 +147,75 @@ fn branch_command(options: &Options) -> Result<(), String> {
     Ok(())
 }
 
+/// The value after `flag` when present.
+fn flag_value<'a>(options: &'a Options, flag: &str) -> Option<&'a str> {
+    let position = options.positional.iter().position(|word| word == flag)?;
+    options.positional.get(position + 1).and_then(|word| word.to_str())
+}
+
+fn argument(options: &Options, index: usize) -> Result<&str, String> {
+    options.positional.get(index).and_then(|word| word.to_str()).ok_or_else(|| USAGE.to_owned())
+}
+
+/// Builds the reviewed change from the command words. Nothing is applied here.
+fn remote_change(options: &Options, action: &str) -> Result<srcmgr_git::RemoteChange, String> {
+    Ok(match action {
+        "add" => srcmgr_git::RemoteChange::Add {
+            name: argument(options, 3)?.to_owned(),
+            url: argument(options, 4)?.to_owned(),
+            push_url: flag_value(options, "--push-url").map(str::to_owned),
+        },
+        "set-url" => srcmgr_git::RemoteChange::SetUrl {
+            name: argument(options, 3)?.to_owned(),
+            url: argument(options, 4)?.to_owned(),
+            push: options.positional.iter().any(|word| word == "--push"),
+        },
+        "rename" => srcmgr_git::RemoteChange::Rename {
+            from: argument(options, 3)?.to_owned(),
+            to: argument(options, 4)?.to_owned(),
+        },
+        "remove" => srcmgr_git::RemoteChange::Remove { name: argument(options, 3)?.to_owned() },
+        _ => return Err(USAGE.to_owned()),
+    })
+}
+
+/// `clone <url> <destination>`: reviewed destination and transport, no checkout.
+/// A transfer failure keeps whatever was written so it can be inspected.
+fn clone_command(options: &Options) -> Result<(), String> {
+    let url = argument(options, 1)?.to_owned();
+    let destination = PathBuf::from(argument(options, 2)?);
+    let depth = match flag_value(options, "--depth") {
+        Some(value) => Some(value.parse::<u32>().map_err(|_| "--depth needs a number".to_owned())?),
+        None => None,
+    };
+    let installation = GitInstallation::probe(selected_git(options)?).map_err(|error| error.to_string())?;
+    let request = srcmgr_git::CloneRequest {
+        url,
+        destination,
+        branch: flag_value(options, "--branch").map(str::to_owned),
+        depth,
+    };
+    let preview = srcmgr_git::preview_clone(&installation, &request).map_err(|error| error.to_string())?;
+    for line in &preview.lines {
+        println!("{line}");
+    }
+    let cancel = AtomicBool::new(false);
+    let sink: srcmgr_git::ProgressSink = Arc::new(|chunk: &str| {
+        if let Some(line) = srcmgr_git::progress_line(chunk) {
+            eprintln!("{line}");
+        }
+    });
+    srcmgr_git::clone_repository(&installation, &request, &cancel, Some(&sink)).map_err(|error| {
+        format!(
+            "{error}; inspect {} for a partial clone before retrying",
+            preview.destination.display()
+        )
+    })?;
+    println!("cloned into {}", preview.destination.display());
+    println!("checkout is deferred: review and trust the repository, then approve the filter review");
+    Ok(())
+}
+
 /// Emits one JSON document on stdout. Used by the read-only remote commands so
 /// their shape matches `status --json`.
 fn print_json(value: JsonValue) -> Result<(), String> {
@@ -160,6 +232,22 @@ fn remote_command(options: &Options) -> Result<(), String> {
     let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
     let session = open_trusted(options, worktree)?;
     match action {
+        "add" | "set-url" | "rename" | "remove" => {
+            let change = remote_change(options, action)?;
+            let preview = srcmgr_git::preview_remote_change(&session.installation, &session.identity, &change)
+                .map_err(|error| error.to_string())?;
+            for line in &preview.lines {
+                println!("{line}");
+            }
+            if options.positional.iter().any(|word| word == "--yes") {
+                srcmgr_git::apply_remote_change(&session.installation, &session.identity, &change)
+                    .map_err(|error| error.to_string())?;
+                println!("applied; the repository trust fingerprint changed - review and grant trust again before the next action");
+            } else {
+                println!("preview only; add --yes to apply");
+            }
+            Ok(())
+        }
         "list" => {
             let remotes = srcmgr_git::list_remotes(&session.installation, &session.identity)
                 .map_err(|error| error.to_string())?;
