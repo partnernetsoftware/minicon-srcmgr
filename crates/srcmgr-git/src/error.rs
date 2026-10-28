@@ -16,6 +16,14 @@ pub enum GitError {
     Supervision,
     /// The command exceeded its deadline and its tree was terminated.
     Timeout,
+    /// The user cancelled the running command; its owned tree was terminated.
+    Cancelled,
+    /// The remote name is empty, option-like or contains a control character.
+    InvalidRemote,
+    /// The requested remote is not configured in this repository.
+    UnknownRemote,
+    /// The remote's effective configuration would widen the reviewed effect.
+    RemotePolicy(&'static str),
     /// A captured stream exceeded its byte bound and was terminated.
     OutputLimit,
     /// Git exited unsuccessfully. `detail` is the first error line Git printed,
@@ -72,6 +80,10 @@ impl fmt::Display for GitError {
             Self::Io(_) => formatter.write_str("supervising the Git process failed"),
             Self::Supervision => formatter.write_str("the Git process did not expose captured output"),
             Self::Timeout => formatter.write_str("Git did not finish before the deadline; it was terminated"),
+            Self::Cancelled => formatter.write_str("the operation was cancelled; the Git process tree was terminated"),
+            Self::InvalidRemote => formatter.write_str("the remote name is not valid"),
+            Self::UnknownRemote => formatter.write_str("the selected remote is not configured in this repository"),
+            Self::RemotePolicy(reason) => formatter.write_str(reason),
             Self::OutputLimit => formatter.write_str("Git produced more output than allowed; it was terminated"),
             Self::Exit { code, detail } if detail.is_empty() => write!(formatter, "Git exited with status {code}"),
             Self::Exit { code, detail } => write!(formatter, "{detail} (Git exited with status {code})"),

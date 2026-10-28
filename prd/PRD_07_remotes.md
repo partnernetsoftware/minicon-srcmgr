@@ -48,6 +48,10 @@ Before admitting a provider, qualify ordinary clone/fetch/explicit-ref push; com
 
 This section owns provider admission behavior. [15](PRD_15_vcs_backends.md#vcs-versus-remote-transport) owns the VCS distinction; product scheduling belongs to [01](PRD_01_product.md). Provider selection and implementation require a later scoped plan; neither current version plan expands as a side effect.
 
+## Version split 0.0.7–0.1.0
+
+0.0.7 delivers clone (checkout deferred until filter approval), remote configuration, explicit fetch with progress and cancel, ahead/behind with fetch time, and remote-tracking listing. Pull, push, upstream writes and authentication qualification follow in 0.0.8. Pull is one named action that fetches first and integrates fast-forward only; divergence stops with a review. Merge, rebase, conflict resolution and lease-protected rewrites remain unallocated after 0.1.0. Authenticated HTTPS/SSH paths stay BLOCKED until a controlled fixture host exists; a local-path remote is never counted as authentication evidence.
+
 ## Delivery contracts
 
 | ID / leaf | Invariant | Observable evidence | Safe failure | Dependencies | Non-goal |

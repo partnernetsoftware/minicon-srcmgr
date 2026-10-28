@@ -415,6 +415,10 @@ The 0.0.5 scope, work sequence, package status and execution evidence live in [p
 
 The revised [0.0.6 plan](../plan/plan-0.0.6.md) combines repository entry/context, existing local Git actions and full-index commit review; quick filtering supports that user task. The [0.1.0 roadmap](../plan/roadmap-0.1.0.md) allocates standard remotes, integrations/conflicts and everyday history/ref work before first-user beta delivery. These are product plans, not implemented or qualified releases. Current execution/version state lives in the active 0.0.6 plan; existing budgets and missing qualification prerequisites are not waived.
 
+### 0.0.7 proposed plan
+
+The [0.0.7 plan](../plan/plan-0.0.7.md) sequences clone with deferred checkout, remote configuration, explicit fetch with progress and cancel, timestamped ahead/behind and remote-tracking listing; upstream, fast-forward-only pull and reviewed push move to 0.0.8. It is a proposal, not implemented behavior: no 0.0.7 source, version, candidate or release exists, and authenticated HTTPS/SSH paths remain BLOCKED until a controlled fixture host exists. The 2026-10-28 product-development-manager review set the wedge to the low-specification native client, cut the conflict center from 0.1.0, and limited 0.1.0 to three Must outcomes. Reuse 0.0.6 evidence only within its recorded source, artifact and host scope.
+
 ### Requirements baseline 1.5 review disposition
 
 Review scope: the 15-module ownership/dependency map, current-entry status statements, near-term admission and the proposed 0.0.6 task tree. This is documentation/product review, not a new runtime audit or certification of every historical clause.

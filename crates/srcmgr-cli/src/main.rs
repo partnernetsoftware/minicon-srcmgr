@@ -10,6 +10,8 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use minicon_core::json::{self, JsonValue};
 use srcmgr_domain::{
@@ -36,6 +38,9 @@ const USAGE: &str = "usage:
   minicon-srcmgr [--profile DIR] [--git EXE] gui [worktree]
   minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
   minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> list|create|switch <name>
+  minicon-srcmgr [--profile DIR] [--git EXE] remote <worktree> list [--json]
+  minicon-srcmgr [--profile DIR] [--git EXE] remote <worktree> tracking [--json]
+  minicon-srcmgr [--profile DIR] [--git EXE] fetch <worktree> <remote> [--json]
   minicon-srcmgr [--profile DIR] [--git EXE] history <worktree> [--skip N] [--limit N]
   minicon-srcmgr [--profile DIR] setting get|set <key> [value]   (keys: history.limit)
   minicon-srcmgr [--profile DIR] [--git EXE] ignore <worktree> <path>
@@ -77,6 +82,8 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         "gui" => gui(&options),
         "diff" => diff_command(&options),
         "branch" => branch_command(&options),
+        "remote" => remote_command(&options),
+        "fetch" => fetch_command(&options),
         "hunk" => hunk_command(&options),
         "ignore" => ignore_command(&options),
         "history" => history_command(&options),
@@ -135,6 +142,131 @@ fn branch_command(options: &Options) -> Result<(), String> {
         _ => return Err(USAGE.to_owned()),
     }
     Ok(())
+}
+
+/// Emits one JSON document on stdout. Used by the read-only remote commands so
+/// their shape matches `status --json`.
+fn print_json(value: JsonValue) -> Result<(), String> {
+    let mut stdout = io::stdout().lock();
+    let mut bytes = json::to_vec_pretty(&value);
+    bytes.push(b'\n');
+    stdout.write_all(&bytes).map_err(|error| error.to_string())
+}
+
+/// `remote <worktree> list|tracking`: configured remotes with redacted URLs,
+/// and the current branch's distance from the fetched tracking ref.
+fn remote_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
+    let session = open_trusted(options, worktree)?;
+    match action {
+        "list" => {
+            let remotes = srcmgr_git::list_remotes(&session.installation, &session.identity)
+                .map_err(|error| error.to_string())?;
+            if options.json {
+                let rows = remotes
+                    .iter()
+                    .map(|remote| {
+                        json::object(vec![
+                            ("name", remote.name.as_str().into()),
+                            ("fetch_url", remote.fetch_url.as_str().into()),
+                            ("push_url", json::nullable(remote.push_url.clone())),
+                            (
+                                "refspecs",
+                                JsonValue::Array(
+                                    remote
+                                        .fetch_refspecs
+                                        .iter()
+                                        .map(|refspec| refspec.as_str().into())
+                                        .collect(),
+                                ),
+                            ),
+                        ])
+                    })
+                    .collect();
+                print_json(JsonValue::Array(rows))
+            } else {
+                for remote in remotes {
+                    match &remote.push_url {
+                        Some(push) => println!("{}\t{}\tpush {push}", remote.name, remote.fetch_url),
+                        None => println!("{}\t{}", remote.name, remote.fetch_url),
+                    }
+                }
+                Ok(())
+            }
+        }
+        "tracking" => {
+            let state = srcmgr_git::tracking(&session.installation, &session.identity)
+                .map_err(|error| error.to_string())?;
+            if options.json {
+                print_json(json::object(vec![
+                    ("upstream", json::nullable(state.upstream.clone())),
+                    ("ahead", JsonValue::Unsigned(u64::from(state.ahead))),
+                    ("behind", JsonValue::Unsigned(u64::from(state.behind))),
+                ]))
+            } else {
+                match &state.upstream {
+                    Some(upstream) => {
+                        println!("{upstream}  ahead {}  behind {}", state.ahead, state.behind);
+                    }
+                    None => println!("no upstream"),
+                }
+                Ok(())
+            }
+        }
+        _ => Err(USAGE.to_owned()),
+    }
+}
+
+/// `fetch <worktree> <remote>`: one explicit remote, with transfer progress on
+/// stderr and the actual refs Git reported on stdout.
+fn fetch_command(options: &Options) -> Result<(), String> {
+    let worktree = worktree_argument(options, 1)?;
+    let remote = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
+    let session = open_trusted(options, worktree)?;
+    let cancel = AtomicBool::new(false);
+    let sink: srcmgr_git::ProgressSink = Arc::new(|chunk: &str| {
+        if let Some(line) = srcmgr_git::progress_line(chunk) {
+            eprintln!("{line}");
+        }
+    });
+    let report = srcmgr_git::fetch(
+        &session.installation,
+        &session.identity,
+        remote,
+        &cancel,
+        Some(&sink),
+    )
+    .map_err(|error| error.to_string())?;
+    if options.json {
+        let updates = report
+            .updates
+            .iter()
+            .map(|update| {
+                json::object(vec![
+                    ("old", update.old.as_str().into()),
+                    ("new", update.new.as_str().into()),
+                    ("ref", update.reference.as_str().into()),
+                ])
+            })
+            .collect();
+        print_json(json::object(vec![
+            ("remote", report.remote.as_str().into()),
+            ("updates", JsonValue::Array(updates)),
+        ]))
+    } else {
+        if report.updates.is_empty() {
+            println!("{}: up to date", report.remote);
+        }
+        for update in &report.updates {
+            println!("{}..{} {}", short_object_id(&update.old), short_object_id(&update.new), update.reference);
+        }
+        Ok(())
+    }
+}
+
+fn short_object_id(object_id: &str) -> &str {
+    object_id.get(..7).unwrap_or(object_id)
 }
 
 /// `history <worktree> [--limit N]`: a newest-first commit list from HEAD.

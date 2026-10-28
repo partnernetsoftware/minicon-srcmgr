@@ -29,6 +29,8 @@ MiniCon SrcMgr is an important component of the **MiniCon productivity suite**, 
 
 The product promise is: **small memory footprint, immediate interaction, dependable source control**. This governs architecture, daily development, feature admission and milestone acceptance. Every delivered workflow must satisfy all three pillars together; passing functionality tests alone does not qualify it for a release.
 
+Decision 2026-10-28: the 0.1.0 wedge is the **low-specification/restricted-environment native client**. The measured 30.2 MiB settled and 36.6 MiB peak footprint is the only proven differentiator; safety, explicit previews and offline use are the quality bar for that wedge, not separate selling points. A multi-repository cockpit, hosting workflows and feature parity are not the wedge.
+
 | Pillar | User outcome | Delivery consequence |
 |---|---|---|
 | Small memory footprint | Keep SrcMgr available throughout the workday alongside other productivity tools | Bound resident/transient state and owned helpers; prove idle, active and repeated-use budgets |
@@ -268,6 +270,10 @@ Must means a release-blocking 0.1.0 task, not that it is already implemented. Th
 | Separate candidates · Unscheduled | S3 provider, SVN/other VCS, hosting review UI, arbitrary scripts and Git Flow | 01/07/15; existing exclusions still apply |
 
 "Must" cannot be silently changed to "not supported" to hit the version number. A safely refused edge case can satisfy its owner's explicit safe-failure boundary; an entirely missing required user task cannot. If the task needs more work, use additional 0.0.x checkpoints or change scope explicitly with the owner. No release date or implementation-complete claim follows from this tree.
+
+### 0.1.0 re-scope (2026-10-28)
+
+Three Must outcomes remain: enter a repository (open/init/clone), make a precise commit, and exchange work (clone/fetch/fast-forward pull/reviewed push). Conflict center, tags, graph, file history/blame, stash management and reset move to Should or unallocated. Conflict handling in 0.1.0 is detection, explanation, write blocking and terminal handoff; merge and rebase are not admitted. The exit is a signed Windows x86_64 package plus the five-participant study, not cumulative M3.
 
 ### Benchmark interpretation
 

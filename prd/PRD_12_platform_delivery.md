@@ -66,6 +66,10 @@ The existing source-only 0.0.x delivery line is distinct from the first qualifie
 
 For 0.0.6, the owner has instructed development and public release to continue without supplying another test machine. Use the available native host for actual measurements and repairs and publish the completed development source checkpoint with its scoped evidence. Do not make owner-provided Windows 11 hardware a prerequisite for publishing source. The supported-image, CJK/clipboard/screen-reader/DPI, 60 Hz presentation, long-session and signed-package requirements remain open for their qualified first-user delivery scope; no threshold or target platform is lowered. Known failed observations remain visible. Do not attach the unsigned private ZIP/executable or advertise reference-platform certification as part of this source release. A source-only checkpoint still does not satisfy the 0.1.0 runnable-client outcome.
 
+## Private candidates and preview builds
+
+An unsigned build is never published. Development candidates are private: they carry source and recipe binding, exact-byte startup evidence and a malware preflight, and they are used for the five-participant study and native checks. A public distribution channel opens only with the signed 0.1.0 package. Preview naming, in-app limitation notices and asset withdrawal are defined before any preview is considered; the source-checkpoint line above remains source-only.
+
 ## 0.1.0 first-user beta delivery target
 
 Status: planned, not built, signed, qualified or published. Product admission is owned by [01](PRD_01_product.md#010-first-user-feature-tree) and sequencing by [the roadmap](../plan/roadmap-0.1.0.md). Existing 0.0.x source releases retain their original scope; a source archive alone does not satisfy the new first-user runnable-client target.

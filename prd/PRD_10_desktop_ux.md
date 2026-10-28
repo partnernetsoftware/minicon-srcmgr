@@ -118,6 +118,18 @@ Launch review shows the repository/working directory, executable, raw selected f
 
 States are consistent: loading retains context; refresh labels cached data stale; busy permits selection/scroll/text and supported cancel; empty explains scope; errors preserve input and offer Retry/Setup/Inspect; completed writes identify actual OIDs/refs; Unknown offers reconciliation instead of replay. Localization keys, English/zh-CN primary strings, accessible names/states and IME-safe text controls accompany each new surface rather than arriving only at final packaging.
 
+## 0.0.7 remote observation slice
+
+Status: target contract for the planned slice, not implemented. [07](../prd/PRD_07_remotes.md) owns remote behavior and [03](../prd/PRD_03_workspace.md) owns targets.
+
+- Status bar shows repository, branch, upstream or "no upstream", ahead/behind with the time of the last successful fetch, and operation state. Ahead/behind is never presented as live server truth.
+- Remotes surface: name, redacted fetch/push URL labels and the refspec. Actions: Add, Set URL, Rename, Remove, each with a local-effect preview. Fetch selected or Fetch all. Pull and Push are absent in this slice, not shown disabled.
+- Clone from Welcome: URL, destination, branch and depth. The review shows the resolved destination, the transport, and that checkout waits for filter approval. Cancel writes nothing beyond an identified partial target; a partial target offers Inspect and Remove.
+- Progress is determinate when the transport reports it and indeterminate otherwise, with a visible Cancel. After a failed or cancelled fetch, rows keep the last fetched values with their timestamp and a stale marker instead of clearing.
+- Keys: `f` fetch selected, `F` fetch all, `R` focus Remotes. No pull or push binding exists before 0.0.8.
+- Freshness: only the active repository may watch. Inactive tabs show last observed values and refresh before display on return; there is no global timer and no background fetch.
+- Authenticated transports report the missing prerequisite explicitly. A success claim requires the controlled fixture evidence; a local-path remote is never displayed as authentication.
+
 ## Visual system
 
 Current partial 0.0.6 entry: Welcome exposes named Open and Create affordances and recent locations. Create has pointer/Tab field selection, committed-text input and a visible Review action; its editable fields retain input on return or refusal. Directory input is bounded to 32 KiB UTF-8 and branch input to 255 UTF-8 bytes, with explicit limit feedback rather than silent truncation. Long fields show their trailing text while the confirmation wraps the complete target. Review/approval use the same typed actions for pointer and keyboard; Enter submits the form for review but cannot approve either creation or trust. Cancel/Back is visibly distinguished. Git/G supplies an editable executable path, explicit Test and save, tested version/path diagnostics and Close; unsaved/working/saved/refused states remain distinct. Identity/I supplies pointer/Tab name/email fields, scrollable source/readiness details and a named Save local action. Identity input is bounded to 1024 UTF-8 bytes per field; Git path input to 32 KiB. Pending identity reads/saves show read-only fields and Working; read completion exposes Ready, and Escape may dismiss a read without claiming cancellation of a submitted write. Failed edits retain text; refreshing a consumed preview never submits automatically. This is a partial native surface, not completed localization, accessibility, font/IME or the full first-user workspace. Scoped actual-input/capture evidence is in [the active plan](../plan/plan-0.0.6.md).

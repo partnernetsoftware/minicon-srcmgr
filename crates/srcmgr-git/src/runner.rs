@@ -86,6 +86,15 @@ impl Limits {
         stderr_bytes: 256 * 1024,
     };
 
+    /// Bounds for one network transfer. A fetch may legitimately run longer
+    /// than a local mutation, so the deadline is wider and both streams are
+    /// allowed more room; cancellation stays available through run_network.
+    pub const NETWORK: Self = Self {
+        timeout: Duration::from_secs(900),
+        stdout_bytes: 8 * 1024 * 1024,
+        stderr_bytes: 4 * 1024 * 1024,
+    };
+
     /// Bounds for a status read. Large repositories still fit; a runaway
     /// stream does not.
     pub const STATUS: Self = Self {
@@ -113,7 +122,36 @@ pub(crate) fn run<S: AsRef<OsStr>>(
     input: Option<&str>,
     limits: Limits,
 ) -> Result<Output, GitError> {
-    run_input(executable,current_dir,arguments,input,None,limits)
+    run_input(
+        executable,
+        current_dir,
+        arguments,
+        limits,
+        RunOptions { text: input, bytes: None, cancel: None, sink: None },
+    )
+}
+
+/// One progress chunk as Git printed it. The sink runs on the reader thread,
+/// so it must not block; the caller filters and throttles before display.
+pub type ProgressSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Runs one network command with a deadline, output bounds, cooperative
+/// cancellation and optional stderr progress. Cancellation terminates the
+/// owned tree through the same supervisor as a timeout.
+pub(crate) fn run_network<S: AsRef<OsStr>>(
+    executable: &Path,
+    current_dir: Option<&Path>,
+    arguments: &[S],
+    cancel: &AtomicBool,
+    sink: Option<&ProgressSink>,
+) -> Result<Output, GitError> {
+    run_input(
+        executable,
+        current_dir,
+        arguments,
+        Limits::NETWORK,
+        RunOptions { text: None, bytes: None, cancel: Some(cancel), sink },
+    )
 }
 
 /// Byte-safe stdin for NUL-delimited native paths, through the same owned
@@ -121,20 +159,38 @@ pub(crate) fn run<S: AsRef<OsStr>>(
 pub(crate) fn run_bytes<S: AsRef<OsStr>>(
     executable:&Path,current_dir:Option<&Path>,arguments:&[S],input:&[u8],limits:Limits,
 ) -> Result<Output,GitError> {
-    run_input(executable,current_dir,arguments,None,Some(input),limits)
+    run_input(
+        executable,
+        current_dir,
+        arguments,
+        limits,
+        RunOptions { text: None, bytes: Some(input), cancel: None, sink: None },
+    )
+}
+
+/// Optional inputs and supervision for one command.
+struct RunOptions<'a> {
+    text: Option<&'a str>,
+    bytes: Option<&'a [u8]>,
+    cancel: Option<&'a AtomicBool>,
+    sink: Option<&'a ProgressSink>,
 }
 
 fn run_input<S: AsRef<OsStr>>(
-    executable:&Path,current_dir:Option<&Path>,arguments:&[S],text:Option<&str>,bytes:Option<&[u8]>,limits:Limits,
-) -> Result<Output,GitError> {
+    executable: &Path,
+    current_dir: Option<&Path>,
+    arguments: &[S],
+    limits: Limits,
+    options: RunOptions<'_>,
+) -> Result<Output, GitError> {
     let mut command = ContainedHeadlessCommand::new(executable);
     command
         .args(arguments.iter().map(|argument| argument.as_ref().to_os_string()))
         .capture_output();
-    if let Some(text) = text {
+    if let Some(text) = options.text {
         command.stdin_text(text);
     }
-    if bytes.is_some(){command.pipe_stdin();}
+    if options.bytes.is_some(){command.pipe_stdin();}
     if let Some(directory) = current_dir {
         command.current_dir(directory);
     }
@@ -149,9 +205,9 @@ fn run_input<S: AsRef<OsStr>>(
     let stdout = child.take_stdout().ok_or(GitError::Supervision)?;
     let stderr = child.take_stderr().ok_or(GitError::Supervision)?;
     let overrun = Arc::new(AtomicBool::new(false));
-    let stdout_reader = spawn_reader(stdout, limits.stdout_bytes, Arc::clone(&overrun));
-    let stderr_reader = spawn_reader(stderr, limits.stderr_bytes, Arc::clone(&overrun));
-    let input_writer=if let Some(bytes)=bytes {
+    let stdout_reader = spawn_reader(stdout, limits.stdout_bytes, Arc::clone(&overrun), None);
+    let stderr_reader = spawn_reader(stderr, limits.stderr_bytes, Arc::clone(&overrun), options.sink.cloned());
+    let input_writer=if let Some(bytes)=options.bytes {
         let mut writer=child.take_stdin().ok_or(GitError::Supervision)?;
         let bytes=bytes.to_vec();
         Some(thread::spawn(move||writer.write_all(&bytes)))
@@ -160,13 +216,15 @@ fn run_input<S: AsRef<OsStr>>(
     let deadline = Instant::now() + limits.timeout;
     let mut exit = None;
     let mut expired = false;
+    let mut cancelled = false;
     loop {
         if let Some(status) = child.try_wait().map_err(GitError::Io)? {
             exit = Some(status);
             break;
         }
         expired = Instant::now() >= deadline;
-        if expired || overrun.load(Ordering::Acquire) {
+        cancelled = options.cancel.is_some_and(|flag| flag.load(Ordering::Acquire));
+        if expired || cancelled || overrun.load(Ordering::Acquire) {
             break;
         }
         thread::sleep(POLL_INTERVAL);
@@ -180,6 +238,9 @@ fn run_input<S: AsRef<OsStr>>(
     let input_result=input_writer.map(|writer|writer.join().map_err(|_|GitError::Supervision)).transpose()?;
     cleanup.map_err(GitError::Io)?;
 
+    if cancelled && exit.is_none() {
+        return Err(GitError::Cancelled);
+    }
     if expired && exit.is_none() {
         return Err(GitError::Timeout);
     }
@@ -220,6 +281,7 @@ fn spawn_reader(
     mut stream: ContainedChildOutput,
     limit: usize,
     overrun: Arc<AtomicBool>,
+    sink: Option<ProgressSink>,
 ) -> JoinHandle<io::Result<(Vec<u8>, bool)>> {
     thread::spawn(move || {
         let mut captured = Vec::new();
@@ -228,6 +290,9 @@ fn spawn_reader(
             let read = stream.read(&mut chunk)?;
             if read == 0 {
                 return Ok((captured, false));
+            }
+            if let Some(sink) = &sink {
+                sink(&String::from_utf8_lossy(&chunk[..read]));
             }
             if captured.len() + read > limit {
                 let room = limit - captured.len();
@@ -305,5 +370,34 @@ mod tests {
         let output = run(&git_executable(), None, &["--version"], None, Limits::PROBE)
             .expect("git --version");
         assert!(output.stdout.starts_with(b"git version "));
+    }
+
+    #[test]
+    fn cancellation_terminates_the_owned_tree_and_reports_it() {
+        const CHILD_MARKER: &str = "srcmgr-owned-cancel-fixture";
+        if env::args().any(|argument| argument == CHILD_MARKER) {
+            thread::sleep(Duration::from_secs(5));
+            return;
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        let trigger = Arc::clone(&cancel);
+        let trigger = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            trigger.store(true, Ordering::Release);
+        });
+        let result = run_network(
+            &env::current_exe().expect("owned test executable"),
+            None,
+            &[
+                "--exact",
+                "runner::tests::cancellation_terminates_the_owned_tree_and_reports_it",
+                "--skip",
+                CHILD_MARKER,
+            ],
+            &cancel,
+            None,
+        );
+        trigger.join().expect("cancel trigger");
+        assert!(matches!(result, Err(GitError::Cancelled)), "got {result:?}");
     }
 }

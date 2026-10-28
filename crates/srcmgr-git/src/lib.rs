@@ -18,6 +18,7 @@ mod ignore_edit;
 pub use ignore_edit::{IgnoreEdit, ignore_effect};
 mod commit_review;
 mod index_summary;
+mod remotes;
 mod repository;
 mod runner;
 mod status;
@@ -33,6 +34,8 @@ pub use initialization::InitializationTarget;
 pub use identity_config::{IdentityConfig, IdentityValue};
 pub use commit_review::{IndexBinding, StagedFile, StagedReview, ReviewedCommit, index_binding};
 pub use index_summary::{IndexSummary, index_summary};
+pub use remotes::{FetchReport, FetchUpdate, RemoteSummary, TrackingState, fetch, list as list_remotes, progress_line, redact_url, tracking};
+pub use runner::ProgressSink;
 pub use repository::{reference_target, retain_recovery_ref};
 pub use repository::ReviewedDiff;
 pub use repository::{
