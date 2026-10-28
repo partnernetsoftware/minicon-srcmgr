@@ -1,6 +1,6 @@
 # 0.0.7 remote observation plan
 
-Status: `[v]` 0.0.7 source checkpoint scoped to remote observation and explicit fetch; clone and remote configuration writes move to 0.0.8. Scope is owned by [07](../prd/PRD_07_remotes.md), entry by [03](../prd/PRD_03_workspace.md), trust by [11](../prd/PRD_11_security.md), interaction by [10](../prd/PRD_10_desktop_ux.md), sequencing by [the roadmap](roadmap-0.1.0.md) and methodology by [14](../prd/PRD_14_verification_roadmap.md).
+Status: `[v]` 0.0.7 public source checkpoint, scoped to remote observation and explicit fetch; clone and remote configuration writes move to 0.0.8. Scope is owned by [07](../prd/PRD_07_remotes.md), entry by [03](../prd/PRD_03_workspace.md), trust by [11](../prd/PRD_11_security.md), interaction by [10](../prd/PRD_10_desktop_ux.md), sequencing by [the roadmap](roadmap-0.1.0.md) and methodology by [14](../prd/PRD_14_verification_roadmap.md).
 
 Decision record 2026-10-28: the product wedge is the **low-specification/restricted-environment native client** (measured 30.2 MiB settled, 36.6 MiB peak), not a multi-repository cockpit. Remote exchange is the only remaining hard gap before a first-user beta, so 0.0.7 delivers observation and explicit fetch; clone and configuration writes follow in 0.0.8, pull and push in 0.0.9. The earlier remote-plus-cockpit draft of this file is withdrawn, not amended.
 
@@ -70,6 +70,14 @@ Not in 0.0.7: clone, remote add/set-url/rename/remove, pull, push, upstream writ
 Use a local bare remote and two disposable clones as the deterministic oracle: compare refs, `.git/config` bytes and the displayed distance, never the product's own report. Run the affected `cargo test --workspace` selection with `SRCMGR_TEST_GIT`, `cargo clippy --workspace --all-targets` and `check_docs.py`; add the local-client CI lane for the changed cases. Stop when the selected checks pass or the case is recorded `BLOCKED` with its prerequisite; do not replay 0.0.6 native/resource campaigns.
 
 Release gate: C1–C4 evidenced, version and notes updated, private candidate built and started, and no publication beyond [12](../prd/PRD_12_platform_delivery.md) under owner authority. An unsigned binary is not published; the 5-person study uses a private build.
+
+## Public 0.0.7 publication receipt
+
+Release commit `b3321ee` on `main`, annotated tag `v0.0.7` (`19ca93e`) pushed to `origin`. [GitHub Release](https://github.com/partnernetsoftware/minicon-srcmgr/releases/tag/v0.0.7) is public, non-draft and non-prerelease, with no uploaded binary assets; `gh release view` reports `assets: []`. The tag contains the scoped plan, release notes, version `0.0.7` and the remote-observation source.
+
+Gate at that commit: `cargo test --workspace` passes with MinGit 2.56.0 (`SRCMGR_TEST_GIT`) and `GIT_CONFIG_COUNT=0`; `cargo clippy --workspace --all-targets` reports no warnings; `python scripts/check_docs.py` passes. Two test-only assertions were repaired after the first failing run and that run is retained in the suite-feedback record.
+
+No binary, signature, reference-host, accessibility or authenticated-transport claim follows from this publication. The previous 0.0.6 evidence keeps its original source and artifact identity.
 
 ## Execution record
 
