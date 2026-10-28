@@ -71,6 +71,12 @@ Evidence with MinGit 2.56.0: 4 `sync_fixture` and 4 `push_fixture` cases (upstre
 
 Not delivered: authenticated HTTPS/SSH qualification, a controlled unknown-outcome receipt, JSON output for the three new CLI verbs, a pre-action review line in the window, Clone/Remotes window panels, native journey, binary and signing.
 
+## Public 0.0.9 publication receipt
+
+Release commit `f5e4e3d` on `main`, annotated tag `v0.0.9` (`fe8713e`) pushed to `origin`. [GitHub Release](https://github.com/partnernetsoftware/minicon-srcmgr/releases/tag/v0.0.9) is public, non-draft and non-prerelease with no uploaded binary assets. The first release-create call returned a GitHub 503; the retry succeeded and the failed attempt is recorded rather than hidden.
+
+Gate at that commit: `cargo test --workspace` passes with MinGit 2.56.0 and `GIT_CONFIG_COUNT=0`; `cargo clippy --workspace --all-targets` is clean; `check_docs.py` passes. No binary, signature, authenticated-transport or reference-host claim follows.
+
 ## Selected verification and stopping
 
 Local bare remote plus two disposable clones as the deterministic oracle: compare refs, `.git/config` bytes, `HEAD` and worktree state, never the product's own report. Run the affected workspace selection with `SRCMGR_TEST_GIT`, Clippy and `check_docs.py`; stop when the selected cases pass or the case is recorded `BLOCKED` with its missing prerequisite. Authenticated HTTPS and SSH remain `BLOCKED` without a controlled fixture host. Do not replay earlier native or resource campaigns, and do not treat a later green run as evidence for an unexecuted case.
