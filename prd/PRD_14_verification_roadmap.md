@@ -423,6 +423,8 @@ The [0.0.8 plan](../plan/plan-0.0.8.md) records the delivered clone (deferred ch
 
 The [0.0.9 plan](../plan/plan-0.0.9.md) records the delivered upstream, fetch-then-fast-forward pull, current-branch push and unknown reconciliation, with window `p`/`P` result lines. Clone/Remotes panels, authenticated transports, a killed-transfer receipt and native journeys remain open; no binary or signing is claimed.
 
+The [0.1.0 plan](../plan/plan-0.1.0.md) records the first-user beta target, the delivered 0.0.7–0.0.9 source checkpoints, a private unsigned Windows x64 candidate and the open work: window Clone/Remotes panels, zh-CN primary strings, signing, clean-image launch and the five-participant study. The candidate is not published; signing and the study are BLOCKED on missing authority and participants.
+
 ### Requirements baseline 1.5 review disposition
 
 Review scope: the 15-module ownership/dependency map, current-entry status statements, near-term admission and the proposed 0.0.6 task tree. This is documentation/product review, not a new runtime audit or certification of every historical clause.

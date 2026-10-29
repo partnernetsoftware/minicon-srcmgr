@@ -70,6 +70,10 @@ For 0.0.6, the owner has instructed development and public release to continue w
 
 An unsigned build is never published. Development candidates are private: they carry source and recipe binding, exact-byte startup evidence and a malware preflight, and they are used for the five-participant study and native checks. A public distribution channel opens only with the signed 0.1.0 package. Preview naming, in-app limitation notices and asset withdrawal are defined before any preview is considered; the source-checkpoint line above remains source-only.
 
+## 0.1.0 private candidate
+
+`010-candidate-v1` builds source `b609290` into Windows x64 artifact `ec245f2f174bd2701865aaca288a610c0c2ef16828e5fa980c6744b9c57c800b` with zero known developer/Cargo/workspace/toolchain root occurrences. A fresh profile starts the exact bytes, exits 0 and reads `history.limit` as `unset`. The artifact is unsigned and private: it is not a beta, not published and not a substitute for the signed package gate below.
+
 ## 0.1.0 first-user beta delivery target
 
 Status: planned, not built, signed, qualified or published. Product admission is owned by [01](PRD_01_product.md#010-first-user-feature-tree) and sequencing by [the roadmap](../plan/roadmap-0.1.0.md). Existing 0.0.x source releases retain their original scope; a source archive alone does not satisfy the new first-user runnable-client target.
