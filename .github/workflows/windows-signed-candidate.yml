@@ -1,0 +1,86 @@
+name: Windows signed candidate
+# Inert until the company signing environment exists for this repository.
+# Without the release-signing environment the Azure login step fails and the
+# job stops; there is no unsigned fallback.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_provisioned:
+        description: Azure Artifact Signing and the release-signing environment are configured for this repository
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: windows-latest
+    steps:
+      - name: Refuse to run before provisioning
+        if: ${{ !inputs.confirm_provisioned }}
+        run: |
+          Write-Error 'Set confirm_provisioned only after the repository has its own release-signing environment, OIDC identity and profile-scoped signer role.'
+          exit 1
+        shell: pwsh
+  build:
+    needs: guard
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the bound unsigned candidate
+        run: python scripts/build_windows_candidate.py --out signing-input
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-candidate
+          path: signing-input
+          if-no-files-found: error
+          retention-days: 3
+  sign:
+    needs: build
+    runs-on: windows-latest
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-candidate
+          path: signing-input
+      - name: Azure login (GitHub OIDC federated identity, signer role only)
+        uses: azure/login@0949e32778441b2c442592b7a0e6313466dc8f29 # v3.0.2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign the candidate executable
+        uses: Azure/artifact-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files-folder: signing-input/candidate
+          files-folder-filter: exe
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: MiniCon SrcMgr
+          description-url: https://github.com/partnernetsoftware/minicon-srcmgr
+          exclude-workload-identity-credential: true
+          exclude-environment-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+      - name: Inspect the signed executable
+        run: powershell -NoProfile -File scripts/inspect-authenticode.ps1 -Path signing-input/candidate/minicon-srcmgr.exe
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-candidate
+          path: signing-input
+          if-no-files-found: error
+          retention-days: 3

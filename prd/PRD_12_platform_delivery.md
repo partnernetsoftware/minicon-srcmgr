@@ -72,7 +72,7 @@ An unsigned build is never published. Development candidates are private: they c
 
 ## 0.1.0 private candidate
 
-`010-candidate-v1` builds source `b609290` into Windows x64 artifact `ec245f2f174bd2701865aaca288a610c0c2ef16828e5fa980c6744b9c57c800b` with zero known developer/Cargo/workspace/toolchain root occurrences. A fresh profile starts the exact bytes, exits 0 and reads `history.limit` as `unset`. The artifact is unsigned and private: it is not a beta, not published and not a substitute for the signed package gate below.
+`010-candidate-v1` builds source `b609290` into Windows x64 artifact `ec245f2f174bd2701865aaca288a610c0c2ef16828e5fa980c6744b9c57c800b` with zero known developer/Cargo/workspace/toolchain root occurrences. A fresh profile starts the exact bytes, exits 0 and reads `history.limit` as `unset`. The artifact is unsigned and private: it is not a beta, not published and not a substitute for the signed package gate below. Signing readiness follows the company process learned from the sibling products: canonical inspectors are installed and verified, `release-policy.json` is `off`, and an inert `windows-signed-candidate.yml` refuses to run without provisioning. The repository has no `release-signing` environment yet (the protected-environment name check returns HTTP 404), so signing and the product's PE version resource remain open.
 
 ## 0.1.0 first-user beta delivery target
 
