@@ -14,6 +14,9 @@ minicon-platform.workspace = true
 windows-core = { version = "=0.62.2", default-features = false, features = ["std"] }
 windows = { version = "=0.62.2", default-features = false, features = ["std", "Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Ole", "Win32_System_Variant", "Win32_System_Threading", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
 
+[build-dependencies]
+winresource = "0.1"
+
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 

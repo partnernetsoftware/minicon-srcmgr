@@ -14,5 +14,8 @@ minicon-core.workspace = true
 minicon-ui-core.workspace = true
 minicon-platform = { workspace = true, features = ["native-pixel-window", "input", "ime", "font", "clipboard"] }
 
+[build-dependencies]
+winresource = "0.1"
+
 [lints]
 workspace = true

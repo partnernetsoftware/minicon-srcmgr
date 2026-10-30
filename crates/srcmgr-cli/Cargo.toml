@@ -20,5 +20,8 @@ srcmgr-ui.workspace = true
 sha2.workspace = true
 minicon-platform = { workspace = true, features = ["entropy", "filesystem", "process-spawn"] }
 
+[build-dependencies]
+winresource = "0.1"
+
 [lints]
 workspace = true
