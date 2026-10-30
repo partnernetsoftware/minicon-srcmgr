@@ -12,7 +12,7 @@ Status: `[-]` in progress. Workspace version remains **0.0.9**; no 0.1.0 tag or 
 |---|---|---|
 | Clone, remote configuration, observation, fetch, upstream, FF pull, current-branch push | `[v]` | 0.0.7–0.0.9 public source checkpoints with Git and CLI fixtures |
 | Window fetch/pull/push actions and status distance | `[v]` | 96 `srcmgr-ui` cases; scope in the 0.0.7/0.0.9 plans |
-| Unsigned Windows x64 candidate | `[v]` private | `010-candidate-v1`: source `b609290`, artifact `ec245f2f174bd2701865aaca288a610c0c2ef16828e5fa980c6744b9c57c800b`, zero known build-root occurrences, fresh-profile startup exits 0 and reads `unset` |
+| Unsigned Windows x64 candidate | `[v]` private | `010-candidate-v3`: source `543cfbd`, artifact `1362b570447c19dbe364f637c878b0188317dbe898d7909e50b3a3ef0a991791`, zero known build-root occurrences, fresh-profile startup exits 0 and reads `unset`; the PE carries `ProductName=MiniCon SrcMgr`, `CompanyName=PARTNERNET SOFTWARE PTY LTD` and version `0.0.9` |
 | Window Clone and Remotes panels | `[_]` | Not implemented; CLI only |
 | zh-CN primary strings and locale selection | `[_]` | English fallback keys exist |
 | Signed package | `BLOCKED` | Company signing readiness prepared: canonical inspectors installed and verified, `release-policy.json` set to `off`, an inert `windows-signed-candidate.yml` added. The repository has no `release-signing` environment yet: `check-github-signing-environment.sh partnernetsoftware/minicon-srcmgr` returns HTTP 404. |
@@ -47,7 +47,7 @@ Learned the company process from the sibling `minicon` and `minicon-winmgr` chec
 
 1. Create the repository's `release-signing` Environment, its OIDC federated identity and the profile-scoped signer role (company account owner).
 2. Enable `signing.mode = required` (owner release decision) after a real signed run is verified.
-3. Give every PE a `ProductName`/`ProductVersion` resource; the current build embeds a manifest only, so this remains product work before a signed candidate can pass.
+3. ~~Give every PE a `ProductName`/`ProductVersion` resource~~ — done in `543cfbd`: MSVC binaries now embed `ProductName`, `CompanyName`, `FileDescription` and the package version; verified in the candidate bytes.
 4. Provide participants for the five-person study and a clean-image host for launch/signature courts.
 
 ## Execution record
