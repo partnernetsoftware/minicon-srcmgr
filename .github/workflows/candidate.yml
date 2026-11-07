@@ -1,0 +1,43 @@
+name: Windows candidate
+
+# Manual unsigned candidate for the signing qualification flow. It builds the
+# bound candidate, proves the product identity and unsigned state, and uploads
+# the exact bytes the signing job later consumes without rebuilding.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Pinned toolchain cache
+        run: cargo fetch --locked --target x86_64-pc-windows-msvc
+      - name: Build the bound unsigned candidate
+        run: python scripts/build_windows_candidate.py --out target/qualification/ci-candidate
+      - name: Prove product identity and an unsigned input
+        shell: pwsh
+        run: |
+          $exe = 'target/qualification/ci-candidate/candidate/minicon-srcmgr.exe'
+          $info = (Get-Item $exe).VersionInfo
+          if ($info.ProductName -ne 'MiniCon SrcMgr') { throw 'ProductName resource missing' }
+          if (-not $info.ProductVersion) { throw 'ProductVersion resource missing' }
+          $sig = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($sig.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) { throw "unexpected signature state: $($sig.Status)" }
+          (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() |
+            Set-Content -LiteralPath target/qualification/ci-candidate/unsigned-sha256.txt -Encoding utf8
+      - name: Start the exact frozen executable with a fresh profile
+        shell: pwsh
+        run: |
+          $profile = Join-Path $env:RUNNER_TEMP ('srcmgr-' + [guid]::NewGuid().ToString('N'))
+          $output = & target/qualification/ci-candidate/candidate/minicon-srcmgr.exe --profile $profile setting get history.limit
+          if ($LASTEXITCODE -ne 0) { throw 'candidate did not start' }
+          if ($output -ne 'unset') { throw 'candidate did not return the fresh-profile setting' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-candidate
+          path: target/qualification/ci-candidate
+          if-no-files-found: error
+          retention-days: 7
