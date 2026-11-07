@@ -1,7 +1,10 @@
 name: Windows signed candidate
-# Inert until the company signing environment exists for this repository.
-# Without the release-signing environment the Azure login step fails and the
-# job stops; there is no unsigned fallback.
+
+# Qualification flow for the Azure Artifact Signing path. It runs only by hand,
+# only after the release-signing environment exists, and it always records
+# release_eligible=false while release-policy.json keeps signing.mode=off.
+# There is no unsigned fallback: a missing environment or a failed login stops
+# the job.
 on:
   workflow_dispatch:
     inputs:
@@ -18,22 +21,36 @@ jobs:
       - name: Refuse to run before provisioning
         if: ${{ !inputs.confirm_provisioned }}
         run: |
-          Write-Error 'Set confirm_provisioned only after the repository has its own release-signing environment, OIDC identity and profile-scoped signer role.'
+          Write-Error 'Set confirm_provisioned only after the release-signing environment holds the Azure values and the profile-scoped signer role is assigned.'
           exit 1
         shell: pwsh
   build:
     needs: guard
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Pinned toolchain cache
+        run: cargo fetch --locked --target x86_64-pc-windows-msvc
       - name: Build the bound unsigned candidate
-        run: python scripts/build_windows_candidate.py --out signing-input
+        run: python scripts/build_windows_candidate.py --out target/qualification/ci-signed-input
+      - name: Require product identity and an unsigned input
         shell: pwsh
+        run: |
+          $exe = 'target/qualification/ci-signed-input/candidate/minicon-srcmgr.exe'
+          $info = (Get-Item $exe).VersionInfo
+          if ($info.ProductName -ne 'MiniCon SrcMgr') { throw 'ProductName resource missing' }
+          if (-not $info.ProductVersion) { throw 'ProductVersion resource missing' }
+          $sig = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($sig.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+            throw "signing input is already signed or unreadable: $($sig.Status)"
+          }
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "UNSIGNED_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-candidate
-          path: signing-input
+          path: target/qualification/ci-signed-input
           if-no-files-found: error
           retention-days: 3
   sign:
@@ -44,25 +61,31 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: unsigned-candidate
           path: signing-input
+      - name: Freeze the unsigned signing input
+        shell: pwsh
+        run: |
+          $exe = 'signing-input/candidate/minicon-srcmgr.exe'
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:UNSIGNED_SHA256) { throw 'unsigned bytes differ from the build receipt' }
+          $exe | Set-Content -LiteralPath signing-catalog.txt -Encoding utf8
       - name: Azure login (GitHub OIDC federated identity, signer role only)
-        uses: azure/login@0949e32778441b2c442592b7a0e6313466dc8f29 # v3.0.2
+        uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Sign the candidate executable
-        uses: Azure/artifact-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+        uses: Azure/artifact-signing-action@v0
         with:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
-          files-folder: signing-input/candidate
-          files-folder-filter: exe
-          files-folder-recurse: false
+          files-catalog: signing-catalog.txt
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -74,13 +97,37 @@ jobs:
           exclude-shared-token-cache-credential: true
           exclude-visual-studio-credential: true
           exclude-visual-studio-code-credential: true
-          exclude-azure-cli-credential: false
+          exclude-azure-cli-credential: true
       - name: Inspect the signed executable
-        run: powershell -NoProfile -File scripts/inspect-authenticode.ps1 -Path signing-input/candidate/minicon-srcmgr.exe
         shell: pwsh
-      - uses: actions/upload-artifact@v4
+        run: |
+          $exe = 'signing-input/candidate/minicon-srcmgr.exe'
+          $version = (Get-Content Cargo.toml | Select-String '^version = "(.*)"$').Matches.Groups[1].Value
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/inspect-authenticode.ps1 `
+            -Path $exe -ExpectedOrganization 'PARTNERNET SOFTWARE PTY LTD' `
+            -ExpectedProductName 'MiniCon SrcMgr' -ExpectedProductVersion $version `
+            | Set-Content -LiteralPath inspection.json -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw "inspector exited $LASTEXITCODE" }
+      - name: Write and audit the public receipt
+        shell: pwsh
+        run: |
+          $version = (Get-Content Cargo.toml | Select-String '^version = "(.*)"$').Matches.Groups[1].Value
+          python scripts/signing_receipt.py --asset signing-input/candidate/minicon-srcmgr.exe `
+            --before-sha256 $env:UNSIGNED_SHA256 --inspection inspection.json `
+            --source-sha $env:GITHUB_SHA --version $version --release-eligible false `
+            --out signing-receipt.json
+          if ($LASTEXITCODE -ne 0) { throw 'receipt composition failed' }
+          python scripts/audit-public-signing-receipt.py signing-receipt.json `
+            --expected-provider azure-artifact-signing --expected-publisher 'PARTNERNET SOFTWARE PTY LTD' `
+            --release-eligible false
+          if ($LASTEXITCODE -ne 0) { throw 'receipt audit failed' }
+      - name: Keep the signed bytes and their receipt
+        uses: actions/upload-artifact@v4
         with:
           name: signed-candidate
-          path: signing-input
+          path: |
+            signing-input/candidate/minicon-srcmgr.exe
+            signing-receipt.json
+            inspection.json
           if-no-files-found: error
           retention-days: 3
