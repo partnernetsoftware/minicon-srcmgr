@@ -15,7 +15,7 @@ Status: `[-]` in progress. Workspace version remains **0.0.9**; no 0.1.0 tag or 
 | Unsigned Windows x64 candidate | `[v]` private | `010-candidate-v3`: source `543cfbd`, artifact `1362b570447c19dbe364f637c878b0188317dbe898d7909e50b3a3ef0a991791`, zero known build-root occurrences, fresh-profile startup exits 0 and reads `unset`; the PE carries `ProductName=MiniCon SrcMgr`, `CompanyName=PARTNERNET SOFTWARE PTY LTD` and version `0.0.9` |
 | Window Clone and Remotes panels | `[_]` | Not implemented; CLI only |
 | zh-CN primary strings and locale selection | `[_]` | English fallback keys exist |
-| Signed package | `BLOCKED` | Company signing readiness prepared: canonical inspectors installed and verified, `release-policy.json` set to `off`, an inert `windows-signed-candidate.yml` added. The repository has no `release-signing` environment yet: `check-github-signing-environment.sh partnernetsoftware/minicon-srcmgr` returns HTTP 404. |
+| Signed package | `[-]` mechanism qualified, release-eligible run pending | The `release-signing` environment exists with the three Azure secrets and three provider variables; both control-plane courts report READY. Run [42369612531](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42369612531) signed source `cb117b0` and produced a `Valid` Authenticode signature with `O=PARTNERNET SOFTWARE PTY LTD`, a Microsoft timestamp certificate and a credential-free receipt. That receipt is `release_eligible=false` because the version is still 0.0.9 and the policy still says `off`. |
 | Clean-image launch, reference host, CJK/clipboard, accessibility | `BLOCKED` | No supplied environment |
 | Five-participant study | `BLOCKED` | No participants or facilitated sessions |
 
@@ -43,13 +43,32 @@ Learned the company process from the sibling `minicon` and `minicon-winmgr` chec
 - Added `release-policy.json` with `signing.mode = off` and an inert `windows-signed-candidate.yml` that refuses to run unless someone confirms provisioning; it has no unsigned fallback.
 - `check-github-signing-environment.sh partnernetsoftware/minicon-srcmgr` returns `gh: Not Found (HTTP 404)`, so the repository has no signing environment yet.
 
-### BLOCKED prerequisites
+### Provisioned 2026-11-07
 
-1. Create the repository's `release-signing` Environment, its OIDC federated identity and the profile-scoped signer role (company account owner).
-2. Enable `signing.mode = required` (owner release decision) after a real signed run is verified.
+1. ~~Create the repository's `release-signing` Environment, its OIDC federated identity and the profile-scoped signer role~~ — done. The environment holds `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` and the provider endpoint/account/profile variables; the repository owns its own Entra application whose federated credential subject is exactly `repo:partnernetsoftware@53246189/minicon-srcmgr@1424470828:environment:release-signing`; the service principal holds only `Artifact Signing Certificate Profile Signer` at the `minicon-public` profile scope. `check-github-signing-environment.sh` and `check-azure-signing-state.sh` both report READY.
+2. ~~Enable `signing.mode = required`~~ — pending a release-eligible run at the 0.1.0 version.
 3. ~~Give every PE a `ProductName`/`ProductVersion` resource~~ — done in `543cfbd`: MSVC binaries now embed `ProductName`, `CompanyName`, `FileDescription` and the package version; verified in the candidate bytes.
 4. Provide participants for the five-person study and a clean-image host for launch/signature courts.
 
 ## Execution record
 
-The private candidate `010-candidate-v1` (source `b609290`, artifact `ec245f2f...`) starts from a fresh profile and exits 0. It is unsigned and unpublished; no 0.1.0 tag or release exists.
+### Signing mechanism qualified (2026-11-07)
+
+Run [42369612531](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42369612531) built source `cb117b0` unsigned, signed the exact uploaded bytes through the repository's own OIDC identity, and inspected the result with the canonical inspector. The job recorded:
+
+- unsigned input `3beb734344f18ba8…`, signed output `043f3e19b545d4a1…`, 3,945,400 bytes;
+- Authenticode `Valid`, subject `CN=PARTNERNET SOFTWARE PTY LTD, O=PARTNERNET SOFTWARE PTY LTD, L=SYDNEY, S=New South Wales, C=AU`, issuer `CN=Microsoft ID Verified CS AOC CA 04, O=Microsoft Corporation, C=US`, certificate expiry 2026-11-09;
+- RFC 3161 timestamp certificate `CN=Microsoft Public RSA Time Stamping Authority`;
+- a `srcmgr-candidate-signing` receipt that the fail-closed auditor accepted with `release_eligible=false`.
+
+The signed bytes were downloaded and started on this host: `--profile <fresh> setting get history.limit` printed `unset` and exited 0.
+
+Earlier attempts in the same session failed for three wiring reasons and are kept here rather than hidden: the build wrote outside the qualification directory; the digest crossed jobs through `GITHUB_ENV`, which does not exist across jobs; `files-catalog` needs paths relative to the catalog and the action needs the Azure CLI credential that `azure/login` created. None of those were product defects.
+
+### Still open before 0.1.0 can publish
+
+- A release-eligible run at version 0.1.0 with `signing.mode = required` and the version unpublished.
+- Window Clone and Remotes panels; zh-CN primary strings.
+- Clean-image launch, the five-participant study and a Defender scan of the final bytes.
+
+The private candidate `010-candidate-v1` (source `b609290`, artifact `ec245f2f...`) starts from a fresh profile and exits 0. No 0.1.0 tag or release exists.
