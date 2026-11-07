@@ -46,7 +46,7 @@ jobs:
             throw "signing input is already signed or unreadable: $($sig.Status)"
           }
           $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "UNSIGNED_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Set-Content -LiteralPath target/qualification/ci-signed-input/unsigned-sha256.txt -Value $hash -Encoding utf8
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-candidate
@@ -70,9 +70,11 @@ jobs:
         shell: pwsh
         run: |
           $exe = 'signing-input/candidate/minicon-srcmgr.exe'
+          $expected = (Get-Content signing-input/unsigned-sha256.txt -Raw).Trim()
           $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($hash -ne $env:UNSIGNED_SHA256) { throw 'unsigned bytes differ from the build receipt' }
-          $exe | Set-Content -LiteralPath signing-catalog.txt -Encoding utf8
+          if ($hash -ne $expected) { throw 'unsigned bytes differ from the build receipt' }
+          Set-Content -LiteralPath signing-catalog.txt -Value $exe -Encoding utf8
+          "UNSIGNED_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Azure login (GitHub OIDC federated identity, signer role only)
         uses: azure/login@v2
         with:
