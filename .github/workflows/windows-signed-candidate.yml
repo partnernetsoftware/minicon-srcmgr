@@ -73,7 +73,9 @@ jobs:
           $expected = (Get-Content signing-input/unsigned-sha256.txt -Raw).Trim()
           $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($hash -ne $expected) { throw 'unsigned bytes differ from the build receipt' }
-          Set-Content -LiteralPath signing-catalog.txt -Value $exe -Encoding utf8
+          # The catalog holds paths relative to its own directory, one per line.
+          @('candidate\minicon-srcmgr.exe') |
+            Set-Content -LiteralPath signing-input/signing-catalog.txt -Encoding ascii
           "UNSIGNED_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Azure login (GitHub OIDC federated identity, signer role only)
         uses: azure/login@0949e32778441b2c442592b7a0e6313466dc8f29 # v3.0.2
@@ -87,7 +89,7 @@ jobs:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
-          files-catalog: signing-catalog.txt
+          files-catalog: signing-input/signing-catalog.txt
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -99,7 +101,9 @@ jobs:
           exclude-shared-token-cache-credential: true
           exclude-visual-studio-credential: true
           exclude-visual-studio-code-credential: true
-          exclude-azure-cli-credential: true
+          # azure/login created the CLI session this action consumes.
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
       - name: Inspect the signed executable
         shell: pwsh
         run: |
