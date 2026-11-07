@@ -1,9 +1,9 @@
-"""Compose the public signing receipt from inspector output.
+"""Compose the public signing receipt from canonical inspector output.
 
-The receipt is the only public record of a signed candidate. Provider
-coordinates (endpoint, account, profile, tenant, subscription, application and
-principal identifiers) never enter it; scripts/audit-public-signing-receipt.py
-fails closed when they do.
+The receipt is the only public record of a signed file. Provider coordinates
+(endpoint, account, profile, tenant, subscription, application or principal
+identifiers) never enter it, and scripts/audit-public-signing-receipt.py fails
+closed when any of them appear.
 """
 from __future__ import annotations
 
@@ -13,20 +13,32 @@ import json
 from pathlib import Path
 
 PROVIDER = "azure-artifact-signing"
-EXPECTED_PUBLISHER = "PARTNERNET SOFTWARE PTY LTD"
+PUBLISHER = "PARTNERNET SOFTWARE PTY LTD"
+TIMESTAMP_URL = "http://timestamp.acs.microsoft.com"
 
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def text(inspection: dict, key: str) -> str:
+    value = inspection.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"inspection is missing {key}")
+    return value
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--asset", required=True, type=Path)
+    parser.add_argument("--name", required=True)
+    parser.add_argument("--relative-path", required=True)
     parser.add_argument("--before-sha256", required=True)
     parser.add_argument("--inspection", required=True, type=Path)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--run-id", required=True, type=int)
+    parser.add_argument("--run-attempt", required=True, type=int)
     parser.add_argument("--release-eligible", required=True, choices=("true", "false"))
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
@@ -35,40 +47,46 @@ def main() -> None:
     after = sha256(args.asset)
     if inspection.get("sha256") != after:
         raise ValueError("inspection does not describe the signed bytes")
-    if args.release_eligible == "true" and inspection.get("status") != "Valid":
-        raise ValueError("a release-eligible receipt requires a Valid signature")
     signer = inspection.get("signer") or {}
-    if f"O={EXPECTED_PUBLISHER}" not in (signer.get("subject") or ""):
+    timestamp = inspection.get("timestamp_certificate") or {}
+    subject = signer.get("subject") or ""
+    if f"O={PUBLISHER}" not in subject:
         raise ValueError("signer subject does not carry the company organization")
-    if not inspection.get("timestamp_certificate"):
-        raise ValueError("a timestamp certificate is required")
+    eligible = args.release_eligible == "true"
+    if eligible and inspection.get("status") != "Valid":
+        raise ValueError("a release-eligible receipt requires a Valid signature")
 
     receipt = {
-        "schema": "srcmgr-signing-receipt/1",
-        "signing_provider": PROVIDER,
-        "release_eligible": args.release_eligible == "true",
+        "schema": 1,
+        "kind": "srcmgr-candidate-signing",
         "source_sha": args.source_sha,
-        "version": args.version,
-        "assets": [
-            {
-                "path": inspection.get("file_name"),
+        "product_version": args.version,
+        "signing_provider": PROVIDER,
+        "publisher_organization": PUBLISHER,
+        "file_digest": "SHA256",
+        "timestamp_rfc3161": TIMESTAMP_URL,
+        "timestamp_digest": "SHA256",
+        "release_eligible": eligible,
+        "signing_run": {"id": args.run_id, "attempt": args.run_attempt},
+        "assets": {
+            args.name: {
+                "path": args.relative_path,
                 "before_sha256": args.before_sha256,
                 "after_sha256": after,
-                "size_bytes": inspection.get("size_bytes"),
-                "signature_status": inspection.get("status"),
-                "product_name": inspection.get("product_name"),
-                "product_version": inspection.get("product_version"),
-                "signer_subject": signer.get("subject"),
-                "signer_issuer": signer.get("issuer"),
-                "signer_thumbprint": signer.get("thumbprint"),
-                "signer_not_after": signer.get("not_after"),
-                "timestamp_subject": (inspection.get("timestamp_certificate") or {}).get("subject"),
-                "timestamp_issuer": (inspection.get("timestamp_certificate") or {}).get("issuer"),
+                "after_bytes": int(inspection.get("size_bytes") or 0),
+                "authenticode_status": text(inspection, "status"),
+                "signer_subject": subject,
+                "signer_issuer": text(signer, "issuer"),
+                "signer_thumbprint": text(signer, "thumbprint"),
+                "signer_not_before": text(signer, "not_before"),
+                "signer_not_after": text(signer, "not_after"),
+                "timestamp_subject": text(timestamp, "subject"),
+                "timestamp_issuer": text(timestamp, "issuer"),
             }
-        ],
+        },
     }
-    args.out.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-    print(f"receipt written for {receipt['assets'][0]['path']} ({after})")
+    args.out.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"receipt written for {args.name} ({after})")
 
 
 if __name__ == "__main__":

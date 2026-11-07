@@ -119,9 +119,11 @@ jobs:
         run: |
           $version = (Get-Content Cargo.toml | Select-String '^version = "(.*)"$').Matches.Groups[1].Value
           python scripts/signing_receipt.py --asset signing-input/candidate/minicon-srcmgr.exe `
+            --name minicon-srcmgr.exe --relative-path candidate/minicon-srcmgr.exe `
             --before-sha256 $env:UNSIGNED_SHA256 --inspection inspection.json `
-            --source-sha $env:GITHUB_SHA --version $version --release-eligible false `
-            --out signing-receipt.json
+            --source-sha $env:GITHUB_SHA --version $version `
+            --run-id $env:GITHUB_RUN_ID --run-attempt $env:GITHUB_RUN_ATTEMPT `
+            --release-eligible false --out signing-receipt.json
           if ($LASTEXITCODE -ne 0) { throw 'receipt composition failed' }
           python scripts/audit-public-signing-receipt.py signing-receipt.json `
             --expected-provider azure-artifact-signing --expected-publisher 'PARTNERNET SOFTWARE PTY LTD' `
