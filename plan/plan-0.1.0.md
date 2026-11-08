@@ -65,6 +65,18 @@ The signed bytes were downloaded and started on this host: `--profile <fresh> se
 
 Earlier attempts in the same session failed for three wiring reasons and are kept here rather than hidden: the build wrote outside the qualification directory; the digest crossed jobs through `GITHUB_ENV`, which does not exist across jobs; `files-catalog` needs paths relative to the catalog and the action needs the Azure CLI credential that `azure/login` created. None of those were product defects.
 
+### Public 0.1.0 publication receipt
+
+Release commit `f6ab36e` on `main`, annotated tag `v0.1.0` (`6d8b925`) pushed to `origin`. [GitHub Release](https://github.com/partnernetsoftware/minicon-srcmgr/releases/tag/v0.1.0) is public, non-draft and non-prerelease with three assets:
+
+| Asset | Bytes | SHA-256 |
+|---|---|---|
+| `minicon-srcmgr-0.1.0-windows-x86_64.zip` | 1,843,036 | `e858e49ac8725e4309921833eda6213d1cb8afe4eae3055b83b796e257ad5f2a` |
+| `SHA256SUMS.txt` | 85 | `aa70325de1e06032ab905e024a7de670b0c18208299dd0eacc996fccb1f885f8` |
+| `signing-receipt.json` | 1,558 | published as the receipt of run 42453987936 |
+
+The assets were downloaded again from the published release and re-hashed: the archive digest matches the local build byte for byte. No rebuild happened between signing and publication.
+
 ### Release-eligible signing run
 
 Run [42453987936](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42453987936) at source `d3531ea` with `signing.mode=required` and version 0.1.0 produced a release-eligible receipt:
