@@ -83,6 +83,8 @@ jobs:
           fi
           export SRCMGR_TEST_GIT="$resolved"
           echo "court git: $SRCMGR_TEST_GIT"
+          # Later steps reuse the same Git; the court reads SRCMGR_TEST_GIT.
+          echo "SRCMGR_TEST_GIT=$resolved" >> "$GITHUB_ENV"
 
           # The image ships a global configuration (core.autocrlf on Windows,
           # init.defaultBranch elsewhere). The fixtures assert exact bytes, so
@@ -110,8 +112,6 @@ jobs:
           echo "path=$path" >> "$GITHUB_OUTPUT"
       - name: Runtime court on this cell
         shell: bash
-        env:
-          GIT_FOR_COURT: git
         run: |
           set -euo pipefail
           version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
@@ -127,7 +127,7 @@ jobs:
           python scripts/package_cell.py \
             --cell '${{ matrix.cell }}' \
             --binary '${{ steps.binary.outputs.path }}' \
-            --readme README.txt \
+            --readme docs/first-run.txt \
             --version "$version" \
             --source-sha "$GITHUB_SHA" \
             --runtime-status "$(python -c "import json;print(json.load(open('runtime-receipt.json'))['status'])")" \

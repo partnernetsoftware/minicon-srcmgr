@@ -51,7 +51,7 @@ def main() -> int:
     # The product resolves the executable and refuses a bare name, so hand it an
     # absolute path. `shutil.which` already returns a native Windows path, which
     # avoids the Git Bash POSIX spelling that a native process cannot open.
-    requested = os.environ.get("GIT_FOR_COURT") or "git"
+    requested = os.environ.get("GIT_FOR_COURT") or os.environ.get("SRCMGR_TEST_GIT") or "git"
     git = shutil.which(requested) or requested
     git_version = run([git, "--version"])
     record(

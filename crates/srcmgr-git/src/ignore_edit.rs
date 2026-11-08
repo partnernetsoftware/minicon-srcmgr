@@ -237,7 +237,10 @@ mod tests {
         assert_eq!(f.git(&["write-tree"]).stdout,before_tree);assert_eq!(f.git(&["rev-parse","HEAD"]).stdout,before_head);assert_eq!(fs::read(root.join("a.txt")).unwrap(),b"tracked\n");
     }
 
-    #[cfg(unix)]
+    // A file name that is not valid UTF-8 exists on Linux and cannot be created
+    // on macOS or Windows at all, so this court runs only where the case is
+    // representable. The symlink half is cross-unix but shares the fixture.
+    #[cfg(target_os = "linux")]
     #[test]
     fn ignore_raw_unix_names_and_link_refusals_keep_exact_bytes() {
         use std::os::unix::{ffi::OsStringExt,fs::symlink};

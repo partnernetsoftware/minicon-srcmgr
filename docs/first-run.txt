@@ -1,0 +1,37 @@
+MiniCon SrcMgr — first run
+=========================
+
+1. Extract this folder anywhere you can write.
+2. Run minicon-srcmgr (minicon-srcmgr.exe on Windows).
+3. The window opens on Welcome. Choose Open or Create, or clone from the
+   command line with:
+     minicon-srcmgr --profile <profile-dir> clone <url> <destination>
+4. A repository must be trusted before the product runs Git in it. The window
+   shows what will be trusted and asks first.
+
+Requirements
+------------
+Git must already be installed and on PATH (or pass --git <path>). Version 2.43
+or newer. The product does not bundle Git.
+
+Verify the download
+-------------------
+  certutil -hashfile minicon-srcmgr.exe SHA256        (Windows)
+  shasum -a 256 minicon-srcmgr                        (macOS, Linux)
+
+The expected digest is in SHA256SUMS.txt beside this file.
+
+Known limits
+------------
+- The interface is English only.
+- No merge, rebase or in-app conflict resolution; pull is fast-forward only.
+- Windows builds are Authenticode-signed. macOS builds are not Developer ID
+  signed or notarized, and Linux builds are not distributed by a package
+  manager yet.
+- Only the Windows x86_64 cell has completed a GUI journey qualification; the
+  other cells are qualified up to "the executable starts and reads Git".
+
+Source and licence
+------------------
+https://github.com/partnernetsoftware/minicon-srcmgr
+See LICENSE in the repository.
