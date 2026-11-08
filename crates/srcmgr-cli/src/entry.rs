@@ -427,8 +427,14 @@ mod tests {
         let mut app = app(root);
         app.options.git = Some(git_executable());
         let approved = review(&mut app, repo);
-        assert!(matches!(app.run(Job::GrantRepositoryTrust(approved.ticket)), Reply::RepositoryOpened(_)));
-        app
+        match app.run(Job::GrantRepositoryTrust(approved.ticket)) {
+            Reply::RepositoryOpened(_) => app,
+            other => panic!(
+                "granting trust over {:?} with {:?} answered {other:?}",
+                repo,
+                git_executable()
+            ),
+        }
     }
 
     #[test]

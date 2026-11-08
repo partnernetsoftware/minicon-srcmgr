@@ -89,7 +89,16 @@ fn install_pre_commit(scratch: &Scratch, repo: &Path, marker: &Path) {
     let hooks = repo.join(".git").join("hooks");
     fs::create_dir_all(&hooks).expect("hooks dir");
     let body = format!("#!/bin/sh\nsh \"{}\"\n", p(&hook).replace('\\', "/"));
-    fs::write(hooks.join("pre-commit"), body).expect("write hook");
+    let path = hooks.join("pre-commit");
+    fs::write(&path, body).expect("write hook");
+    // Git only runs a hook that is executable. Windows ignores the mode bit,
+    // so this only matters on unix, but writing it unconditionally keeps the
+    // fixture identical on every cell.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("hook mode");
+    }
 }
 
 #[test]
