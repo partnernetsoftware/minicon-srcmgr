@@ -67,13 +67,19 @@ jobs:
           GIT_CONFIG_COUNT: "0"
         run: |
           # The fixtures run against the cell's own Git, by absolute path: the
-          # product resolves the executable and rejects a bare name. Git Bash
-          # hands back a POSIX path that a native Windows process cannot open,
-          # so translate it there.
+          # product resolves the executable and rejects a bare name.
+          #
+          # On Windows, PATH from Git Bash reaches the SDK flavour under
+          # ucrt64/bin, which reads a different etc/gitconfig and fails with
+          # status 128 on this machine. Derive the supported front end from the
+          # installation root instead of trusting PATH order, then hand the
+          # product a native Windows path.
           set -euo pipefail
           resolved="$(command -v git)"
-          if command -v cygpath >/dev/null 2>&1; then
-            resolved="$(cygpath -w "$resolved")"
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            exec_path="$(git --exec-path)"
+            root="$(dirname "$(dirname "$(dirname "$exec_path")")")"
+            resolved="$(cygpath -w "$root/cmd/git.exe")"
           fi
           export SRCMGR_TEST_GIT="$resolved"
           echo "court git: $SRCMGR_TEST_GIT"

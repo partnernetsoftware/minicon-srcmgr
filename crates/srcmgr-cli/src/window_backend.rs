@@ -980,7 +980,11 @@ pub(crate) mod tests {
         assert_eq!(fs::read_to_string(&lock).unwrap(), "external lock owner");
         fs::remove_file(lock).unwrap();
         let dropped = full(confirmed(&mut backend, Job::StashAction { id: ids[1].clone(), expected: ids.clone(), operation: "drop".into() }));
-        assert!(dropped.stage_result.unwrap().contains("Dropped selected"));
+        assert!(
+            dropped.stage_result.as_deref().is_some_and(|text| text.contains("Dropped selected")),
+            "drop answered {:?}",
+            dropped.stage_result
+        );
         assert_eq!(dropped.stashes.iter().map(|s| s.id.clone()).collect::<Vec<_>>(), vec![ids[0].clone()]);
         assert_eq!(fs::read_to_string(repo.join("a.txt")).unwrap(), "one\n");
         let popped = full(confirmed(&mut backend, Job::StashAction { id: ids[0].clone(), expected: vec![ids[0].clone()], operation: "pop".into() }));
