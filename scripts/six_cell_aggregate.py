@@ -31,8 +31,10 @@ def main() -> int:
     problems: list[str] = []
     receipts: dict[str, dict] = {}
     for cell in sorted(EXPECTED):
-        archive = args.cells / cell / "cell-receipt.json"
-        runtime = args.cells / cell / "runtime-receipt.json"
+        # Each artifact downloads into a directory named after itself.
+        root = args.cells / f"cell-{cell}"
+        archive = root / "cell-receipt.json"
+        runtime = root / "runtime-receipt.json"
         if not archive.is_file():
             problems.append(f"{cell}: no cell receipt")
             continue
