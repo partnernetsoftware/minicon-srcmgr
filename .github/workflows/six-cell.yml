@@ -56,8 +56,19 @@ jobs:
             amd64) test "$RUNNER_ARCH" = X64 ;;
             arm64) test "$RUNNER_ARCH" = ARM64 ;;
           esac
+      - name: Report the cell's Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v git
+          git --version
       - name: Build the cell
         shell: bash
+        env:
+          # The fixtures run against the cell's own Git and must not inherit
+          # ambient configuration from the image.
+          SRCMGR_TEST_GIT: git
+          GIT_CONFIG_COUNT: "0"
         run: |
           set -euo pipefail
           cargo build --locked --release -p srcmgr-cli
