@@ -20,6 +20,7 @@ mod commit_review;
 mod index_summary;
 mod clone;
 mod remote_edit;
+mod durability;
 mod remotes;
 mod repository;
 mod runner;

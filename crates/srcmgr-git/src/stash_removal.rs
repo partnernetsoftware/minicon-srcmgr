@@ -43,10 +43,7 @@ impl Lock {
         minicon_platform::filesystem::replace_file(&self.path, destination)
             .map_err(GitError::Io)?;
         self.owned = false;
-        minicon_platform::filesystem::sync_parent(
-            destination.parent().ok_or(GitError::NotARepository)?,
-        )
-        .map_err(GitError::Io)
+        crate::durability::sync_directory(destination.parent().ok_or(GitError::NotARepository)?)
     }
 }
 
@@ -256,7 +253,7 @@ fn remove_locked(
             return Err(GitError::StaleSelection);
         }
         saved(&transaction.join("publication-started"), b"Original ref/reflog retained here. Publication may be partial; inspect before manual repair. Do not replay apply.\n")?;
-        minicon_platform::filesystem::sync_parent(transaction).map_err(GitError::Io)?;
+        crate::durability::sync_directory(transaction)?;
         log_lock.write(&new_log)?;
         if let Some(bytes) = &new_ref {
             ref_lock.write(bytes)?;
@@ -268,9 +265,9 @@ fn remove_locked(
             ref_lock.publish(&refs.join("stash"))?;
         } else {
             fs::remove_file(refs.join("stash")).map_err(GitError::Io)?;
-            minicon_platform::filesystem::sync_parent(&refs).map_err(GitError::Io)?;
+            crate::durability::sync_directory(&refs)?;
             fs::remove_file(logs.join("stash")).map_err(GitError::Io)?;
-            minicon_platform::filesystem::sync_parent(&logs).map_err(GitError::Io)?;
+            crate::durability::sync_directory(&logs)?;
         }
         Ok(())
     })();
