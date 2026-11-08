@@ -286,7 +286,7 @@ The initial MiniCon revision is owned by 02, regardless of newer upstream/siblin
 
 ### Release 0.0.1 (source-level, local)
 
-- `Cargo.toml` already declares `0.0.1` for the workspace. The release status, known limits and the unpublished state are recorded in [12](PRD_12_platform_delivery.md#release-001-status).
+- `Cargo.toml` already declares `0.0.1` for the workspace. The release status, known limits and the unpublished state are recorded in [12](../archive/prd12-superseded-status.md#release-001-status).
 - Created a local annotated tag `v0.0.1` on the commit that records the release status in PRD 12. It is not pushed.
 - Not done, and why: no binary is built or distributed (work order: "No binary publication is part of this assignment"); no signing or notarization (PRD 12 requires signing authority and six-cell evidence, neither available here); no push to `origin` or GitHub Release, because that is public and cannot be undone. Publishing needs explicit owner authority.
 - Gate for this release: the full test suite, clippy and the docs check pass at the tagged commit (recorded in the commit's session notes).
@@ -366,7 +366,7 @@ Known limits for 0.0.2: no IME composition beyond committed text, no screen-read
 
 ### Release 0.0.2 (source-level, local)
 
-- `Cargo.toml` declares `0.0.2` for the workspace. Status, limits and the unpublished state are recorded in [12](PRD_12_platform_delivery.md#release-002-status).
+- `Cargo.toml` declares `0.0.2` for the workspace. Status, limits and the unpublished state are recorded in [12](../archive/prd12-superseded-status.md#release-002-status).
 - Gate at the release commit: `cargo test --workspace` 139 passing with MinGit 2.56.0 through `SRCMGR_TEST_GIT`; `cargo clippy --workspace --all-targets` zero warnings; `python scripts/check_docs.py` PASS.
 - Created a local annotated tag `v0.0.2` on the release commit. It is not pushed, no GitHub Release is created, and no binary is built, because the owner asked for a local release that is not public.
 - Still open at this release: the OPEN items under each package in the 0.0.2 plan, measured responsiveness and resource budgets, and live key-driven verification of the window.

@@ -74,6 +74,8 @@ flowchart TD
 
 ## Reading and change protocol
 
+Do not read [archive/](archive/README.md) unless a named historical investigation needs a superseded record. Archived material is evidence of what an earlier version did; it never describes present behavior.
+
 Read 01 → 02 → 10 for intent and composition; read a behavior owner plus 08/11/13 before implementing a mutation; use 14 for implementation sequence and evidence. Requirement tables use invariant / observable evidence / safe failure / dependency / explicit exclusion as delivery contracts. Detailed acceptance clauses in the same owner refine those contracts.
 
 Implementation entry: [M0 work order and evidence](prd/PRD_14_verification_roadmap.md#implementation-work-order-and-evidence). Review findings/disposition are owned by [14](prd/PRD_14_verification_roadmap.md); pending mechanism proofs remain owned by 02. The work order permits beginning implementation, not declaring all risks resolved or publishing binaries.
@@ -98,6 +100,7 @@ The owner-directed near-term goal is [a usable 0.1.0 Git client](prd/PRD_01_prod
 - [v] Requirements baseline: this index and 15 linked owner modules; documentation checks are reproducible through `python scripts/check_docs.py`.
 - [-] M0 foundation and Windows local Git/UI slices have implementation and scoped evidence. Native accessibility, remaining capability proofs and full milestone qualification stay open; see 02/14.
 - [-] M1 local workflows are partially delivered; paged graph, workspace/control and other cumulative clauses remain open. M2/M3 are not complete because selected later behaviors shipped early.
-- [v] Development source checkpoint 0.0.6 is publicly released with named functional/quality evidence and explicit qualification limits; this does not complete supported-binary or cumulative milestone acceptance. 0.0.5 remains an unpublished checkpoint. Later versions toward 0.1.0 remain planned. Exact source-release status is owned by [12](prd/PRD_12_platform_delivery.md), execution evidence by the version plans linked from 14.
+- [v] **0.1.0 is published as a signed, runnable Windows x86_64 beta** (2026-11-07) with a release-eligible Authenticode receipt, a checksum list and first-run instructions. Its release notes name every gate it did not qualify. 0.0.6 to 0.0.9 shipped as public source checkpoints; 0.0.5 remains an unpublished checkpoint.
+- [-] **0.1.1 is the planned next version**: in-window Clone and Remotes surfaces, zh-CN primary strings with a locale choice, reviewed divergence with conflict detection and terminal handoff, and the clean-image, accessibility, CJK/clipboard and five-participant courts. Exact release status is owned by [12](prd/PRD_12_platform_delivery.md), the active sequence by [the 0.1.1 plan](plan/plan-0.1.1.md), and requirement-to-evidence mapping by 14.
 
 The documentation checker validates structure and local links, not semantic correctness or implementation. Source research and unresolved feasibility gates are owned by 02; requirement-to-evidence mapping is owned by 14.
