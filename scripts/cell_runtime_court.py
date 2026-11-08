@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,9 +48,17 @@ def main() -> int:
         f"exit={version.returncode} out={version.stdout.strip()} err={version.stderr.strip()}",
     )
 
-    git = os.environ.get("GIT_FOR_COURT", "git")
+    # The product resolves the executable and refuses a bare name, so hand it an
+    # absolute path. `shutil.which` already returns a native Windows path, which
+    # avoids the Git Bash POSIX spelling that a native process cannot open.
+    requested = os.environ.get("GIT_FOR_COURT") or "git"
+    git = shutil.which(requested) or requested
     git_version = run([git, "--version"])
-    record("git_present", git_version.returncode == 0, git_version.stdout.strip() or git_version.stderr.strip())
+    record(
+        "git_present",
+        git_version.returncode == 0,
+        f"{git} :: {git_version.stdout.strip() or git_version.stderr.strip()}",
+    )
 
     with tempfile.TemporaryDirectory(prefix="srcmgr-court-") as scratch:
         root = Path(scratch)

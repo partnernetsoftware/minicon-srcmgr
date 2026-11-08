@@ -83,6 +83,16 @@ jobs:
           fi
           export SRCMGR_TEST_GIT="$resolved"
           echo "court git: $SRCMGR_TEST_GIT"
+
+          # The image ships a global configuration (core.autocrlf on Windows,
+          # init.defaultBranch elsewhere). The fixtures assert exact bytes, so
+          # they run under an empty global and system config; ambient settings a
+          # user may have are a separate, unqualified scenario.
+          empty_config="$(mktemp)"
+          export GIT_CONFIG_GLOBAL="$empty_config"
+          export GIT_CONFIG_SYSTEM="$empty_config"
+          export GIT_CONFIG_NOSYSTEM=1
+
           cargo build --locked --release -p srcmgr-cli
           cargo test --locked --workspace --no-fail-fast
       - name: Locate the executable
