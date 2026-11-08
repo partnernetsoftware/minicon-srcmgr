@@ -1,15 +1,19 @@
-name: Windows signed candidate
+name: Windows signing qualification and release
 
-# Qualification flow for the Azure Artifact Signing path. It runs only by hand,
-# only after the release-signing environment exists, and it always records
-# release_eligible=false while release-policy.json keeps signing.mode=off.
-# There is no unsigned fallback: a missing environment or a failed login stops
-# the job.
+# Manual candidate signer for the Azure Artifact Signing path. The default run is
+# a non-promotable qualification (release_eligible=false). A release-eligible
+# run requires checked-in signing.mode=required, an unpublished version, and
+# records release_eligible=true only after the canonical inspector reports Valid
+# with the company organization and a timestamp. There is no unsigned fallback.
 on:
   workflow_dispatch:
     inputs:
       confirm_provisioned:
         description: Azure Artifact Signing and the release-signing environment are configured for this repository
+        type: boolean
+        default: false
+      release_eligible:
+        description: Produce a release-eligible receipt (requires signing.mode=required)
         type: boolean
         default: false
 permissions:
@@ -27,8 +31,24 @@ jobs:
   build:
     needs: guard
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.preflight.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Release preflight
+        id: preflight
+        shell: pwsh
+        run: |
+          $version = (Get-Content Cargo.toml | Select-String '^version = "(.*)"$').Matches.Groups[1].Value
+          $policy = Get-Content release-policy.json | ConvertFrom-Json
+          if ($policy.version -ne $version) { throw "release policy version $($policy.version) does not match $version" }
+          if ('${{ inputs.release_eligible }}' -eq 'true') {
+            if ($policy.signing.mode -ne 'required') { throw 'a release-eligible run needs signing.mode=required' }
+            git ls-remote --exit-code --tags origin "refs/tags/v$version" 2>$null
+            if ($LASTEXITCODE -eq 0) { throw "v$version is already published" }
+            if ($LASTEXITCODE -ne 2) { throw 'the remote tag state is unavailable' }
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
       - uses: dtolnay/rust-toolchain@stable
       - name: Pinned toolchain cache
         run: cargo fetch --locked --target x86_64-pc-windows-msvc
@@ -60,8 +80,11 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      RELEASE_ELIGIBLE: ${{ inputs.release_eligible }}
+      PRODUCT_VERSION: ${{ needs.build.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - uses: actions/download-artifact@v4
         with:
           name: unsigned-candidate
@@ -108,26 +131,24 @@ jobs:
         shell: pwsh
         run: |
           $exe = 'signing-input/candidate/minicon-srcmgr.exe'
-          $version = (Get-Content Cargo.toml | Select-String '^version = "(.*)"$').Matches.Groups[1].Value
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/inspect-authenticode.ps1 `
             -Path $exe -ExpectedOrganization 'PARTNERNET SOFTWARE PTY LTD' `
-            -ExpectedProductName 'MiniCon SrcMgr' -ExpectedProductVersion $version `
+            -ExpectedProductName 'MiniCon SrcMgr' -ExpectedProductVersion $env:PRODUCT_VERSION `
             | Set-Content -LiteralPath inspection.json -Encoding utf8
           if ($LASTEXITCODE -ne 0) { throw "inspector exited $LASTEXITCODE" }
       - name: Write and audit the public receipt
         shell: pwsh
         run: |
-          $version = (Get-Content Cargo.toml | Select-String '^version = "(.*)"$').Matches.Groups[1].Value
           python scripts/signing_receipt.py --asset signing-input/candidate/minicon-srcmgr.exe `
             --name minicon-srcmgr.exe --relative-path candidate/minicon-srcmgr.exe `
             --before-sha256 $env:UNSIGNED_SHA256 --inspection inspection.json `
-            --source-sha $env:GITHUB_SHA --version $version `
+            --source-sha $env:GITHUB_SHA --version $env:PRODUCT_VERSION `
             --run-id $env:GITHUB_RUN_ID --run-attempt $env:GITHUB_RUN_ATTEMPT `
-            --release-eligible false --out signing-receipt.json
+            --release-eligible $env:RELEASE_ELIGIBLE --out signing-receipt.json
           if ($LASTEXITCODE -ne 0) { throw 'receipt composition failed' }
           python scripts/audit-public-signing-receipt.py signing-receipt.json `
             --expected-provider azure-artifact-signing --expected-publisher 'PARTNERNET SOFTWARE PTY LTD' `
-            --release-eligible false
+            --release-eligible $env:RELEASE_ELIGIBLE
           if ($LASTEXITCODE -ne 0) { throw 'receipt audit failed' }
       - name: Keep the signed bytes and their receipt
         uses: actions/upload-artifact@v4
@@ -138,4 +159,4 @@ jobs:
             signing-receipt.json
             inspection.json
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
