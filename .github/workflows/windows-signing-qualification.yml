@@ -39,14 +39,17 @@ jobs:
         id: preflight
         shell: pwsh
         run: |
+          # Native command failures are inspected explicitly, so a non-zero exit
+          # reports its own reason instead of aborting the step opaquely.
+          $ErrorActionPreference = 'Continue'
           $version = (Get-Content Cargo.toml | Select-String '^version = "(.*)"$').Matches.Groups[1].Value
           $policy = Get-Content release-policy.json | ConvertFrom-Json
-          if ($policy.version -ne $version) { throw "release policy version $($policy.version) does not match $version" }
+          if ($policy.version -ne $version) { Write-Error "release policy version $($policy.version) does not match $version"; exit 1 }
           if ('${{ inputs.release_eligible }}' -eq 'true') {
-            if ($policy.signing.mode -ne 'required') { throw 'a release-eligible run needs signing.mode=required' }
-            git ls-remote --exit-code --tags origin "refs/tags/v$version" 2>$null
-            if ($LASTEXITCODE -eq 0) { throw "v$version is already published" }
-            if ($LASTEXITCODE -ne 2) { throw 'the remote tag state is unavailable' }
+            if ($policy.signing.mode -ne 'required') { Write-Error 'a release-eligible run needs signing.mode=required'; exit 1 }
+            $tags = git ls-remote --tags origin
+            if ($LASTEXITCODE -ne 0) { Write-Error 'the remote tag state is unavailable'; exit 1 }
+            if ($tags -match "(?m)^\S+\s+refs/tags/v$([regex]::Escape($version))$") { Write-Error "v$version is already published"; exit 1 }
           }
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
       - uses: dtolnay/rust-toolchain@stable
