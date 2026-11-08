@@ -76,7 +76,7 @@ An unsigned build is never published. Development candidates are private: they c
 
 ## 0.1.0 first-user beta delivery target
 
-Status: planned, not built, signed, qualified or published. Product admission is owned by [01](PRD_01_product.md#010-first-user-feature-tree) and sequencing by [the roadmap](../plan/roadmap-0.1.0.md). Existing 0.0.x source releases retain their original scope; a source archive alone does not satisfy the new first-user runnable-client target.
+Status: the Windows x86_64 cell is **published** (v0.1.0, 2026-11-07) and the remaining cells are not. Product admission is owned by [01](PRD_01_product.md#first-user-admission-matrix) and sequencing by [the roadmap](../plan/roadmap-0.1.0.md). Existing 0.0.x source releases retain their original scope; a source archive alone does not satisfy the first-user runnable-client target. The published artifact meets the package, signature and first-run parts of this section, but **not** the accessibility, IME/DPI, clean-image and usability parts; [0.1.1](PRD_12_platform_delivery.md#011-delivery-target) carries those gates, and the 0.1.0 release notes name them as limits rather than passes.
 
 The first named beta cell is **Windows x86_64** at this document's supported OS floor. Supply the signed portable ZIP, directly runnable executable, notices, actual runtime/Git prerequisites, concise start/known-limits instructions, version/source/artifact identity and a feedback path. A clean user profile must launch without Rust, a developer SDK, a mandatory account or admin installation. Git remains separately installed; missing Git has actionable guidance. Returning users keep settings/drafts; archive extraction is not permission to overwrite repository data.
 
@@ -174,6 +174,12 @@ Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Rele
 - Key-to-redraw latency and resource use are not measured against the budgets in [14](PRD_14_verification_roadmap.md#performance-and-resource-budgets).
 - No IME composition beyond committed text, no screen-reader bridge, no checkout of a commit, no commit files, no search or filter, no discard, stash or rebase.
 - Linux and macOS cells are not run.
+
+## 0.1.1 delivery target
+
+Status: open. 0.1.1 closes the gaps the 0.1.0 release notes named, without widening reach: in-window Clone and Remotes surfaces bound to the existing preview/apply contracts, zh-CN primary strings with a persistent locale choice, reviewed divergence with conflict detection and terminal handoff, and the qualification courts that 0.1.0 could not run — clean-image launch, accessibility and CJK/clipboard checks, a long-session resource read and the five-participant study.
+
+The release gate is unchanged: `signing.mode=required`, an unpublished version, a release-eligible signature that the canonical inspector reports as `Valid` with the company organization and an RFC 3161 timestamp, and downloaded assets re-hashed and started before publication. Anything still unqualified is stated in the release notes. [The 0.1.1 plan](../plan/plan-0.1.1.md) owns the evidence.
 
 ## 0.1.0 signed beta status
 

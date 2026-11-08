@@ -413,7 +413,7 @@ The 0.0.5 scope, work sequence, package status and execution evidence live in [p
 
 ### 0.0.6 proposed next-version design
 
-The revised [0.0.6 plan](../plan/plan-0.0.6.md) combines repository entry/context, existing local Git actions and full-index commit review; quick filtering supports that user task. The [0.1.0 roadmap](../plan/roadmap-0.1.0.md) allocates standard remotes, integrations/conflicts and everyday history/ref work before first-user beta delivery. These are product plans, not implemented or qualified releases. Current execution/version state lives in the active 0.0.6 plan; existing budgets and missing qualification prerequisites are not waived.
+The revised [0.0.6 plan](../plan/plan-0.0.6.md) combines repository entry/context, existing local Git actions and full-index commit review; quick filtering supports that user task. The [0.1.0 roadmap](../plan/roadmap-0.1.0.md) allocates standard remotes, integrations/conflicts and everyday history/ref work before first-user beta delivery. These are product plans, not implemented or qualified releases. Current execution/version state lives in the active plan ([0.1.1](../plan/plan-0.1.1.md) after the published 0.1.0 beta); existing budgets and missing qualification prerequisites are not waived.
 
 ### 0.0.7 proposed plan
 
@@ -426,6 +426,8 @@ The [0.0.9 plan](../plan/plan-0.0.9.md) records the delivered upstream, fetch-th
 The [0.1.0 plan](../plan/plan-0.1.0.md) records the first-user beta target, the delivered 0.0.7–0.0.9 source checkpoints, a private unsigned Windows x64 candidate and the open work: window Clone/Remotes panels, zh-CN primary strings, signing, clean-image launch and the five-participant study. The candidate is not published; signing and the study are BLOCKED on missing authority and participants.
 
 The [0.1.0 plan](../plan/plan-0.1.0.md) records the first signed Windows beta: the provisioned signing identity, the release-eligible run 42453987936 with a Valid company signature and timestamp, the downloaded-and-started signed bytes and the Defender scan. Window Clone/Remotes panels, zh-CN primary strings, clean-image launch, accessibility and the five-participant study remain open and are named in the release notes rather than claimed.
+
+The [0.1.1 plan](../plan/plan-0.1.1.md) sequences the closure of the six gaps the 0.1.0 release notes named: the in-window Clone and Remotes surfaces, zh-CN primary strings with a locale choice, reviewed divergence with conflict detection and terminal handoff, and the clean-image, accessibility, CJK/clipboard and five-participant courts. It is a proposal with no 0.1.1 source, version or artifact; the signed 0.1.0 beta remains the latest public release. [01](PRD_01_product.md#first-user-admission-matrix) now records which admission rows 0.1.0 actually met instead of treating the matrix as satisfied.
 
 ### Requirements baseline 1.5 review disposition
 
