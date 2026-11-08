@@ -490,12 +490,29 @@ pub(crate) mod tests {
     use super::WindowBackend;
     use crate::{Options, trust};
 
+    /// The temp root with symlinks resolved where the platform needs it.
+    pub(crate) fn resolve_temp_root() -> PathBuf {
+        #[cfg(unix)]
+        {
+            fs::canonicalize(env::temp_dir()).expect("resolve temp root")
+        }
+        #[cfg(windows)]
+        {
+            env::temp_dir()
+        }
+    }
+
     /// A scratch root per test, removed when the test ends.
     pub(crate) struct Scratch(pub(crate) PathBuf);
 
     impl Scratch {
         pub(crate) fn new(name: &str) -> Self {
-            let root = env::temp_dir().join(format!("srcmgr-window-{}-{name}", std::process::id()));
+            // Resolve the temp root on unix, where macOS reaches it through the
+            // /var symlink and private recovery storage refuses a symlinked
+            // ancestry by design. Windows is left alone: its canonical form
+            // carries a verbatim prefix that Git rejects as a path.
+            let base = resolve_temp_root();
+            let root = base.join(format!("srcmgr-window-{}-{name}", std::process::id()));
             let _ = fs::remove_dir_all(&root);
             fs::create_dir_all(&root).expect("create scratch");
             Self(root)

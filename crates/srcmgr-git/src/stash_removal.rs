@@ -297,7 +297,22 @@ mod tests {
         let executable = std::env::var_os("SRCMGR_TEST_GIT")
             .map(PathBuf::from)
             .unwrap_or_else(|| "git".into());
-        let root = std::env::temp_dir().join(format!("srcmgr-stash-lock-{}", std::process::id()));
+        // Resolve the temp root on unix: macOS reaches it through the /var
+        // symlink, and private recovery storage refuses a symlinked ancestry by
+        // design, so an unresolved root fails before the code under test runs.
+        // Windows keeps the plain path; its canonical form is verbatim, which
+        // Git rejects.
+        let base = {
+            #[cfg(unix)]
+            {
+                fs::canonicalize(std::env::temp_dir()).unwrap()
+            }
+            #[cfg(windows)]
+            {
+                std::env::temp_dir()
+            }
+        };
+        let root = base.join(format!("srcmgr-stash-lock-{}", std::process::id()));
         // Exclusive creation prevents cleanup of an unrelated existing path.
         fs::create_dir(&root).unwrap();
         let repo_path = root.join("repo");
