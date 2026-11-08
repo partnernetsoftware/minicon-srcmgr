@@ -35,12 +35,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {cell: lnx-x86_64, runner: ubuntu-24.04, goos: linux, goarch: amd64}
-          - {cell: lnx-aarch64, runner: ubuntu-24.04-arm, goos: linux, goarch: arm64}
-          - {cell: win-x86_64, runner: windows-2025, goos: windows, goarch: amd64}
-          - {cell: win-aarch64, runner: windows-11-arm, goos: windows, goarch: arm64}
-          - {cell: osx-x86_64, runner: macos-15-intel, goos: darwin, goarch: amd64}
-          - {cell: osx-aarch64, runner: macos-15, goos: darwin, goarch: arm64}
+          - {cell: lnx-x86_64, runner: ubuntu-24.04, family: linux, expect_os: Linux, expect_arch: X64}
+          - {cell: lnx-aarch64, runner: ubuntu-24.04-arm, family: linux, expect_os: Linux, expect_arch: ARM64}
+          - {cell: win-x86_64, runner: windows-2025, family: windows, expect_os: Windows, expect_arch: X64}
+          - {cell: win-aarch64, runner: windows-11-arm, family: windows, expect_os: Windows, expect_arch: ARM64}
+          - {cell: osx-x86_64, runner: macos-15-intel, family: macos, expect_os: macOS, expect_arch: X64}
+          - {cell: osx-aarch64, runner: macos-15, family: macos, expect_os: macOS, expect_arch: ARM64}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
@@ -50,12 +50,11 @@ jobs:
       - name: Refuse an unexpected machine
         shell: bash
         run: |
+          # Compare the runner's own identity with the cell it is meant to be.
+          # The macOS runner ships bash 3.2, so no lowercase expansion here.
           set -euo pipefail
-          test "${RUNNER_OS,,}" = "${{ matrix.goos }}"
-          case "${{ matrix.goarch }}" in
-            amd64) test "$RUNNER_ARCH" = X64 ;;
-            arm64) test "$RUNNER_ARCH" = ARM64 ;;
-          esac
+          test "${RUNNER_OS}" = "${{ matrix.expect_os }}"
+          test "${RUNNER_ARCH}" = "${{ matrix.expect_arch }}"
       - name: Report the cell's Git
         shell: bash
         run: |
@@ -65,12 +64,19 @@ jobs:
       - name: Build the cell
         shell: bash
         env:
-          # The fixtures run against the cell's own Git and must not inherit
-          # ambient configuration from the image.
-          SRCMGR_TEST_GIT: git
           GIT_CONFIG_COUNT: "0"
         run: |
+          # The fixtures run against the cell's own Git, by absolute path: the
+          # product resolves the executable and rejects a bare name. Git Bash
+          # hands back a POSIX path that a native Windows process cannot open,
+          # so translate it there.
           set -euo pipefail
+          resolved="$(command -v git)"
+          if command -v cygpath >/dev/null 2>&1; then
+            resolved="$(cygpath -w "$resolved")"
+          fi
+          export SRCMGR_TEST_GIT="$resolved"
+          echo "court git: $SRCMGR_TEST_GIT"
           cargo build --locked --release -p srcmgr-cli
           cargo test --locked --workspace --no-fail-fast
       - name: Locate the executable
@@ -78,7 +84,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ matrix.goos }}" = windows ]; then
+          if [ "${{ matrix.family }}" = windows ]; then
             name=minicon-srcmgr.exe
           else
             name=minicon-srcmgr
@@ -109,7 +115,7 @@ jobs:
             --version "$version" \
             --source-sha "$GITHUB_SHA" \
             --runtime-status "$(python -c "import json;print(json.load(open('runtime-receipt.json'))['status'])")" \
-            --signing "$( [ '${{ matrix.goos }}' = windows ] && echo blocked || echo unsigned )" \
+            --signing "$( [ '${{ matrix.family }}' = windows ] && echo blocked || echo unsigned )" \
             --out "package/${{ matrix.cell }}"
       - name: Upload the cell
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
