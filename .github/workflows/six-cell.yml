@@ -115,10 +115,13 @@ jobs:
         run: |
           set -euo pipefail
           version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          # The receipt lives in the cell's package directory so the artifact
+          # is one directory whose layout cannot differ by runner platform.
+          mkdir -p "package/${{ matrix.cell }}"
           python scripts/cell_runtime_court.py \
             --binary '${{ steps.binary.outputs.path }}' \
             --expected-version "$version" \
-            --out runtime-receipt.json
+            --out "package/${{ matrix.cell }}/runtime-receipt.json"
       - name: Package the cell
         shell: bash
         run: |
@@ -130,16 +133,14 @@ jobs:
             --readme docs/first-run.txt \
             --version "$version" \
             --source-sha "$GITHUB_SHA" \
-            --runtime-status "$(python -c "import json;print(json.load(open('runtime-receipt.json'))['status'])")" \
+            --runtime-status "$(python -c "import json;print(json.load(open('package/${{ matrix.cell }}/runtime-receipt.json'))['status'])")" \
             --signing "$( [ '${{ matrix.family }}' = windows ] && echo blocked || echo unsigned )" \
             --out "package/${{ matrix.cell }}"
       - name: Upload the cell
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cell-${{ matrix.cell }}
-          path: |
-            package/${{ matrix.cell }}/*
-            runtime-receipt.json
+          path: package/${{ matrix.cell }}
           if-no-files-found: error
           retention-days: 7
   aggregate:

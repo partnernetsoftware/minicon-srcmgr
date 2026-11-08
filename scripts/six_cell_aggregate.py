@@ -31,16 +31,20 @@ def main() -> int:
     problems: list[str] = []
     receipts: dict[str, dict] = {}
     for cell in sorted(EXPECTED):
-        # Each artifact downloads into a directory named after itself.
+        # Each artifact downloads into a directory named after itself. The
+        # archiver decides how deep the files sit inside it, so look them up
+        # rather than assuming a depth: a layout change must not turn a
+        # passing set into a silent refusal, or the reverse.
         root = args.cells / f"cell-{cell}"
-        archive = root / "cell-receipt.json"
-        runtime = root / "runtime-receipt.json"
-        if not archive.is_file():
-            problems.append(f"{cell}: no cell receipt")
+        found_archive = sorted(root.rglob("cell-receipt.json")) if root.is_dir() else []
+        found_runtime = sorted(root.rglob("runtime-receipt.json")) if root.is_dir() else []
+        if len(found_archive) != 1:
+            problems.append(f"{cell}: expected one cell receipt, found {len(found_archive)}")
             continue
-        if not runtime.is_file():
-            problems.append(f"{cell}: no runtime receipt")
+        if len(found_runtime) != 1:
+            problems.append(f"{cell}: expected one runtime receipt, found {len(found_runtime)}")
             continue
+        archive, runtime = found_archive[0], found_runtime[0]
         cell_receipt = json.loads(archive.read_text(encoding="utf-8"))
         ran = json.loads(runtime.read_text(encoding="utf-8"))
         if ran.get("status") != "passed":
