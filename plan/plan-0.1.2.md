@@ -1,6 +1,6 @@
 # 0.1.2 six native cells plan
 
-Status: `[-]` implementation landed, qualification pending. Workspace version is **0.1.0**; no 0.1.2 source, version or artifact exists. Delivery is owned by [12](../prd/PRD_12_platform_delivery.md#support-matrix), reuse by [02](../prd/PRD_02_architecture_reuse.md), verification by [14](../prd/PRD_14_verification_roadmap.md), and sequencing by [the roadmap](roadmap-0.1.0.md).
+Status: `[-]` six cells build, run and package green on their own runners (run 42476631093 at source `687f93b`); Windows signing is `BLOCKED` and no cell is qualified beyond start and Git reads. Workspace version is **0.1.0**; no 0.1.2 source, version or artifact exists. Delivery is owned by [12](../prd/PRD_12_platform_delivery.md#support-matrix), reuse by [02](../prd/PRD_02_architecture_reuse.md), verification by [14](../prd/PRD_14_verification_roadmap.md), and sequencing by [the roadmap](roadmap-0.1.0.md).
 
 0.1.0 published one cell. [PRD 12](../prd/PRD_12_platform_delivery.md#support-matrix) declares six. This version closes the gap between what the product claims to support and what it actually builds, runs and packages.
 
@@ -90,12 +90,12 @@ Excluded: cross-compiling a cell from another cell and calling it qualified; pub
 
 | Case | Required outcome | State |
 |---|---|---|
-| C1 · six builds | Every cell compiles on its own runner from the same commit | `[_]` |
-| C2 · six runtime courts | Every executable starts and reads Git on its own cell | `[_]` |
-| C3 · six archives | Each archive contains the binary, README, checksums and a receipt matching its digest | `[-]` · recipe proven locally, six-cell run pending |
-| C4 · aggregate | A partial or failed set is refused | `[-]` · local six-of-six and missing-cell behaviour to be exercised in CI |
-| C5 · Windows signature | Both Windows PEs are `Valid` with the company publisher | `[_]` |
-| C6 · honesty | Anything not run is named in the release notes; no cell is implied qualified by compilation alone | `[_]` |
+| C1 · six builds | Every cell compiles on its own runner from the same commit | `[v]` run 42476631093: six `success` at source `687f93b` |
+| C2 · six runtime courts | Every executable starts and reads Git on its own cell | `[v]` same run: six `runtime-receipt.json` status `passed` |
+| C3 · six archives | Each archive contains the binary, README, checksums and a receipt matching its digest | `[v]` same run: six archives with 64-hex digests, table below |
+| C4 · aggregate | A partial or failed set is refused | `[v]` same run: aggregate `success` with `cell_count: 6`; a locally removed cell is refused with `expected one cell receipt, found 0` |
+| C5 · Windows signature | Both Windows PEs are `Valid` with the company publisher | `BLOCKED` no signing run exists; both Windows receipts say `signing: blocked` |
+| C6 · honesty | Anything not run is named in the release notes; no cell is implied qualified by compilation alone | `[_]` owed by the release notes of whichever version ships these cells |
 
 ## Selected verification and stopping
 
@@ -109,4 +109,29 @@ Release gate: the six-cell receipt exists for the signing source SHA, the Window
 
 Landed: per-family window host, `--target` build selection, `--version`, `cell_runtime_court.py`, `package_cell.py`, `six_cell_aggregate.py`, `six-cell.yml`, and multi-asset signing. Local evidence is the compile matrix, the six packaging shapes, the aggregate, and a two-asset receipt that composed and audited clean.
 
-Not yet run: the six-cell workflow itself, and the two-cell signing run. Until those exist this slice is implementation, not delivery, and no cell beyond Windows x86_64 is claimed.
+Not yet run: the two-cell signing run. It needs Azure Artifact Signing provisioned for this repository; the workflow refuses to start without that confirmation, so no signature exists for either Windows cell and neither archive is release-eligible.
+
+### First real six-cell run (2026-11-08)
+
+Run [42476631093](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42476631093) at source `687f93bf8fd1`. All six cells built, passed their runtime court and packaged; the aggregate wrote `six-cell-receipt.json` with `cell_count: 6` and `windows_signing: blocked`.
+
+| Cell | Archive bytes | Archive sha256 (first 16) | Signing |
+|---|---|---|---|
+| lnx-x86_64 | 3 498 392 | `66cf4505e1263b01` | unsigned |
+| lnx-aarch64 | 3 470 274 | `97f66f701c0d599f` | unsigned |
+| osx-x86_64 | 2 241 794 | `88e703dac1fed32b` | unsigned |
+| osx-aarch64 | 2 116 024 | `ec74a47b6a3b1346` | unsigned |
+| win-x86_64 | 1 831 945 | `ef88ae6dd4cb6e62` | blocked |
+| win-aarch64 | 1 651 774 | `8c80d8c314b4d234` | blocked |
+
+The first four runs failed, and every failure was a real platform defect rather than a flaky runner. Each is fixed and re-verified by the green run above:
+
+1. **The runtime court handed the product a bare `git`.** The product resolves the executable and refuses a name it cannot find, so every read on a cell that ran fine reported failure. The court now resolves the path itself.
+2. **An unexecutable hook fixture.** The positive control wrote `pre-commit` without the mode bit; Git skips such a hook silently on unix, so the test asserted against a hook that never ran. The fixture now sets `0o755` where the mode exists.
+3. **`fsync` on a directory is EINVAL on macOS.** Every stash removal failed there with a supervision error although the rename had already published the entry. One helper now keeps the flush binding on Linux and Windows and advisory on macOS.
+4. **macOS reaches its temp directory through the `/var` symlink**, and private recovery storage refuses a symlinked ancestry by design. Two fixture roots now resolve the temp root on unix only; Windows keeps the plain path because its canonical form is verbatim and Git rejects it.
+5. **The artifact layout differed by runner platform.** The same upload paths kept a `package/<cell>/` prefix on Windows and flattened on unix, so the aggregate saw five receipts and refused a set that had passed. Each cell now uploads one directory with its runtime receipt inside, and the court finds the receipts inside that directory rather than assuming a depth.
+
+A sixth defect was a real product bug found earlier by the same matrix: `srcmgr-ui` depended on the Win32 window host unconditionally, so the five non-Windows cells could not compile at all. It is recorded under "What changed" above.
+
+What this run still does not prove: a GUI journey on any cell, macOS Developer ID signing and notarization, a non-24H2 Windows image, or upstream `glibc` older than the runner. No cell is claimed beyond "builds, starts and reads Git".
