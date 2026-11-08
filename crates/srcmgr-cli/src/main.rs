@@ -29,6 +29,7 @@ mod entry;
 mod tools;
 
 const USAGE: &str = "usage:
+  minicon-srcmgr --version
   minicon-srcmgr [--profile DIR] [--git EXE] status <worktree> [--json]
   minicon-srcmgr [--profile DIR] trust grant|revoke <worktree>
   minicon-srcmgr [--profile DIR] [--git EXE] stage <worktree> <path>...
@@ -75,6 +76,10 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
     if options.positional.is_empty() { return gui(&options); }
     let command = options.positional.first().and_then(|word| word.to_str()).ok_or(USAGE)?;
     match command {
+        "--version" | "-V" | "version" => {
+            println!("minicon-srcmgr {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         "status" => status(&options),
         "trust" => trust(&options),
         "stage" => change_paths(&options, Change::Stage),

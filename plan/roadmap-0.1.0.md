@@ -13,7 +13,8 @@ Reach a downloadable client that a developer can use for ordinary local and team
         └── 0.0.8 · finish integrations, conflicts and parked work
             └── 0.0.9 · review history and manage everyday corrections
                 └── 0.1.0 · first-user beta and signed runnable delivery (published)
-                    └── 0.1.1 · in-window surfaces, zh-CN and qualification closure
+                    ├── 0.1.1 · in-window surfaces, zh-CN and qualification closure
+                    └── 0.1.2 · six native cells
 ```
 
 ```mermaid
@@ -21,7 +22,8 @@ flowchart LR
     B["0.0.5 source + integrity baseline"] --> L["0.0.6 local client"]
     L --> N["0.0.7 collaboration"] --> C["0.0.8 integrate / recover"]
     C --> H["0.0.9 history / corrections"] --> U["0.1.0 first-user beta"] --> V["0.1.1 window surfaces + zh-CN + qualification"]
-    Q["Bounded state + shared trust / jobs + quality evidence"] --> L & N & C & H & U & V
+    U --> X["0.1.2 six native cells"]
+    Q["Bounded state + shared trust / jobs + quality evidence"] --> L & N & C & H & U & V & X
 ```
 
 Versions are delivery checkpoints, not an obligation to publish every intermediate number or finish every feature before anyone can try it. Make local preview packages available as they qualify; begin real task feedback before the final beta. If a package is too large, split implementation into dependent vertical slices and, where needed, use additional 0.0.x versions. Do not jump to 0.1.0 with an unimplemented Must task. No calendar commitment is inferred.
@@ -35,6 +37,7 @@ Versions are delivery checkpoints, not an obligation to publish every intermedia
 | 0.0.7 | Remote observation and explicit fetch only: remote list with redacted URLs and refspec, remote-tracking ahead/behind, per-ref fetch results with progress and cancel, window status line and `f` key entry; no clone, pull or push | A local bare remote gains commits; `f` reports each ref separately, and a failed or cancelled fetch stays visibly stale | [Plan](plan-0.0.7.md); implemented observation/fetch slice with named evidence in its plan; authenticated paths remain unqualified |
 | 0.0.8 | Clone with checkout deferred until filter approval, plus remote add/set-url/rename/remove with local preview of the resulting URL and refspec; no pull or push | Two clones point at a local bare remote and see the remote before any checkout; a rejected filter leaves no working tree, and each remote edit previews its change before write | 07/11; extends the 0.0.7 observation/fetch flow; no pull, push or auth qualification |
 | 0.0.9 | Explicit upstream, fetch-then-fast-forward pull that stops on divergence, current-branch push with an explicit single-ref refspec and per-ref results, unknown reconciliation, and window `p`/`P` result lines | Two working copies exchange a commit through a test remote; a diverged pull stops without force, and an auth failure explains the next step without a lost draft | 06/07/11/13; extends the 0.0.8 clone/remote management; no merge, rebase or conflict center |
+| 0.1.2 | Build, execute and package on all six declared cells with one native runner each; aggregate refuses a partial set; both Windows cells signed in one provider call | Six `runtime-receipt.json` with status `passed` for the same source SHA, six archives with per-cell receipts, and a two-asset Windows signing receipt that the auditor accepts | [Plan](plan-0.1.2.md); delivered behind the published 0.1.0 contracts; GUI journeys on non-Windows cells and macOS signing stay unallocated |
 | 0.1.1 | Close the gaps 0.1.0 named: in-window Clone and Remotes panels bound to the existing preview/apply contracts, zh-CN primary strings with a persistent locale choice, reviewed divergence with conflict detection and terminal handoff; no merge, rebase or conflict center | A Chinese-speaking user clones, commits, pulls and pushes entirely inside the window; a diverged or conflicted repository is explained and handed off without hidden integration; 4 of 5 study participants finish unaided on a clean image | [Plan](plan-0.1.1.md); depends on the published 0.1.0 contracts; merge/rebase and the conflict center stay unallocated |
 | 0.1.0 | **Published**: signed Windows x86_64 package with a runnable executable, first-run instructions, checksum list and public signing receipt. zh-CN primary flows, native text/accessibility/DPI, actionable diagnostics, window Clone/Remotes panels and the five-participant study remain open and are named in the release notes; no merge, rebase or conflict center | A new user obtains the signed package and completes clone/open → branch → stage/commit → pull (fast-forward) → push on a test remote within ten minutes after a one-minute introduction, without the Rust toolchain or routine Git CLI fallback | 10/12/14; must satisfy 01's admission matrix on the declared cell, including the five-participant study |
 
@@ -59,7 +62,7 @@ Basic history is visible from the start, clone belongs in 0.0.8, and available n
 | Branch rename/tags; pick/revert/reset; amend/sign-off | after 0.1.1 | 04/06/08 | `[_]` |
 | LFS/submodule/worktree compatibility floor | As each relevant entry/action lands; review by 0.0.9 | 03/09/11 | `[_]` |
 | Semantic controls, IME, localization keys and compact layouts | Primary-flow closure in 0.1.1 | 02/10 | `[-]` · typed catalogue and selected Windows semantics have scoped evidence; zh-CN coverage, locale selection and native accessibility remain 0.1.1 work |
-| Packaging and representative environment | Signed package published in 0.1.0; clean-image and user qualification in 0.1.1 | 12/14 | `[-]` · 0.1.0 shipped a signed, runnable Windows package with a receipt and a Defender scan; clean-image launch, accessibility and the five-participant study remain open |
+| Packaging and representative environment | Six cells in 0.1.2; clean-image and user qualification in 0.1.1 | 12/14 | `[-]` · 0.1.0 shipped a signed, runnable Windows package with a receipt and a Defender scan; clean-image launch, accessibility and the five-participant study remain open |
 
 Unscheduled beyond this first usable target: interactive rebase editor, advanced multi-commit editing, full LFS administration, submodule create/update management, worktree create/remove, advanced author/date/ref/path query language, patch exchange, S3 and real non-Git adapters. Their existing cumulative PRD requirements are retained; this roadmap does not erase them or invent parity.
 

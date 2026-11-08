@@ -1,10 +1,14 @@
 name: Windows signing qualification and release
 
-# Manual candidate signer for the Azure Artifact Signing path. The default run is
-# a non-promotable qualification (release_eligible=false). A release-eligible
-# run requires checked-in signing.mode=required, an unpublished version, and
-# records release_eligible=true only after the canonical inspector reports Valid
-# with the company organization and a timestamp. There is no unsigned fallback.
+# Manual candidate signer for the Azure Artifact Signing path. It builds both
+# Windows cells on their own native runners, signs the exact uploaded bytes in
+# one provider call, and inspects each file with the canonical inspector.
+#
+# The default run is a non-promotable qualification (release_eligible=false).
+# A release-eligible run requires checked-in signing.mode=required, an
+# unpublished version, and records release_eligible=true only after every file
+# is Valid with the company organization and a timestamp. There is no unsigned
+# fallback.
 on:
   workflow_dispatch:
     inputs:
@@ -30,7 +34,13 @@ jobs:
         shell: pwsh
   build:
     needs: guard
-    runs-on: windows-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {cell: win-x86_64, runner: windows-2025, target: x86_64-pc-windows-msvc}
+          - {cell: win-aarch64, runner: windows-11-arm, target: aarch64-pc-windows-msvc}
     outputs:
       version: ${{ steps.preflight.outputs.version }}
     steps:
@@ -54,9 +64,11 @@ jobs:
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
       - uses: dtolnay/rust-toolchain@stable
       - name: Pinned toolchain cache
-        run: cargo fetch --locked --target x86_64-pc-windows-msvc
-      - name: Build the bound unsigned candidate
-        run: python scripts/build_windows_candidate.py --out target/qualification/ci-signed-input
+        run: cargo fetch --locked --target ${{ matrix.target }}
+      - name: Build the bound unsigned candidate for this cell
+        run: |
+          python scripts/build_windows_candidate.py --out target/qualification/ci-signed-input --target ${{ matrix.target }}
+        shell: pwsh
       - name: Require product identity and an unsigned input
         shell: pwsh
         run: |
@@ -70,9 +82,10 @@ jobs:
           }
           $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -LiteralPath target/qualification/ci-signed-input/unsigned-sha256.txt -Value $hash -Encoding utf8
+          Set-Content -LiteralPath target/qualification/ci-signed-input/cell.txt -Value '${{ matrix.cell }}' -Encoding utf8
       - uses: actions/upload-artifact@v4
         with:
-          name: unsigned-candidate
+          name: unsigned-${{ matrix.cell }}
           path: target/qualification/ci-signed-input
           if-no-files-found: error
           retention-days: 3
@@ -90,26 +103,41 @@ jobs:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - uses: actions/download-artifact@v4
         with:
-          name: unsigned-candidate
-          path: signing-input
-      - name: Freeze the unsigned signing input
+          pattern: unsigned-*
+          path: unsigned
+      - name: Freeze the signing input and build its manifest
         shell: pwsh
         run: |
-          $exe = 'signing-input/candidate/minicon-srcmgr.exe'
-          $expected = (Get-Content signing-input/unsigned-sha256.txt -Raw).Trim()
-          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($hash -ne $expected) { throw 'unsigned bytes differ from the build receipt' }
-          # The catalog holds paths relative to its own directory, one per line.
-          @('candidate\minicon-srcmgr.exe') |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force signing-input/cells | Out-Null
+          $entries = @()
+          foreach ($cell in @('win-x86_64','win-aarch64')) {
+            $source = "unsigned/unsigned-$cell/candidate/minicon-srcmgr.exe"
+            if (-not (Test-Path $source)) { throw "missing unsigned input for $cell" }
+            $expected = (Get-Content "unsigned/unsigned-$cell/unsigned-sha256.txt" -Raw).Trim()
+            $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($hash -ne $expected) { throw "$cell unsigned bytes differ from the build receipt" }
+            New-Item -ItemType Directory -Force "signing-input/cells/$cell" | Out-Null
+            Copy-Item $source "signing-input/cells/$cell/minicon-srcmgr.exe"
+            $entries += [ordered]@{
+              cell = $cell
+              path = "signing-input/cells/$cell/minicon-srcmgr.exe"
+              relative_path = "cells/$cell/minicon-srcmgr.exe"
+              inspection = "inspection-$cell.json"
+              before_sha256 = $hash
+            }
+          }
+          @('cells\win-x86_64\minicon-srcmgr.exe', 'cells\win-aarch64\minicon-srcmgr.exe') |
             Set-Content -LiteralPath signing-input/signing-catalog.txt -Encoding ascii
-          "UNSIGNED_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $manifest = [ordered]@{ version = $env:PRODUCT_VERSION; run_id = [int]$env:GITHUB_RUN_ID; run_attempt = [int]$env:GITHUB_RUN_ATTEMPT; assets = $entries }
+          $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath signing-manifest.json -Encoding utf8
       - name: Azure login (GitHub OIDC federated identity, signer role only)
         uses: azure/login@0949e32778441b2c442592b7a0e6313466dc8f29 # v3.0.2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Sign the candidate executable
+      - name: Sign both Windows cells
         uses: Azure/artifact-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
         with:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
@@ -130,24 +158,24 @@ jobs:
           # azure/login created the CLI session this action consumes.
           exclude-azure-cli-credential: false
           exclude-azure-powershell-credential: true
-      - name: Inspect the signed executable
+      - name: Inspect every signed file
         shell: pwsh
         run: |
-          $exe = 'signing-input/candidate/minicon-srcmgr.exe'
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/inspect-authenticode.ps1 `
-            -Path $exe -ExpectedOrganization 'PARTNERNET SOFTWARE PTY LTD' `
-            -ExpectedProductName 'MiniCon SrcMgr' -ExpectedProductVersion $env:PRODUCT_VERSION `
-            | Set-Content -LiteralPath inspection.json -Encoding utf8
-          if ($LASTEXITCODE -ne 0) { throw "inspector exited $LASTEXITCODE" }
+          $ErrorActionPreference = 'Stop'
+          foreach ($cell in @('win-x86_64','win-aarch64')) {
+            $exe = "signing-input/cells/$cell/minicon-srcmgr.exe"
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts/inspect-authenticode.ps1 `
+              -Path $exe -ExpectedOrganization 'PARTNERNET SOFTWARE PTY LTD' `
+              -ExpectedProductName 'MiniCon SrcMgr' -ExpectedProductVersion $env:PRODUCT_VERSION `
+              | Set-Content -LiteralPath "inspection-$cell.json" -Encoding utf8
+            if ($LASTEXITCODE -ne 0) { throw "$cell inspector exited $LASTEXITCODE" }
+          }
       - name: Write and audit the public receipt
         shell: pwsh
         run: |
-          python scripts/signing_receipt.py --asset signing-input/candidate/minicon-srcmgr.exe `
-            --name minicon-srcmgr.exe --relative-path candidate/minicon-srcmgr.exe `
-            --before-sha256 $env:UNSIGNED_SHA256 --inspection inspection.json `
-            --source-sha $env:GITHUB_SHA --version $env:PRODUCT_VERSION `
-            --run-id $env:GITHUB_RUN_ID --run-attempt $env:GITHUB_RUN_ATTEMPT `
-            --release-eligible $env:RELEASE_ELIGIBLE --out signing-receipt.json
+          $ErrorActionPreference = 'Stop'
+          python scripts/signing_receipt.py --manifest signing-manifest.json `
+            --source-sha $env:GITHUB_SHA --release-eligible $env:RELEASE_ELIGIBLE --out signing-receipt.json
           if ($LASTEXITCODE -ne 0) { throw 'receipt composition failed' }
           python scripts/audit-public-signing-receipt.py signing-receipt.json `
             --expected-provider azure-artifact-signing --expected-publisher 'PARTNERNET SOFTWARE PTY LTD' `
@@ -156,10 +184,12 @@ jobs:
       - name: Keep the signed bytes and their receipt
         uses: actions/upload-artifact@v4
         with:
-          name: signed-candidate
+          name: signed-candidates
           path: |
-            signing-input/candidate/minicon-srcmgr.exe
+            signing-input/cells/win-x86_64/minicon-srcmgr.exe
+            signing-input/cells/win-aarch64/minicon-srcmgr.exe
             signing-receipt.json
-            inspection.json
+            inspection-win-x86_64.json
+            inspection-win-aarch64.json
           if-no-files-found: error
           retention-days: 7

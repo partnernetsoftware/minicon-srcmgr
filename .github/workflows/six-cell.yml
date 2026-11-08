@@ -1,0 +1,137 @@
+name: Six native cells
+
+# Build, execute and package MiniCon SrcMgr on each of the six supported
+# OS/ISA cells, using one native runner per cell so nothing is cross-built.
+# This is the same shape as MiniCon's six-grid build: a matrix of native
+# runners, a runtime court on each cell's own executable, and an aggregate
+# court that refuses a partial set.
+#
+# What this proves: each cell compiles from the same locked source, its
+# executable starts, and it performs real Git reads on a fixture.
+# What it does not prove: a GUI journey (needs a display and, on Linux, a
+# compositor), Authenticode for the two Windows cells, or macOS Developer ID
+# signing. Those are separate courts.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/six-cell.yml'
+      - 'scripts/cell_runtime_court.py'
+      - 'scripts/package_cell.py'
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+jobs:
+  cell:
+    name: cell ${{ matrix.cell }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {cell: lnx-x86_64, runner: ubuntu-24.04, goos: linux, goarch: amd64}
+          - {cell: lnx-aarch64, runner: ubuntu-24.04-arm, goos: linux, goarch: arm64}
+          - {cell: win-x86_64, runner: windows-2025, goos: windows, goarch: amd64}
+          - {cell: win-aarch64, runner: windows-11-arm, goos: windows, goarch: arm64}
+          - {cell: osx-x86_64, runner: macos-15-intel, goos: darwin, goarch: amd64}
+          - {cell: osx-aarch64, runner: macos-15, goos: darwin, goarch: arm64}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Refuse an unexpected machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${RUNNER_OS,,}" = "${{ matrix.goos }}"
+          case "${{ matrix.goarch }}" in
+            amd64) test "$RUNNER_ARCH" = X64 ;;
+            arm64) test "$RUNNER_ARCH" = ARM64 ;;
+          esac
+      - name: Build the cell
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p srcmgr-cli
+          cargo test --locked --workspace --no-fail-fast
+      - name: Locate the executable
+        id: binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.goos }}" = windows ]; then
+            name=minicon-srcmgr.exe
+          else
+            name=minicon-srcmgr
+          fi
+          path="target/release/$name"
+          test -f "$path"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+      - name: Runtime court on this cell
+        shell: bash
+        env:
+          GIT_FOR_COURT: git
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          python scripts/cell_runtime_court.py \
+            --binary '${{ steps.binary.outputs.path }}' \
+            --expected-version "$version" \
+            --out runtime-receipt.json
+      - name: Package the cell
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          python scripts/package_cell.py \
+            --cell '${{ matrix.cell }}' \
+            --binary '${{ steps.binary.outputs.path }}' \
+            --readme README.txt \
+            --version "$version" \
+            --source-sha "$GITHUB_SHA" \
+            --runtime-status "$(python -c "import json;print(json.load(open('runtime-receipt.json'))['status'])")" \
+            --signing "$( [ '${{ matrix.goos }}' = windows ] && echo blocked || echo unsigned )" \
+            --out "package/${{ matrix.cell }}"
+      - name: Upload the cell
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cell-${{ matrix.cell }}
+          path: |
+            package/${{ matrix.cell }}/*
+            runtime-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+  aggregate:
+    name: require six native cells
+    needs: cell
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: cell-*
+          merge-multiple: true
+          path: cells
+      - name: Refuse a partial or failed set
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/six_cell_aggregate.py --cells cells --source-sha "$GITHUB_SHA" --out six-cell-receipt.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: six-cell-receipt
+          path: six-cell-receipt.json
+          if-no-files-found: error
+          retention-days: 14

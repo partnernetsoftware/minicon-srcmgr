@@ -1,4 +1,4 @@
-"""Build and freeze a private Windows x64 candidate with source-path remapping.
+"""Build and freeze a private Windows candidate with source-path remapping.
 
 Requires committed product inputs and this recipe. Does not sign or publish.
 The private receipt retains exact flags; normal output contains no local paths.
@@ -16,7 +16,7 @@ import tomllib
 import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = "x86_64-pc-windows-msvc"
+TARGET = "x86_64-pc-windows-msvc"  # default; --target selects the other ISA
 
 
 def sha(data):
@@ -35,14 +35,17 @@ def require(condition, message):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--target", default=TARGET, choices=("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"),
+                        help="MSVC target to build; the host must be the same ISA")
     args = parser.parse_args()
+    target = args.target
     out = args.out.resolve()
     require(os.name == "nt", "this recipe requires a native Windows host")
     require(out.is_relative_to(ROOT / "target/qualification") and not out.exists(),
             "output must be a new private qualification directory")
     out.mkdir(parents=True)
     receipt = {"verdict": "RUNNING", "started_utc": datetime.now(timezone.utc).isoformat(),
-               "target": TARGET, "build_profile": "release", "release_qualification": "UNQUALIFIED"}
+               "target": target, "build_profile": "release", "release_qualification": "UNQUALIFIED"}
     try:
         require(not os.environ.get("RUSTFLAGS") and not os.environ.get("CARGO_ENCODED_RUSTFLAGS"),
                 "inherited Rust flags need an explicit recipe before candidate building")
@@ -63,7 +66,7 @@ def main():
         compiler = run("rustc", "--version", "--verbose").decode()
         pinned = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
         require(compiler.startswith("rustc " + pinned + " "), "compiler does not match the pinned toolchain")
-        require("host: " + TARGET in compiler, "this recipe requires the native x64 MSVC compiler host")
+        require("host: " + target in compiler, f"this recipe requires the native {target} MSVC host")
         user = Path(os.environ["USERPROFILE"]).resolve()
         cargo = Path(os.environ.get("CARGO_HOME", user / ".cargo")).resolve()
         sysroot = Path(run("rustc", "--print", "sysroot").decode().strip()).resolve()
@@ -74,7 +77,7 @@ def main():
             for spelling in dict.fromkeys((source, source.replace("\\", "/"))):
                 flags.append("--remap-path-prefix=" + spelling + "=" + destination)
         env = dict(os.environ, CARGO_ENCODED_RUSTFLAGS="\x1f".join(flags))
-        argv = ["cargo", "build", "--locked", "--offline", "--release", "--target", TARGET,
+        argv = ["cargo", "build", "--locked", "--offline", "--release", "--target", target,
                 "--target-dir", str(ROOT / "target"), "-p", "srcmgr-cli"]
         receipt.update(source_sha=commit, compiler=compiler, rustflags=flags, argv=argv,
                        build_recipe=recipe, remap_targets=[destination for _, destination in mappings])
@@ -83,7 +86,7 @@ def main():
         require(result.returncode == 0, "candidate build failed; inspect the retained build.log")
         for item in inputs + [recipe]:
             require(sha((ROOT / item["path"]).read_bytes()) == item["sha256"], "build inputs changed while compiling")
-        binary = ROOT / "target" / TARGET / "release/minicon-srcmgr.exe"
+        binary = ROOT / "target" / target / "release/minicon-srcmgr.exe"
         data = binary.read_bytes()
         folded = data.lower()
         counts = {}

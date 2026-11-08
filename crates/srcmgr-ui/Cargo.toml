@@ -12,7 +12,15 @@ srcmgr-domain.workspace = true
 srcmgr-platform-ext.workspace = true
 minicon-core.workspace = true
 minicon-ui-core.workspace = true
+
+# One window host per target family, the same split MiniCon uses: the Win32
+# adapter on Windows and the winit/softbuffer adapter on unix and macOS. Both
+# expose the same `window_host` contract, so this crate never names an adapter.
+[target.'cfg(windows)'.dependencies]
 minicon-platform = { workspace = true, features = ["native-pixel-window", "input", "ime", "font", "clipboard"] }
+
+[target.'cfg(unix)'.dependencies]
+minicon-platform = { workspace = true, features = ["portable-pixel-window", "input", "ime", "font", "clipboard"] }
 
 [build-dependencies]
 winresource = "0.1"

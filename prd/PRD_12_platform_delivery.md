@@ -34,6 +34,8 @@ These are deliberately scoped proposed minimums. M0 must prove the selected depe
 | Linux x86_64 | `x86_64-unknown-linux-gnu` | Ubuntu 24.04 x64, glibc 2.39 | X11 and Wayland sessions, fonts/IME/clipboard, AT-SPI and runtime libraries |
 | Linux ARM64 | `aarch64-unknown-linux-gnu` | Ubuntu 24.04 ARM64, glibc 2.39 | Native ARM64 and both Linux display paths |
 
+Build status 2026-11-08: a six-cell path now exists. Each cell builds on its own native runner, runs a runtime court on its own executable and produces its own archive with a receipt; the aggregate refuses a partial set. What that path proves is compilation, start and real Git reads per cell. What it does **not** prove is a GUI journey on any cell (needs a display and, on Linux, a compositor), macOS Developer ID signing, or an image other than the runner's. Only Windows x86_64 additionally has a published signed archive. The path's own evidence and stopping conditions live in [the 0.1.2 plan](../plan/plan-0.1.2.md).
+
 Newer OS versions receive regression checks as available; that does not imply all intervening versions or distributions are qualified. Linux musl, Windows 7/10, 32-bit and additional ISAs are outside the baseline. Rosetta/QEMU can provide separately labeled compatibility receipts; they never replace the native ISA gate. GPU-independent pixel presentation remains a goal but does not remove window-system/runtime requirements.
 
 Git is separately installed and user-selected; show its architecture/path/version. Matching-native Git is the qualification default. Mixed-architecture helpers must be explicitly recorded if tested; the GUI does not claim to translate them. System fonts, CJK fonts, Linux window/IME/accessibility libraries and permissions must be listed in the eventual package manifest from actual inspection. Missing libraries result in setup guidance rather than a panic. No developer SDK is a runtime prerequisite.
@@ -98,6 +100,12 @@ Reject wrong architecture/channel, downgrade and replay unless the user explicit
 | SHIP-02 · packages | Package identity/dependencies match executed artifact | QA-J12 clean image launch and manifest/hash check | Specific dependency/setup error | 11 | Bundled Git or one universal ISA binary |
 | SHIP-03 · promotion | Published bytes equal signed qualified bytes | QA-J13 candidate/public digest and signing receipts | Stop promotion on mismatch/missing authority | 14 | Rebuild during publish |
 | SHIP-04 · update | Only authenticated matching bytes replace an idle product | QA-J13 tamper/replay/wrong-ISA/full-disk/rollback | Keep previous executable and data | 11, 13 | Silent self-update |
+
+## 0.1.2 six-cell delivery target
+
+Status: implemented, qualification pending. The product builds, executes and packages on all six declared cells with one native runner per cell; the aggregate court refuses anything short of the exact six. Windows keeps its signature gate and now covers both Windows cells in one provider call with a two-asset receipt.
+
+Per cell, an archive contains the executable, a README, a checksum list and a receipt naming the source SHA and the asset digests. A cell whose runtime court did not pass is never packaged, and a partial matrix is never a release candidate. [The 0.1.2 plan](../plan/plan-0.1.2.md) owns the evidence.
 
 ## 0.1.1 delivery target
 
