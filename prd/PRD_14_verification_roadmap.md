@@ -425,6 +425,8 @@ The [0.0.9 plan](../plan/plan-0.0.9.md) records the delivered upstream, fetch-th
 
 The [0.1.0 plan](../plan/plan-0.1.0.md) records the first-user beta target, the delivered 0.0.7–0.0.9 source checkpoints, a private unsigned Windows x64 candidate and the open work: window Clone/Remotes panels, zh-CN primary strings, signing, clean-image launch and the five-participant study. The candidate is not published; signing and the study are BLOCKED on missing authority and participants.
 
+The [0.1.0 plan](../plan/plan-0.1.0.md) records the first signed Windows beta: the provisioned signing identity, the release-eligible run 42453987936 with a Valid company signature and timestamp, the downloaded-and-started signed bytes and the Defender scan. Window Clone/Remotes panels, zh-CN primary strings, clean-image launch, accessibility and the five-participant study remain open and are named in the release notes rather than claimed.
+
 ### Requirements baseline 1.5 review disposition
 
 Review scope: the 15-module ownership/dependency map, current-entry status statements, near-term admission and the proposed 0.0.6 task tree. This is documentation/product review, not a new runtime audit or certification of every historical clause.

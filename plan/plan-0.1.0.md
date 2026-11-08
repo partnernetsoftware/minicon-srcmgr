@@ -1,6 +1,6 @@
 # 0.1.0 first-user beta plan
 
-Status: `[-]` in progress. Workspace version remains **0.0.9**; no 0.1.0 tag or release exists. Product admission is owned by [01](../prd/PRD_01_product.md#010-first-user-feature-tree), packaging and signing by [12](../prd/PRD_12_platform_delivery.md#010-first-user-beta-delivery-target), interaction by [10](../prd/PRD_10_desktop_ux.md), and sequencing by [the roadmap](roadmap-0.1.0.md).
+Status: `[v]` published 0.1.0 signed Windows x86_64 beta. Workspace version is **0.1.0** and the release carries a signed executable. The window Clone/Remotes panels, zh-CN localisation, clean-image, accessibility and five-participant study remain open and are named in the release notes. Product admission is owned by [01](../prd/PRD_01_product.md#010-first-user-feature-tree), packaging and signing by [12](../prd/PRD_12_platform_delivery.md#010-first-user-beta-delivery-target), interaction by [10](../prd/PRD_10_desktop_ux.md), and sequencing by [the roadmap](roadmap-0.1.0.md).
 
 ## Product outcome
 
@@ -13,11 +13,11 @@ Status: `[-]` in progress. Workspace version remains **0.0.9**; no 0.1.0 tag or 
 | Clone, remote configuration, observation, fetch, upstream, FF pull, current-branch push | `[v]` | 0.0.7–0.0.9 public source checkpoints with Git and CLI fixtures |
 | Window fetch/pull/push actions and status distance | `[v]` | 96 `srcmgr-ui` cases; scope in the 0.0.7/0.0.9 plans |
 | Unsigned Windows x64 candidate | `[v]` private | `010-candidate-v3`: source `543cfbd`, artifact `1362b570447c19dbe364f637c878b0188317dbe898d7909e50b3a3ef0a991791`, zero known build-root occurrences, fresh-profile startup exits 0 and reads `unset`; the PE carries `ProductName=MiniCon SrcMgr`, `CompanyName=PARTNERNET SOFTWARE PTY LTD` and version `0.0.9` |
-| Window Clone and Remotes panels | `[_]` | Not implemented; CLI only |
-| zh-CN primary strings and locale selection | `[_]` | English fallback keys exist |
+| Window Clone and Remotes panels | `[_]` | Not implemented; CLI only, stated in the release notes |
+| zh-CN primary strings and locale selection | `[_]` | English only; stated in the release notes |
 | Signed package | `[-]` mechanism qualified, release-eligible run pending | The `release-signing` environment exists with the three Azure secrets and three provider variables; both control-plane courts report READY. Run [42369612531](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42369612531) signed source `cb117b0` and produced a `Valid` Authenticode signature with `O=PARTNERNET SOFTWARE PTY LTD`, a Microsoft timestamp certificate and a credential-free receipt. That receipt is `release_eligible=false` because the version is still 0.0.9 and the policy still says `off`. |
-| Clean-image launch, reference host, CJK/clipboard, accessibility | `BLOCKED` | No supplied environment |
-| Five-participant study | `BLOCKED` | No participants or facilitated sessions |
+| Clean-image launch, reference host, CJK/clipboard, accessibility | `BLOCKED` | No supplied environment; named in the release notes |
+| Five-participant study | `BLOCKED` | No participants; named in the release notes |
 
 ## Remaining work packages
 
@@ -26,7 +26,7 @@ Status: `[-]` in progress. Workspace version remains **0.0.9**; no 0.1.0 tag or 
 | P1 · Clone surface | Welcome Clone form bound to the existing `preview_clone`/`clone_repository` contracts, with destination review, progress and cancel | Workspace cases plus one native clone journey; a nonempty target keeps its contents |
 | P2 · Remotes surface | Panel listing redacted remotes, with add/set-URL/rename/remove through the reviewed preview and an explicit confirmation | Model cases plus native captures; a refused edit changes no configuration |
 | P3 · Language | zh-CN for primary flows using the typed key catalogue and a visible locale choice | Key coverage check; no untranslated primary control; English fallback intact |
-| P4 · Package | Signed Windows x86_64 ZIP with notices, source/artifact identity, prerequisites and first-run instructions | Signature verification, scan, clean-image launch; otherwise `BLOCKED` |
+| P4 · Package | Signed Windows x86_64 ZIP with notices, source/artifact identity, prerequisites and first-run instructions | `[v]` signed, locally re-verified and Defender-scanned; clean-image launch still `BLOCKED` |
 | P5 · Study and quality | Five-participant task study plus changed-path resource evidence | Four of five complete open/clone → stage/commit → pull → push; failures change UX before release |
 
 ## Release gate
@@ -65,7 +65,18 @@ The signed bytes were downloaded and started on this host: `--profile <fresh> se
 
 Earlier attempts in the same session failed for three wiring reasons and are kept here rather than hidden: the build wrote outside the qualification directory; the digest crossed jobs through `GITHUB_ENV`, which does not exist across jobs; `files-catalog` needs paths relative to the catalog and the action needs the Azure CLI credential that `azure/login` created. None of those were product defects.
 
-### Still open before 0.1.0 can publish
+### Release-eligible signing run
+
+Run [42453987936](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42453987936) at source `d3531ea` with `signing.mode=required` and version 0.1.0 produced a release-eligible receipt:
+
+- unsigned input `50204865cff37879…`, signed output `3ce0555ea9c885ef…`, 3,945,400 bytes;
+- Authenticode `Valid`, `O=PARTNERNET SOFTWARE PTY LTD`, issuer `CN=Microsoft ID Verified CS AOC CA 03`, certificate valid 2026-11-07 to 2026-11-10;
+- RFC 3161 timestamp by `CN=Microsoft Public RSA Time Stamping Authority`;
+- product identity `MiniCon SrcMgr` / `0.1.0` unchanged by signing.
+
+Locally the downloaded bytes were inspected again with the canonical inspector (`Valid`, same subject and version), started with a fresh profile (`unset`, exit 0) and scanned by Microsoft Defender as a packaged folder with no detections. Packaged archive `minicon-srcmgr-0.1.0-windows-x86_64.zip` SHA-256 `e858e49ac8725e4309921833eda6213d1cb8afe4eae3055b83b796e257ad5f2a`.
+
+### Still open after 0.1.0
 
 - A release-eligible run at version 0.1.0 with `signing.mode = required` and the version unpublished.
 - Window Clone and Remotes panels; zh-CN primary strings.

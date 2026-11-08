@@ -175,6 +175,12 @@ Source-level release, tagged `v0.0.3` and published to `origin` as a GitHub Rele
 - No IME composition beyond committed text, no screen-reader bridge, no checkout of a commit, no commit files, no search or filter, no discard, stash or rebase.
 - Linux and macOS cells are not run.
 
+## 0.1.0 signed beta status
+
+Status: published. The Windows x86_64 archive carries an Authenticode-valid executable signed through the repository's own GitHub OIDC identity, with the company publisher, a Microsoft RFC 3161 timestamp and a public receipt that the fail-closed auditor accepted with `release_eligible=true` (signing run 42453987936 at source `d3531ea`). The signed bytes were re-downloaded, started from a fresh profile on Windows Server 2022 and scanned with Microsoft Defender without detections.
+
+The following gates are explicitly **not** qualified and are stated in the release notes: in-window Clone and Remotes panels, zh-CN localisation, clean-image launch, accessibility and CJK/clipboard composition, long-session resource evidence, and the five-participant usability study. The beta is published with those limits named rather than withheld; the next increment closes them.
+
 ## Development 0.0.9 status
 
 Status: source checkpoint delivered for explicit upstream, fetch-then-fast-forward pull and current-branch push. Pull refuses divergence instead of merging, push sends one explicit refspec and reports per-ref Updated/UpToDate/Rejected, and a cancelled or timed-out push is reconciled once with `ls-remote` and never retried. Window `p`/`P` report the final outcome. Clone/Remotes panels, authenticated HTTPS/SSH qualification, a killed-transfer receipt, JSON for the new CLI verbs, native journeys and signing remain open. No executable is distributed and no platform certification is claimed. Scoped evidence is in [the 0.0.9 plan](../plan/plan-0.0.9.md).
