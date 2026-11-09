@@ -1,6 +1,6 @@
 # 0.1.2 six native cells plan
 
-Status: `[-]` release candidate. Six cells build, run and package green on their own runners (run 42476631093 at source `687f93b`); the workspace version is now **0.1.2** and `release-policy.json` requires signing, so the remaining steps are one six-cell run and one two-asset signing run at this commit, then publication. No cell is qualified beyond start and Git reads. Delivery is owned by [12](../prd/PRD_12_platform_delivery.md#support-matrix), reuse by [02](../prd/PRD_02_architecture_reuse.md), verification by [14](../prd/PRD_14_verification_roadmap.md), and sequencing by [the roadmap](roadmap-0.1.0.md).
+Status: `[v]` published as **0.1.2** on 2026-11-09. Six cells built, ran and packaged on their own runners; both Windows cells are signed `Valid` with the company publisher and a timestamp, and the release carries a `release_eligible=true` receipt. No cell is qualified beyond start and Git reads, and the release notes say so. Delivery is owned by [12](../prd/PRD_12_platform_delivery.md#support-matrix), reuse by [02](../prd/PRD_02_architecture_reuse.md), verification by [14](../prd/PRD_14_verification_roadmap.md), and sequencing by [the roadmap](roadmap-0.1.0.md).
 
 0.1.0 published one cell. [PRD 12](../prd/PRD_12_platform_delivery.md#support-matrix) declares six. This version closes the gap between what the product claims to support and what it actually builds, runs and packages.
 
@@ -94,8 +94,8 @@ Excluded: cross-compiling a cell from another cell and calling it qualified; pub
 | C2 · six runtime courts | Every executable starts and reads Git on its own cell | `[v]` same run: six `runtime-receipt.json` status `passed` |
 | C3 · six archives | Each archive contains the binary, README, checksums and a receipt matching its digest | `[v]` same run: six archives with 64-hex digests, table below |
 | C4 · aggregate | A partial or failed set is refused | `[v]` same run: aggregate `success` with `cell_count: 6`; a locally removed cell is refused with `expected one cell receipt, found 0` |
-| C5 · Windows signature | Both Windows PEs are `Valid` with the company publisher | `BLOCKED` the two-asset run has not been dispatched; both Windows receipts record `signing: blocked` |
-| C6 · honesty | Anything not run is named in the release notes; no cell is implied qualified by compilation alone | `[_]` owed by the release notes of whichever version ships these cells |
+| C5 · Windows signature | Both Windows PEs are `Valid` with the company publisher | `[v]` run 42559476683: both cells `Valid`, `O=PARTNERNET SOFTWARE PTY LTD`, timestamp present, receipt `release_eligible=true` |
+| C6 · honesty | Anything not run is named in the release notes; no cell is implied qualified by compilation alone | `[v]` [0.1.2 notes](../releases/0.1.2.md) name the GUI-journey gap on five cells, macOS signing, the untested macOS 14 floor and the unqualified clean-image and user courts |
 
 ## Selected verification and stopping
 
@@ -139,3 +139,22 @@ What this run still does not prove: a GUI journey on any cell, macOS Developer I
 ### Release candidate (2026-11-08)
 
 The workspace moved to 0.1.2 and `release-policy.json` follows it, so a signing run at this version is eligible by construction: the version has never been published and the policy demands a signature. Two pipeline runs at this commit produce the release set — the six-cell matrix for the non-Windows archives and both Windows cells, and the two-asset signing run for the Windows bytes. `scripts/assemble_release.py` then takes those two outputs and refuses to emit an asset set unless every cell receipt matches the archive it ships, every Windows inspection names the signed bytes and calls them `Valid` with a timestamp, and the assembled digests are the digests in `SHA256SUMS.txt`. The Windows cells are repackaged from the signed executables, because the six-cell job necessarily finishes before signing exists.
+
+### Publication (2026-11-09)
+
+Two runs at source `9c5655f209072c1419e0ed512e47485ad32d2c88` produced the release set: six-cell matrix [42559469142](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42559469142) and two-asset signing [42559476683](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42559476683). `scripts/assemble_release.py` rebuilt the two Windows archives from the signed executables, refused nothing, and wrote the digests that `SHA256SUMS.txt` publishes:
+
+| Cell | Asset | Bytes | SHA-256 |
+|---|---|---|---|
+| win-x86_64 | `minicon-srcmgr-0.1.2-win-x86_64.zip` | 1 841 761 | `eaee8db6c7a10260684141a9981ce1525d0f07aeed367f69266977e77f0f1082` |
+| win-aarch64 | `minicon-srcmgr-0.1.2-win-aarch64.zip` | 1 661 871 | `3187de4b77389fe7db14b868a81164058c07d263bc1565d764804487a24733ca` |
+| osx-x86_64 | `minicon-srcmgr-0.1.2-osx-x86_64.tar.gz` | 2 241 805 | `1a1110803022714bd36d4b2d53c49eaa933c4178055acdc4db1f885d7dd9e1e2` |
+| osx-aarch64 | `minicon-srcmgr-0.1.2-osx-aarch64.tar.gz` | 2 116 090 | `4f6d995d021b06a855c75c2db315981c4df5bf80a696cc6c54f9b81c2212e4de` |
+| lnx-x86_64 | `minicon-srcmgr-0.1.2-lnx-x86_64.tar.gz` | 3 498 314 | `1a6569b5a97a7f4147c127d65dc28ba9c595194bfe2e3dccc9946e76935e0ae3` |
+| lnx-aarch64 | `minicon-srcmgr-0.1.2-lnx-aarch64.tar.gz` | 3 470 206 | `b51a5e30af3fa5f5901b1a8e248c13e2fa7a7f5e023630bd59fc881501b10f6b` |
+
+Verified after assembly, on the published bytes rather than on build output: `sha256sum -c SHA256SUMS.txt` for all six; `Get-AuthenticodeSignature` returned `Valid` for the executable extracted from the published `win-x86_64` zip, with the company subject, the Microsoft issuer and the RFC 3161 timestamp; that extracted executable started from a fresh profile, reported `minicon-srcmgr 0.1.2`, and passed a runtime court on itself (`version`, `git_present`, `trust_grant`, `status_json`, `remote_list`, `tracking_honest`).
+
+One defect surfaced during this release and is fixed here rather than worked around: the signing manifest converted `GITHUB_RUN_ID` to `Int32`, so the workflow threw before signing a single file. Run identifiers already exceed that range. It now reads them as `Int64`.
+
+The macOS and Linux archives are unsigned by design of this slice: no Developer ID certificate exists for macOS and no package-manager distribution for Linux. The release notes state both, and the macOS extraction step that clears the quarantine flag.

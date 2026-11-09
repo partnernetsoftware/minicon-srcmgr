@@ -96,11 +96,16 @@ def main() -> int:
             continue
 
         if cell in WINDOWS:
-            signed = args.signed / f"cells/{cell}/minicon-srcmgr.exe"
-            inspection_path = args.signed / f"inspection-{cell}.json"
-            if not signed.is_file() or not inspection_path.is_file():
-                problems.append(f"{cell}: no signed executable or inspection")
+            # Find the signed bytes wherever the artifact put them: the upload
+            # path is the producer's choice and has already changed once.
+            found = sorted(args.signed.rglob(f"cells/{cell}/minicon-srcmgr.exe")) if args.signed.is_dir() else []
+            inspections = sorted(args.signed.rglob(f"inspection-{cell}.json")) if args.signed.is_dir() else []
+            if len(found) != 1 or len(inspections) != 1:
+                problems.append(
+                    f"{cell}: expected one signed executable and one inspection, found {len(found)} and {len(inspections)}"
+                )
                 continue
+            signed, inspection_path = found[0], inspections[0]
             inspection = json.loads(inspection_path.read_text(encoding="utf-8"))
             actual = sha256(signed)
             if inspection.get("sha256") != actual:
@@ -166,9 +171,11 @@ def main() -> int:
     sums = "".join(f"{row['sha256']} *{name}\n" for name, row in sorted(assets.items()))
     (out / "SHA256SUMS.txt").write_text(sums, encoding="utf-8", newline="\n")
 
-    signing = args.signed / "signing-receipt.json"
-    if signing.is_file():
-        shutil.copy2(signing, out / "signing-receipt.json")
+    receipts = sorted(args.signed.rglob("signing-receipt.json")) if args.signed.is_dir() else []
+    if len(receipts) != 1:
+        print(f"expected one signing receipt, found {len(receipts)}", file=sys.stderr)
+        return 1
+    shutil.copy2(receipts[0], out / "signing-receipt.json")
 
     manifest = {
         "schema": 1,

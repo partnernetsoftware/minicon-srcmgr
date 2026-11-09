@@ -2,17 +2,27 @@ MiniCon SrcMgr — first run
 =========================
 
 1. Extract this folder anywhere you can write.
-2. Run minicon-srcmgr (minicon-srcmgr.exe on Windows).
-3. The window opens on Welcome. Choose Open or Create, or clone from the
+2. macOS only: the binary is not notarized, so clear the quarantine flag once:
+     xattr -d com.apple.quarantine ./minicon-srcmgr
+   Without this the system refuses to launch it. This is the whole reason for
+   the step; nothing else needs it.
+3. Run minicon-srcmgr (minicon-srcmgr.exe on Windows).
+4. The window opens on Welcome. Choose Open or Create, or clone from the
    command line with:
      minicon-srcmgr --profile <profile-dir> clone <url> <destination>
-4. A repository must be trusted before the product runs Git in it. The window
+5. A repository must be trusted before the product runs Git in it. The window
    shows what will be trusted and asks first.
 
 Requirements
 ------------
 Git must already be installed and on PATH (or pass --git <path>). Version 2.43
 or newer. The product does not bundle Git.
+
+This archive was built on the cell named in cell-receipt.json beside this file,
+by that cell's own compiler. Windows x86_64 and Windows ARM64 executables are
+Authenticode-signed. macOS needs a Developer ID certificate this project does
+not have yet, and Linux has no package-manager distribution, so those two are
+unsigned.
 
 Verify the download
 -------------------
@@ -23,13 +33,16 @@ The expected digest is in SHA256SUMS.txt beside this file.
 
 Known limits
 ------------
+- Only Windows x86_64 has completed a GUI journey qualification. The other
+  five cells are qualified up to "the executable starts and performs real Git
+  reads on a fixture": no window was opened on them during qualification.
 - The interface is English only.
 - No merge, rebase or in-app conflict resolution; pull is fast-forward only.
-- Windows builds are Authenticode-signed. macOS builds are not Developer ID
-  signed or notarized, and Linux builds are not distributed by a package
-  manager yet.
-- Only the Windows x86_64 cell has completed a GUI journey qualification; the
-  other cells are qualified up to "the executable starts and reads Git".
+- No clean-image, accessibility, CJK/clipboard or long-session qualification.
+- Linux archives are built against glibc 2.39 (Ubuntu 24.04). Older
+  distributions and musl are unsupported.
+- macOS archives are built on macOS 15 runners; macOS 14 is the declared
+  minimum but untested.
 
 Source and licence
 ------------------
