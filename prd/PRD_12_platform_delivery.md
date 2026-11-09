@@ -103,7 +103,7 @@ Reject wrong architecture/channel, downgrade and replay unless the user explicit
 
 ## 0.1.2 six-cell delivery target
 
-Status: implemented, qualification pending. The product builds, executes and packages on all six declared cells with one native runner per cell; the aggregate court refuses anything short of the exact six. Windows keeps its signature gate and now covers both Windows cells in one provider call with a two-asset receipt.
+Status: release candidate at version 0.1.2, publication pending. The product builds, executes and packages on all six declared cells with one native runner per cell; the aggregate court refuses anything short of the exact six. Windows keeps its signature gate and now covers both Windows cells in one provider call with a two-asset receipt.
 
 Per cell, an archive contains the executable, a README, a checksum list and a receipt naming the source SHA and the asset digests. A cell whose runtime court did not pass is never packaged, and a partial matrix is never a release candidate. [The 0.1.2 plan](../plan/plan-0.1.2.md) owns the evidence.
 

@@ -1,6 +1,6 @@
 # 0.1.2 six native cells plan
 
-Status: `[-]` six cells build, run and package green on their own runners (run 42476631093 at source `687f93b`); Windows signing is `BLOCKED` and no cell is qualified beyond start and Git reads. Workspace version is **0.1.0**; no 0.1.2 source, version or artifact exists. Delivery is owned by [12](../prd/PRD_12_platform_delivery.md#support-matrix), reuse by [02](../prd/PRD_02_architecture_reuse.md), verification by [14](../prd/PRD_14_verification_roadmap.md), and sequencing by [the roadmap](roadmap-0.1.0.md).
+Status: `[-]` release candidate. Six cells build, run and package green on their own runners (run 42476631093 at source `687f93b`); the workspace version is now **0.1.2** and `release-policy.json` requires signing, so the remaining steps are one six-cell run and one two-asset signing run at this commit, then publication. No cell is qualified beyond start and Git reads. Delivery is owned by [12](../prd/PRD_12_platform_delivery.md#support-matrix), reuse by [02](../prd/PRD_02_architecture_reuse.md), verification by [14](../prd/PRD_14_verification_roadmap.md), and sequencing by [the roadmap](roadmap-0.1.0.md).
 
 0.1.0 published one cell. [PRD 12](../prd/PRD_12_platform_delivery.md#support-matrix) declares six. This version closes the gap between what the product claims to support and what it actually builds, runs and packages.
 
@@ -135,3 +135,7 @@ The first four runs failed, and every failure was a real platform defect rather 
 A sixth defect was a real product bug found earlier by the same matrix: `srcmgr-ui` depended on the Win32 window host unconditionally, so the five non-Windows cells could not compile at all. It is recorded under "What changed" above.
 
 What this run still does not prove: a GUI journey on any cell, macOS Developer ID signing and notarization, a non-24H2 Windows image, or upstream `glibc` older than the runner. No cell is claimed beyond "builds, starts and reads Git".
+
+### Release candidate (2026-11-08)
+
+The workspace moved to 0.1.2 and `release-policy.json` follows it, so a signing run at this version is eligible by construction: the version has never been published and the policy demands a signature. Two pipeline runs at this commit produce the release set — the six-cell matrix for the non-Windows archives and both Windows cells, and the two-asset signing run for the Windows bytes. `scripts/assemble_release.py` then takes those two outputs and refuses to emit an asset set unless every cell receipt matches the archive it ships, every Windows inspection names the signed bytes and calls them `Valid` with a timestamp, and the assembled digests are the digests in `SHA256SUMS.txt`. The Windows cells are repackaged from the signed executables, because the six-cell job necessarily finishes before signing exists.
