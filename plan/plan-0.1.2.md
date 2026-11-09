@@ -94,7 +94,7 @@ Excluded: cross-compiling a cell from another cell and calling it qualified; pub
 | C2 · six runtime courts | Every executable starts and reads Git on its own cell | `[v]` same run: six `runtime-receipt.json` status `passed` |
 | C3 · six archives | Each archive contains the binary, README, checksums and a receipt matching its digest | `[v]` same run: six archives with 64-hex digests, table below |
 | C4 · aggregate | A partial or failed set is refused | `[v]` same run: aggregate `success` with `cell_count: 6`; a locally removed cell is refused with `expected one cell receipt, found 0` |
-| C5 · Windows signature | Both Windows PEs are `Valid` with the company publisher | `[v]` run 42559476683: both cells `Valid`, `O=PARTNERNET SOFTWARE PTY LTD`, timestamp present, receipt `release_eligible=true` |
+| C5 · Windows signature | Both Windows PEs are `Valid` with the company publisher | `[v]` run 42561659574: both cells `Valid`, `O=PARTNERNET SOFTWARE PTY LTD`, timestamp present, receipt `release_eligible=true` |
 | C6 · honesty | Anything not run is named in the release notes; no cell is implied qualified by compilation alone | `[v]` [0.1.2 notes](../releases/0.1.2.md) name the GUI-journey gap on five cells, macOS signing, the untested macOS 14 floor and the unqualified clean-image and user courts |
 
 ## Selected verification and stopping
@@ -142,16 +142,16 @@ The workspace moved to 0.1.2 and `release-policy.json` follows it, so a signing 
 
 ### Publication (2026-11-09)
 
-Two runs at source `9c5655f209072c1419e0ed512e47485ad32d2c88` produced the release set: six-cell matrix [42559469142](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42559469142) and two-asset signing [42559476683](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42559476683). `scripts/assemble_release.py` rebuilt the two Windows archives from the signed executables, refused nothing, and wrote the digests that `SHA256SUMS.txt` publishes:
+Two runs at source `e8988579379f434b89353ca63b89784132523c7f` produced the release set: six-cell matrix [42561652417](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42561652417) and two-asset signing [42561659574](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/42561659574). `scripts/assemble_release.py` rebuilt the two Windows archives from the signed executables, refused nothing, and wrote the digests that `SHA256SUMS.txt` publishes:
 
 | Cell | Asset | Bytes | SHA-256 |
 |---|---|---|---|
-| win-x86_64 | `minicon-srcmgr-0.1.2-win-x86_64.zip` | 1 841 761 | `eaee8db6c7a10260684141a9981ce1525d0f07aeed367f69266977e77f0f1082` |
-| win-aarch64 | `minicon-srcmgr-0.1.2-win-aarch64.zip` | 1 661 871 | `3187de4b77389fe7db14b868a81164058c07d263bc1565d764804487a24733ca` |
-| osx-x86_64 | `minicon-srcmgr-0.1.2-osx-x86_64.tar.gz` | 2 241 805 | `1a1110803022714bd36d4b2d53c49eaa933c4178055acdc4db1f885d7dd9e1e2` |
-| osx-aarch64 | `minicon-srcmgr-0.1.2-osx-aarch64.tar.gz` | 2 116 090 | `4f6d995d021b06a855c75c2db315981c4df5bf80a696cc6c54f9b81c2212e4de` |
-| lnx-x86_64 | `minicon-srcmgr-0.1.2-lnx-x86_64.tar.gz` | 3 498 314 | `1a6569b5a97a7f4147c127d65dc28ba9c595194bfe2e3dccc9946e76935e0ae3` |
-| lnx-aarch64 | `minicon-srcmgr-0.1.2-lnx-aarch64.tar.gz` | 3 470 206 | `b51a5e30af3fa5f5901b1a8e248c13e2fa7a7f5e023630bd59fc881501b10f6b` |
+| win-x86_64 | `minicon-srcmgr-0.1.2-win-x86_64.zip` | 1 842 134 | `883febf5352ca4944f9cd540001c27eae4d96fc25ca91a9b6cdc66f1d77bc4d8` |
+| win-aarch64 | `minicon-srcmgr-0.1.2-win-aarch64.zip` | 1 662 238 | `1e7480c83990c35587826877282dba7cbebf9eb15947f581b7200d5107cd8ec0` |
+| osx-x86_64 | `minicon-srcmgr-0.1.2-osx-x86_64.tar.gz` | 2 242 083 | `0be8a3411202545ef346f0e9bd5b48ca201d7bc4cf1819ccd15c53cde950a7c5` |
+| osx-aarch64 | `minicon-srcmgr-0.1.2-osx-aarch64.tar.gz` | 2 116 279 | `06fafcdab164619061e0d736f48e91ffb22b30893425a4cd4eb77cf2c624d027` |
+| lnx-x86_64 | `minicon-srcmgr-0.1.2-lnx-x86_64.tar.gz` | 3 498 546 | `aba7372186bc30f37d276c66257d9f15f743c087982420258fae7436884e9fbf` |
+| lnx-aarch64 | `minicon-srcmgr-0.1.2-lnx-aarch64.tar.gz` | 3 470 614 | `b096c44f3b0007e178e81b053e5f6d5357b40ba08c769878899aee8c5d7cac7e` |
 
 Verified after assembly, on the published bytes rather than on build output: `sha256sum -c SHA256SUMS.txt` for all six; `Get-AuthenticodeSignature` returned `Valid` for the executable extracted from the published `win-x86_64` zip, with the company subject, the Microsoft issuer and the RFC 3161 timestamp; that extracted executable started from a fresh profile, reported `minicon-srcmgr 0.1.2`, and passed a runtime court on itself (`version`, `git_present`, `trust_grant`, `status_json`, `remote_list`, `tracking_honest`).
 
