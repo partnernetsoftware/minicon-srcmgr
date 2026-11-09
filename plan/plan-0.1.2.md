@@ -94,7 +94,7 @@ Excluded: cross-compiling a cell from another cell and calling it qualified; pub
 | C2 · six runtime courts | Every executable starts and reads Git on its own cell | `[v]` same run: six `runtime-receipt.json` status `passed` |
 | C3 · six archives | Each archive contains the binary, README, checksums and a receipt matching its digest | `[v]` same run: six archives with 64-hex digests, table below |
 | C4 · aggregate | A partial or failed set is refused | `[v]` same run: aggregate `success` with `cell_count: 6`; a locally removed cell is refused with `expected one cell receipt, found 0` |
-| C5 · Windows signature | Both Windows PEs are `Valid` with the company publisher | `BLOCKED` no signing run exists; both Windows receipts say `signing: blocked` |
+| C5 · Windows signature | Both Windows PEs are `Valid` with the company publisher | `BLOCKED` the two-asset run has not been dispatched; both Windows receipts record `signing: blocked` |
 | C6 · honesty | Anything not run is named in the release notes; no cell is implied qualified by compilation alone | `[_]` owed by the release notes of whichever version ships these cells |
 
 ## Selected verification and stopping
@@ -109,7 +109,7 @@ Release gate: the six-cell receipt exists for the signing source SHA, the Window
 
 Landed: per-family window host, `--target` build selection, `--version`, `cell_runtime_court.py`, `package_cell.py`, `six_cell_aggregate.py`, `six-cell.yml`, and multi-asset signing. Local evidence is the compile matrix, the six packaging shapes, the aggregate, and a two-asset receipt that composed and audited clean.
 
-Not yet run: the two-cell signing run. It needs Azure Artifact Signing provisioned for this repository; the workflow refuses to start without that confirmation, so no signature exists for either Windows cell and neither archive is release-eligible.
+Not yet run: the two-cell signing run. The signing path itself is already proven: 0.1.0 was signed release-eligible by run 42453987936, the `release-signing` environment holds its credentials and `release-policy.json` reads `signing.mode = required`. What is missing is only the dispatch of the rewritten two-asset workflow at a version that is not yet published, so no signature exists for either Windows cell here and neither archive is release-eligible.
 
 ### First real six-cell run (2026-11-08)
 
