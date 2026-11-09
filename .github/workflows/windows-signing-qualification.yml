@@ -129,7 +129,9 @@ jobs:
           }
           @('cells\win-x86_64\minicon-srcmgr.exe', 'cells\win-aarch64\minicon-srcmgr.exe') |
             Set-Content -LiteralPath signing-input/signing-catalog.txt -Encoding ascii
-          $manifest = [ordered]@{ version = $env:PRODUCT_VERSION; run_id = [int]$env:GITHUB_RUN_ID; run_attempt = [int]$env:GITHUB_RUN_ATTEMPT; assets = $entries }
+          # Run identifiers passed Int32 in 2025; the receipt schema takes them as
+          # integers, so read them as Int64 rather than truncating.
+          $manifest = [ordered]@{ version = $env:PRODUCT_VERSION; run_id = [long]$env:GITHUB_RUN_ID; run_attempt = [long]$env:GITHUB_RUN_ATTEMPT; assets = $entries }
           $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath signing-manifest.json -Encoding utf8
       - name: Azure login (GitHub OIDC federated identity, signer role only)
         uses: azure/login@0949e32778441b2c442592b7a0e6313466dc8f29 # v3.0.2
