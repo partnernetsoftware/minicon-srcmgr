@@ -54,7 +54,7 @@ Baseline: public `v0.1.0` at `f6ab36e`, workspace version `0.1.0`, working branc
 
 Must: clone from Welcome with a reviewed destination; manage remotes from a panel through the existing preview/apply contracts; fetch one named remote from the panel; show divergence with both sides named before any integration; detect an in-progress operation and unmerged paths, block the write actions and hand off to a terminal; zh-CN for every primary control, status and refusal with a persistent explicit locale choice; a clean-image launch court and a five-participant study.
 
-Not in 0.1.1: merge, rebase, in-app conflict resolution or a conflict center ([08](../prd/PRD_08_recovery.md) after 0.1.x); tag push, remote branch deletion, multi-ref or atomic push, `--force-with-lease`; graph/history/blame expansion; reset, cherry-pick, interactive rebase; LFS administration; a second platform (macOS or Linux); credentials storage or a vault; background auto-fetch.
+Not in 0.1.1: merge, rebase, in-app conflict resolution or a conflict center ([08](../prd/PRD_08_recovery.md) after 0.1.x); tag push, remote branch deletion, multi-ref or atomic push, `--force-with-lease`; graph/history/blame expansion; reset, cherry-pick, interactive rebase; LFS administration; credentials storage or a vault; background auto-fetch. All six cells now build and package (0.1.2), so this increment adds no platform work: it closes the gaps named above on the contracts those cells already carry, and any cell-specific qualification stays with 12.
 
 Excluded: any panel action that bypasses the reviewed preview; any locale value that changes Git parsing, paths or OIDs; retrying an unknown push; deleting a partial clone without the user's explicit choice; calling an unsigned build the beta.
 
