@@ -190,6 +190,15 @@ impl StatusWindow {
         } else if self.workspace.identity_form().is_some() {
             let title = if self.workspace.identity_form().is_some_and(|form| form.submitted) { "MiniCon SrcMgr - Identity settings | Working" } else { "MiniCon SrcMgr - Identity settings | Ready" };
             if self.native_title != title { window.set_title(title); self.native_title = title.into(); }
+        } else if let Some(form) = self.workspace.clone_form() {
+            let title = if form.review.is_some() {
+                "MiniCon SrcMgr - Clone review".to_owned()
+            } else if form.working {
+                "MiniCon SrcMgr - Clone | Working".to_owned()
+            } else {
+                "MiniCon SrcMgr - Clone".to_owned()
+            };
+            if self.native_title != title { window.set_title(&title); self.native_title = title; }
         } else if let Some(form) = self.workspace.create_form() {
             let title = if form.review.is_some() { format!("MiniCon SrcMgr - Create review | {}", srcmgr_domain::NativePath::new(form.path.clone()).display_label()) } else { "MiniCon SrcMgr - Create repository".into() };
             if self.native_title != title { window.set_title(&title); self.native_title = title; }
@@ -1136,11 +1145,11 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
             draws.push(Draw::Text {
                 x: margin,
                 baseline: panels.footer_top + row + ascent,
-                text: format!("Language: {label} [y]   Ctrl+O Open   N Create   G Git settings   T Tools   Enter Open selected   L Locate   d Remove   q Quit"),
+                text: format!("Language: {label} [y]   C Clone   Ctrl+O Open   N Create   G Git settings   T Tools   Enter Open selected   L Locate   d Remove   q Quit"),
                 colour: MUTED_TEXT,
             });
         } else {
-            draws.push(Draw::Text { x: margin, baseline: panels.footer_top + row + ascent, text: if workspace.create_form().is_some() { "Tab Switch field   Enter Review   y Create after review   Esc Back/cancel".into() } else if workspace.modal() { hints(workspace) } else { "Ctrl+O Open   N Create   G Git settings   Enter Open selected   L Locate   d Remove   q Quit".into() }, colour: MUTED_TEXT });
+            draws.push(Draw::Text { x: margin, baseline: panels.footer_top + row + ascent, text: if workspace.clone_form().is_some() { "Tab Switch field   Enter Review   y Clone after review   Esc Back/cancel".into() } else if workspace.create_form().is_some() { "Tab Switch field   Enter Review   y Create after review   Esc Back/cancel".into() } else if workspace.modal() { hints(workspace) } else { "Ctrl+O Open   N Create   G Git settings   Enter Open selected   L Locate   d Remove   q Quit".into() }, colour: MUTED_TEXT });
         }
         return draws;
     }
@@ -1641,6 +1650,35 @@ fn tool_scene(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
 }
 
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
+    if let Some(form) = workspace.clone_form() {
+        let (allow, cancel) = trust_buttons(rect, grid);
+        if let Some((_, lines)) = &form.review {
+            let body = trust_content(rect, grid).0;
+            text_panel(draws, body, grid, true, "Review clone", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        } else {
+            frame(draws, rect, grid, true, "Clone repository");
+            let body = locate_info(rect, grid);
+            let fields = [
+                (crate::CloneField::Url, "URL (one line)", 2 * 1024),
+                (crate::CloneField::Destination, "Destination (absolute, must be empty)", 4 * 1024),
+                (crate::CloneField::Branch, "Branch (blank = remote default)", 1024),
+                (crate::CloneField::Depth, "Depth (blank = full clone)", 10),
+            ];
+            let mut lines = Vec::new();
+            for (field, label, limit) in fields {
+                let marker = if form.focus == field { ">" } else { " " };
+                lines.push(format!("{marker} {label}"));
+                lines.push(format!("  {}", if form.text(field).is_empty() { "(empty)".to_owned() } else { form.text(field).to_owned() }));
+                let _ = limit;
+            }
+            lines.push(String::new());
+            lines.push(form.detail.clone());
+            text_panel(draws, body, grid, false, "Fields and effect", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        }
+        button_draw(draws, allow, grid, if form.working { workspace.t(TextKey::EntryWorking) } else if form.review.is_some() { workspace.t(TextKey::CreateApprove) } else { workspace.t(TextKey::CreateReview) }, if form.working { MUTED_TEXT } else { BORDER });
+        button_draw(draws, cancel, grid, if form.review.is_some() { workspace.t(TextKey::ActionBack) } else { workspace.t(TextKey::ActionCancel) }, FOCUS_BORDER);
+        return;
+    }
     if let Some(form) = workspace.locate_form() {
         let (allow, cancel) = trust_buttons(rect, grid);
         if let Some((_, lines)) = &form.review {

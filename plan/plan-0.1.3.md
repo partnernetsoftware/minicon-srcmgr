@@ -102,7 +102,7 @@ Merge points: `window.rs` and `workspace.rs` take P1 and P2 in that order from o
 |---|---|---|
 | C1 · clone panel | A reviewed clone lands in an empty destination without checkout; a nonempty destination is refused with its contents intact; a partial target can be inspected and removed | `[_]` |
 | C2 · remotes panel | Each panel action shows the local effect first and changes only what it showed; a refusal leaves the configuration byte-identical; no server is contacted | `[_]` |
-| C3 · language | Every primary control, status and refusal has a zh-CN string; the override survives restart; paths and OIDs are untouched | `[_]` |
+| C3 · language | Every primary control, status and refusal has a zh-CN string; the override survives restart; paths and OIDs are untouched | `[-]` catalog, selector and persistence delivered; 63 controls translated, and 57 remaining hard-coded strings (43 notices, 9 main views, 4 hint lines, 1 welcome view) still need moving into the catalog |
 | C4 · divergence | A diverged branch shows both sides and a fetch timestamp, and no integration happens without an explicit choice | `[_]` |
 | C5 · conflict handoff | An unresolved operation blocks the write actions with reasons and hands off the exact repository path | `[_]` |
 | C6 · clean image | The signed archive launches and completes first-run on an image that never had the product or the Rust toolchain | `[_]` |

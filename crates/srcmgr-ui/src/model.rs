@@ -274,6 +274,18 @@ pub enum Job {
     PrepareCreate { path: NativePath, branch: String },
     ExecuteCreate(String),
     LoadWelcome,
+    /// Validates a clone without touching the network or creating anything, and
+    /// returns the exact effect that approving it would produce.
+    PreviewClone {
+        url: String,
+        destination: NativePath,
+        branch: Option<String>,
+        depth: Option<u32>,
+    },
+    /// Starts the reviewed clone. The ticket is one-use and bound to the values
+    /// the review showed, so a field edited after approval cannot be cloned.
+    ExecuteClone(String),
+    CancelClone,
     /// Reads the stored locale once at startup, so the Welcome surface renders
     /// in the user's language before any repository is open.
     LoadLocale,
@@ -367,6 +379,17 @@ pub enum Reply {
     GitSettings { path: Option<NativePath>, detail: String },
     CreateReview { ticket: String, path: NativePath, branch: String, new_directory: bool, entries: Vec<String>, more_entries: bool },
     Welcome(Vec<RecentRow>),
+    CloneReview {
+        ticket: String,
+        lines: Vec<String>,
+        destination: NativePath,
+    },
+    /// A clone finished. The repository is on disk but not trusted, so the reply
+    /// says what to do next instead of opening it.
+    Cloned {
+        destination: NativePath,
+        lines: Vec<String>,
+    },
     TrustReview(TrustReview),
     RepositoryOpened(Snapshot),
     /// The interface language changed; the lists are otherwise unchanged.

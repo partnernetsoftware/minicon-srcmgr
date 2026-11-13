@@ -15,6 +15,14 @@ fn recent_row(entry: RecentRepository) -> RecentRow {
     RecentRow { backend: entry.backend, path: entry.path, label }
 }
 
+/// A clone whose effect the user has been shown but has not approved yet. The
+/// ticket is one-use, so a reviewed destination cannot be swapped after review.
+struct PendingClone {
+    ticket: String,
+    request: srcmgr_git::CloneRequest,
+    expires: Instant,
+}
+
 struct PendingTrust {
     ticket: String,
     worktree: PathBuf,
@@ -62,6 +70,7 @@ pub struct ApplicationBackend {
     trust: Option<PendingTrust>,
     create: Option<PendingCreate>,
     identity: Option<PendingIdentity>,
+    clone: Option<PendingClone>,
 }
 
 impl ApplicationBackend {
@@ -75,6 +84,7 @@ impl ApplicationBackend {
             trust: None,
             create: None,
             identity: None,
+            clone: None,
         }
     }
 
@@ -362,6 +372,54 @@ impl Backend for ApplicationBackend {
             Job::PrepareCreate { path, branch } => self.prepare_create(path, branch).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::CreateRepository, text }),
             Job::ExecuteCreate(ticket) => self.create(&ticket).unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::CreateRepository, text }),
             Job::LoadWelcome => self.recent().unwrap_or_else(Reply::Notice),
+            Job::PreviewClone { url, destination, branch, depth } => {
+                self.clone = None;
+                (|| -> Result<Reply, String> {
+                    let installation = srcmgr_git::GitInstallation::probe(crate::selected_git(&self.options)?)
+                        .map_err(|error| error.to_string())?;
+                    let request = srcmgr_git::CloneRequest {
+                        url,
+                        destination: PathBuf::from(destination.as_os_str()),
+                        branch,
+                        depth,
+                    };
+                    let preview = srcmgr_git::preview_clone(&installation, &request)
+                        .map_err(|error| error.to_string())?;
+                    let ticket = crate::confirmation::ticket()?;
+                    self.clone = Some(PendingClone { ticket: ticket.clone(), request, expires: Instant::now() + Duration::from_secs(300) });
+                    Ok(Reply::CloneReview { ticket, lines: preview.lines, destination })
+                })()
+                .unwrap_or_else(|text| Reply::Notice(format!("Clone not started: {text}")))
+            }
+            Job::ExecuteClone(ticket) => {
+                let Some(pending) = self.clone.take() else {
+                    return Reply::Notice("The clone review expired or was already used; review the clone again.".into());
+                };
+                if pending.ticket != ticket || Instant::now() > pending.expires {
+                    return Reply::Notice("The clone review expired or was already used; review the clone again.".into());
+                }
+                (|| -> Result<Reply, String> {
+                    let installation = srcmgr_git::GitInstallation::probe(crate::selected_git(&self.options)?)
+                        .map_err(|error| error.to_string())?;
+                    let cancel = std::sync::atomic::AtomicBool::new(false);
+                    srcmgr_git::clone_repository(&installation, &pending.request, &cancel, None)
+                        .map_err(|error| {
+                            format!(
+                                "{error}; inspect {} for a partial clone before retrying",
+                                pending.request.destination.display()
+                            )
+                        })?;
+                    Ok(Reply::Cloned {
+                        destination: NativePath::new(pending.request.destination.to_string_lossy().as_ref()),
+                        lines: Vec::new(),
+                    })
+                })()
+                .unwrap_or_else(Reply::Notice)
+            }
+            Job::CancelClone => {
+                self.clone = None;
+                Reply::NoChange
+            }
             Job::ForgetRecent { backend, path } => (|| {
                 open_profile_store(&self.options)?
                     .forget_repository(&RecentRepository { backend, path })

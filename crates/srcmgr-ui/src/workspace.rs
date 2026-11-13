@@ -252,6 +252,7 @@ enum TabAction { Select(NativePath), Close, Quit }
 pub struct Workspace {
     entry_input: Option<crate::entry_input::EntryInput>,
     locate: Option<crate::LocateForm>,
+    clone: Option<crate::CloneForm>,
     tools: Option<crate::ToolForm>,
     navigation_issue: Option<crate::NavigationIssue>,
     filters: [crate::filter::FilterIndex; 3],
@@ -312,6 +313,7 @@ impl Workspace {
         let mut workspace = Self {
             entry_input: None,
             locate: None,
+            clone: None,
             tools: None,
             navigation_issue: None,
             filters: std::array::from_fn(|_| Default::default()), filter_anchors: [None, None, None], filter_editor: None, next_position: None,
@@ -382,6 +384,34 @@ impl Workspace {
     pub fn clipboard_context(&self) -> Option<u64> { if let Some((_,input))=self.entry_editor() {return input.preedit.is_empty().then(||self.entry_input.as_ref().unwrap().id);} self.locate.as_ref().filter(|f| f.working.is_none() && f.review.is_none()).map(|f| f.id).or_else(|| self.tools.as_ref().filter(|f| f.working.is_none() && f.review.is_none()).map(|f| f.id)).or_else(|| self.filter_editor.as_ref().map(|e| e.id)).or_else(|| self.composer.as_ref().map(|c| c.id)) }
 
     pub fn locate_form(&self) -> Option<&crate::LocateForm> { self.locate.as_ref() }
+
+    pub fn clone_form(&self) -> Option<&crate::CloneForm> { self.clone.as_ref() }
+
+    /// Opens the Welcome clone form. It is refused when another surface already
+    /// owns the input, so two forms can never be edited at once.
+    pub fn request_clone(&mut self) -> Effect {
+        if !self.is_welcome() || self.modal() {
+            return Effect::Nothing;
+        }
+        self.clone = Some(crate::CloneForm::new());
+        Effect::Nothing
+    }
+
+    pub fn close_clone(&mut self) -> Effect {
+        self.clone = None;
+        Effect::Send(Job::CancelClone)
+    }
+
+    /// Tab and Enter reach the form; Escape and Ctrl+C leave it.
+    pub fn clone_key(&mut self, key: Key) -> Effect {
+        let Some(form) = self.clone.as_mut() else { return Effect::Nothing };
+        match key {
+            Key::Escape | Key::CtrlC if !form.working => { self.clone = None; Effect::Send(Job::CancelClone) }
+            Key::Char('y') if form.review.is_some() => form.approve(),
+            Key::Char('n') if form.review.is_some() => { self.clone = None; Effect::Send(Job::CancelClone) }
+            _ => form.edit(key),
+        }
+    }
     pub fn request_locate(&mut self) -> Effect {
         let from_open = self.prompt.as_ref().filter(|p| p.kind == PromptKind::OpenRepository && !p.pending()).map(|p| p.text.clone());
         if !self.is_welcome() || (self.modal() && (from_open.is_none() || self.trust.is_some() || self.navigation_issue.is_some())) { return Effect::Nothing; }
@@ -1556,6 +1586,7 @@ impl Workspace {
         if self.is_welcome() {
             return match key {
                 Key::Char('y') => self.cycle_locale(),
+                Key::Char('C') => self.request_clone(),
                 Key::Char('T') => self.request_tools(),
                 Key::Char('L') => self.request_locate(),
                 Key::Char('G') => self.request_git_settings(),
@@ -1821,6 +1852,26 @@ An installed Git is needed only when opening a repository.
 No account or network is required for local work.");
                 }
                 Effect::Nothing
+            }
+            Reply::CloneReview { ticket, lines, destination } => {
+                if let Some(form) = self.clone.as_mut() {
+                    form.working = false;
+                    form.review = Some((ticket, lines));
+                    form.detail = format!(
+                        "Review the clone into {}. Checkout stays deferred until this repository is trusted.",
+                        destination.display_label()
+                    );
+                }
+                Effect::Nothing
+            }
+            Reply::Cloned { destination, lines } => {
+                self.clone = None;
+                self.notice = Some(format!(
+                    "Cloned into {}. The working tree is not checked out: open the repository and approve trust to review the filter and check it out.{}",
+                    destination.display_label(),
+                    if lines.is_empty() { String::new() } else { format!(" {}", lines.join(" ")) }
+                ));
+                Effect::Send(Job::LoadWelcome)
             }
             Reply::Welcome(entries) => {
                 if self.is_welcome() {

@@ -62,6 +62,13 @@ pub fn is_risky(job: &Job) -> bool {
     )
 }
 
+/// A one-use identifier for a reviewed effect. Callers show it in the review and
+/// send it back to execute, so the values reviewed cannot be swapped afterwards.
+pub(crate) fn ticket() -> Result<String, String> {
+    Ok(hex(&minicon_platform::entropy::secure_random_array::<16>()
+        .map_err(|e| format!("cannot create a review ticket: {e:?}"))?))
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
