@@ -1,5 +1,5 @@
 //! Product semantics reuse the actual draw geometry and pointer action path.
-use crate::messages::{english as message, Key as TextKey};
+use crate::messages::Key as TextKey;
 use super::*;
 use srcmgr_platform_ext::{
     AccessibilityBounds, Action, PublishedNode, PublishedRole, PublishedTree,
@@ -152,7 +152,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
             .collect::<Vec<_>>()
             .join("\n");
         b.text(
-            message(TextKey::ChangesReview),
+            workspace.t(TextKey::ChangesReview),
             &text,
             confirmation_body(main, grid, matches!(confirm, Confirm::Ignore { .. })),
         );
@@ -160,24 +160,24 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         if ignore {
             for (rect, name) in ignore_scope_buttons(main, grid)
                 .into_iter()
-                .zip([message(TextKey::ChangesProjectIgnore), message(TextKey::ChangesLocalExclude)])
+                .zip([workspace.t(TextKey::ChangesProjectIgnore), workspace.t(TextKey::ChangesLocalExclude)])
             {
                 b.button(name, rect, pending == 0);
             }
         }
         b.button(
             if ignore {
-                message(TextKey::ChangesSaveRule)
+                workspace.t(TextKey::ChangesSaveRule)
             } else {
-                message(TextKey::ChangesConfirm)
+                workspace.t(TextKey::ChangesConfirm)
             },
             allow,
             workspace.confirmation_ready() && pending == 0,
         );
-        b.button(message(TextKey::ActionCancel), cancel, true);
+        b.button(workspace.t(TextKey::ActionCancel), cancel, true);
     } else if let Some(review) = workspace.trust_review() {
         b.text(
-            message(TextKey::TrustReview),
+            workspace.t(TextKey::TrustReview),
             &trust_lines(review, usize::MAX / 4)
                 .iter()
                 .map(|l| l.text.as_str())
@@ -185,12 +185,12 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 .join("\n"),
             trust_content(main, grid).0,
         );
-        b.button(message(TextKey::TrustApprove), allow, !review.submitted && pending == 0);
-        b.button(message(TextKey::ActionCancel), cancel, !review.submitted);
+        b.button(workspace.t(TextKey::TrustApprove), allow, !review.submitted && pending == 0);
+        b.button(workspace.t(TextKey::ActionCancel), cancel, !review.submitted);
     } else if let Some(form) = workspace.commit_composer() {
         let geometry = commit_geometry(width, height, grid);
         b.input(
-            message(TextKey::CommitMessage),
+            workspace.t(TextKey::CommitMessage),
             &form.editor.text,
             geometry.message,
             !workspace.prompt().is_some_and(|p| p.pending()) && form.editor.preedit.is_empty(),
@@ -203,11 +203,11 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
             && form.editor.text.len() <= composer::PASTE_LIMIT_BYTES
             && form.editor.preedit.is_empty()
             && !workspace.prompt().is_some_and(|p| p.pending());
-        b.button(message(TextKey::CommitApprove), geometry.commit, ready && pending == 0);
-        b.button(message(TextKey::CommitRefresh), geometry.refresh, pending == 0);
-        b.button(message(TextKey::CommitClose), geometry.close, true);
+        b.button(workspace.t(TextKey::CommitApprove), geometry.commit, ready && pending == 0);
+        b.button(workspace.t(TextKey::CommitRefresh), geometry.refresh, pending == 0);
+        b.button(workspace.t(TextKey::CommitClose), geometry.close, true);
         b.text(
-            message(TextKey::CommitIndex),
+            workspace.t(TextKey::CommitIndex),
             &form
                 .review
                 .as_ref()
@@ -239,7 +239,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         );
         let inner = inner_of(geometry.diff, grid);
         b.text(
-            message(TextKey::CommitDiff),
+            workspace.t(TextKey::CommitDiff),
             &form
                 .diff
                 .lines
@@ -254,21 +254,21 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
     } else if let Some(form) = workspace.create_form() {
         if let Some((_, lines)) = &form.review {
             b.text(
-                message(TextKey::CreateReviewTitle),
+                workspace.t(TextKey::CreateReviewTitle),
                 &lines.join("\n"),
                 trust_content(main, grid).0,
             );
         } else {
             let (path, branch) = create_fields(main, grid);
             b.input(
-                message(TextKey::CreateDirectory),
+                workspace.t(TextKey::CreateDirectory),
                 &form.path,
                 path,
                 !form.submitted && !workspace.entry_composing(),
                 !form.branch_focus,
             );
             b.input(
-                message(TextKey::CreateBranch),
+                workspace.t(TextKey::CreateBranch),
                 &form.branch,
                 branch,
                 !form.submitted && !workspace.entry_composing(),
@@ -278,9 +278,9 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         let reviewing = form.review.is_some();
         b.button(
             if reviewing {
-                message(TextKey::CreateApprove)
+                workspace.t(TextKey::CreateApprove)
             } else {
-                message(TextKey::CreateReview)
+                workspace.t(TextKey::CreateReview)
             },
             allow,
             !form.submitted
@@ -289,42 +289,42 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 && (reviewing || (!form.path.is_empty() && !form.branch.is_empty())),
         );
         b.button(
-            if reviewing { message(TextKey::ActionBack) } else { message(TextKey::ActionCancel) },
+            if reviewing { workspace.t(TextKey::ActionBack) } else { workspace.t(TextKey::ActionCancel) },
             cancel,
             !form.submitted && !workspace.entry_composing(),
         );
     } else if let Some(form) = workspace.identity_form() {
         let (name, email) = create_fields(main, grid);
         b.input(
-            message(TextKey::IdentityName),
+            workspace.t(TextKey::IdentityName),
             &form.name,
             name,
             !form.submitted && !workspace.entry_composing(),
             !form.email_focus,
         );
         b.input(
-            message(TextKey::IdentityEmail),
+            workspace.t(TextKey::IdentityEmail),
             &form.email,
             email,
             !form.submitted && !workspace.entry_composing(),
             form.email_focus,
         );
         b.text(
-            message(TextKey::IdentitySources),
+            workspace.t(TextKey::IdentitySources),
             &form.detail,
             identity_info(main, grid),
         );
         b.button(
             if form.ticket.is_none() {
-                message(TextKey::IdentityReload)
+                workspace.t(TextKey::IdentityReload)
             } else {
-                message(TextKey::IdentitySave)
+                workspace.t(TextKey::IdentitySave)
             },
             allow,
             !form.submitted && !workspace.entry_composing() && pending == 0,
         );
         b.button(
-            message(TextKey::ActionCancel),
+            workspace.t(TextKey::ActionCancel),
             cancel,
             !form.submitted && !workspace.entry_composing() || form.ticket.is_none(),
         );
@@ -337,10 +337,10 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         let body = trust_content(main, grid).0;
         let field = create_fields(body, grid).0;
         let label = match prompt.kind() {
-            PromptKind::OpenRepository => message(TextKey::EntryRepositoryPath),
+            PromptKind::OpenRepository => workspace.t(TextKey::EntryRepositoryPath),
             PromptKind::GitSettings => "Git executable",
             PromptKind::NewBranch => "Branch name",
-            PromptKind::Commit => message(TextKey::CommitMessage),
+            PromptKind::Commit => workspace.t(TextKey::CommitMessage),
         };
         b.input(
             label,
@@ -356,7 +356,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
             for (rect, name) in
                 recent_controls(main, grid)
                     .into_iter()
-                    .zip([message(TextKey::ActionOpen), message(TextKey::RecentLocate), message(TextKey::ActionBack)])
+                    .zip([workspace.t(TextKey::ActionOpen), workspace.t(TextKey::RecentLocate), workspace.t(TextKey::ActionBack)])
             {
                 b.button(
                     name,
@@ -367,15 +367,15 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         } else {
             b.button(
                 if prompt.kind() == PromptKind::GitSettings {
-                    message(TextKey::EntryTestSave)
+                    workspace.t(TextKey::EntryTestSave)
                 } else {
-                    message(TextKey::ActionOpen)
+                    workspace.t(TextKey::ActionOpen)
                 },
                 allow,
                 !prompt.pending() && !workspace.entry_composing() && pending == 0,
             );
             b.button(
-                message(TextKey::ActionBack),
+                workspace.t(TextKey::ActionBack),
                 cancel,
                 !prompt.pending() && !workspace.entry_composing(),
             );
@@ -398,13 +398,13 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         b.text("Dialog content",&format!("{text}\nUse this dialog's keyboard controls; assistive field editing is unavailable in this view."),main);
     } else {
         for (name, slots, cells) in [
-            (message(TextKey::ActionOpen), 27, 8),
-            (message(TextKey::EntryGitSettings), 6, 6),
+            (workspace.t(TextKey::ActionOpen), 27, 8),
+            (workspace.t(TextKey::EntryGitSettings), 6, 6),
             (
                 if workspace.is_welcome() {
-                    message(TextKey::EntryCreate)
+                    workspace.t(TextKey::EntryCreate)
                 } else {
-                    message(TextKey::EntryIdentitySettings)
+                    workspace.t(TextKey::EntryIdentitySettings)
                 },
                 17,
                 10,
@@ -457,7 +457,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
             }
             if !workspace.snapshot().recents.is_empty() {
                 for (rect, name) in recent_controls(main, grid).into_iter().zip([
-                    message(TextKey::RecentOpen),
+                    workspace.t(TextKey::RecentOpen),
                     "Locate selected",
                     "Remove selected",
                 ]) {
@@ -485,7 +485,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 b.button(name, rect, true);
             }
             b.button(
-                message(TextKey::CommitPrepare),
+                workspace.t(TextKey::CommitPrepare),
                 Rect {
                     x: width - grid.margin - (grid.advance * 39.0) as i64,
                     y: grid.margin,
@@ -504,7 +504,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                     if workspace.stash_list_visible() {
                         panels.files
                     } else {
-                        file_list_body(panels.files, grid)
+                        file_list_body(panels.files, grid, workspace.locale())
                     },
                 ),
                 (Pane::Branches, panels.branches),
@@ -549,7 +549,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 }
             }
             if !workspace.stash_list_visible() {
-                for (rect, action, name) in file_actions(panels.files, grid) {
+                for (rect, action, name) in file_actions(panels.files, grid, workspace.locale()) {
                     b.button(
                         name,
                         rect,
@@ -577,7 +577,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
                 .collect::<Vec<_>>()
                 .join("\n");
             b.text(
-                message(TextKey::ChangesVisibleDiff),
+                workspace.t(TextKey::ChangesVisibleDiff),
                 &text,
                 diff_body(workspace, main, grid),
             );
@@ -594,7 +594,7 @@ fn build(workspace: &Workspace, surface: Surface, pending: usize) -> Scene {
         })
         .unwrap_or("");
     b.text(
-        message(TextKey::CurrentActionStatus),
+        workspace.t(TextKey::CurrentActionStatus),
         status,
         Rect {
             x: grid.margin,

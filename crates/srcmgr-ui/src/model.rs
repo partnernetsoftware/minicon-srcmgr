@@ -99,6 +99,12 @@ pub struct NavigationIssue {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Snapshot {
+    /// The interface language this frame renders in. It changes display text
+    /// only: paths, object ids and Git's own output stay literal.
+    pub locale: crate::Locale,
+    /// The stored value behind `locale`: "system", "en" or "zh-CN". Kept so the
+    /// selector can offer System again instead of guessing it from the result.
+    pub locale_tag: String,
     pub history_limit: usize,
     pub navigation: Option<crate::Navigation>,
     /// None is an explicit Welcome state, not a guessed Git repository.
@@ -140,6 +146,8 @@ impl Snapshot {
         draft: Option<String>,
     ) -> Self {
         Self {
+            locale: crate::Locale::En,
+            locale_tag: "system".to_owned(),
             navigation: None,
             history_limit: 200,
             repository: Some(repository),
@@ -161,6 +169,8 @@ impl Snapshot {
 
     pub fn welcome() -> Self {
         Self {
+            locale: crate::Locale::En,
+            locale_tag: "system".to_owned(),
             navigation: None,
             history_limit: 200,
             repository: None, recents: Vec::new(), title: "MiniCon SrcMgr".into(),
@@ -264,6 +274,12 @@ pub enum Job {
     PrepareCreate { path: NativePath, branch: String },
     ExecuteCreate(String),
     LoadWelcome,
+    /// Reads the stored locale once at startup, so the Welcome surface renders
+    /// in the user's language before any repository is open.
+    LoadLocale,
+    /// Persists one of the three locale values and reloads in it. The value is
+    /// validated before it is written, so an unknown tag cannot be stored.
+    SetLocale(String),
     ForgetRecent { backend: String, path: EncodedPath },
     GrantRepositoryTrust(String),
     CancelEntry,
@@ -353,6 +369,8 @@ pub enum Reply {
     Welcome(Vec<RecentRow>),
     TrustReview(TrustReview),
     RepositoryOpened(Snapshot),
+    /// The interface language changed; the lists are otherwise unchanged.
+    LocaleChanged(Snapshot),
     Committed(Snapshot),
     BranchCreated(Snapshot),
     DraftSaved(Option<String>),

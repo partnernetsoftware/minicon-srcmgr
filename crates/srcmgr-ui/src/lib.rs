@@ -17,6 +17,7 @@ mod window;
 mod workspace;
 mod timing_receipt;
 
+pub use messages::Locale;
 pub use model::{
     Backend, BranchRow, CommitRow, FileRow, FileTarget, Job, Line, MainRequest, MainView, RemoteRow, Reply, Snapshot, Tone,
     diff_lines,

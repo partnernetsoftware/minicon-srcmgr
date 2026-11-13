@@ -8,8 +8,8 @@ use srcmgr_domain::{ChangeKind, Generation, NativePath};
 use srcmgr_ui::{Backend, BranchRow, CommitRow, FileTarget, Job, MainRequest, MainView, PromptAction, Reply, Snapshot};
 
 use crate::{
-    BACKEND_GIT, DEFAULT_HISTORY_LIMIT, HISTORY_LIMIT_KEY, Options, open_profile_store, open_trusted,
-    parse_history_limit, repository_key,
+    BACKEND_GIT, DEFAULT_HISTORY_LIMIT, HISTORY_LIMIT_KEY, UI_LOCALE_KEY, Options, open_profile_store,
+    open_trusted, parse_history_limit, parse_locale, repository_key,
 };
 
 pub struct WindowBackend {
@@ -29,6 +29,20 @@ impl Backend for WindowBackend {
                 Ok(opened.unwrap_or_else(|text| Reply::PromptFailed { action: PromptAction::OpenRepository, text }))
             }
             Job::CancelPrepared => { self.prepared = None; Ok(Reply::NoChange) }
+            Job::LoadLocale => Ok(Reply::LocaleChanged(Self::locale_only(&self.options))),
+            Job::SetLocale(tag) => Ok(match parse_locale(&tag) {
+                Ok(locale) => (|| {
+                    open_profile_store(&self.options)?
+                        .put_setting(UI_LOCALE_KEY, locale)
+                        .map_err(|error| error.to_string())?;
+                    Ok::<_, String>(())
+                })()
+                .map_or_else(
+                    |text| Reply::Notice(format!("Language not saved: {text}")),
+                    |()| Reply::LocaleChanged(Self::locale_only(&self.options)),
+                ),
+                Err(text) => Reply::Notice(text),
+            }),
             Job::Main { generation, request } => {
                 let context = match &request {
                     MainRequest::CommitFiles { id } => Some(format!("Commit {id}\nBase: unavailable")),
@@ -97,6 +111,19 @@ impl Backend for WindowBackend {
 }
 
 impl WindowBackend {
+    /// A snapshot that carries only the interface language. The window merges
+    /// it, so a language change never replaces lists or an open repository.
+    fn locale_only(options: &Options) -> Snapshot {
+        let mut snapshot = Snapshot::welcome();
+        if let Ok(store) = open_profile_store(options) {
+            snapshot.locale = crate::interface_locale(&store).unwrap_or(srcmgr_ui::Locale::En);
+            if let Ok(Some(tag)) = store.get_setting(UI_LOCALE_KEY) {
+                snapshot.locale_tag = tag;
+            }
+        }
+        snapshot
+    }
+
     pub fn open_target(options: &Options, path: &std::path::Path) -> Result<(Self, Snapshot), String> {
         let worktree = crate::canonical_worktree(path)?;
         let mut selected = options.clone();
@@ -140,6 +167,11 @@ impl WindowBackend {
         let name = NativePath::new(identity.worktree_root.file_name().unwrap_or(identity.worktree_root.as_os_str())).display_label();
         let mut snapshot = Snapshot::new(NativePath::new(identity.worktree_root.as_os_str()), format!("MiniCon SrcMgr - {name} | {location}"), &status, branches, commits, draft);
         snapshot.history_limit = limit;
+        snapshot.locale = crate::interface_locale(&store)?;
+        snapshot.locale_tag = store
+            .get_setting(UI_LOCALE_KEY)
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| "system".to_owned());
         snapshot.stashes = srcmgr_git::stash_list(installation, identity).map_err(|e| e.to_string())?.into_iter()
             .map(|s| srcmgr_ui::StashRow { id: s.id, subject: s.subject }).collect();
         snapshot.remotes = srcmgr_git::list_remotes(installation, identity).map_err(|e| e.to_string())?
@@ -156,6 +188,7 @@ impl WindowBackend {
     fn perform(&mut self, job: Job, ticket: Option<&str>) -> Result<Reply, String> {
         Ok(match job {
             Job::LoadIdentity | Job::SaveIdentity { .. } | Job::LoadGitSettings | Job::ConfigureGit(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_) | Job::LoadWelcome | Job::ForgetRecent { .. } | Job::GrantRepositoryTrust(_) | Job::CancelEntry => return Err("repository entry requires the application entry boundary".into()),
+            Job::LoadLocale | Job::SetLocale(_) => return Err("the interface language is not a repository action".into()),
             Job::PrepareLocate { .. } | Job::SaveLocated(_) | Job::CancelLocate | Job::OpenRepository(_) | Job::EnterRepository { .. } | Job::ResetNavigation(_) | Job::LoadToolSettings(_) | Job::SaveToolSettings { .. } | Job::PrepareTool { .. } | Job::LaunchTool(_) | Job::CancelTool => return Err("repository entry and tools must use the application worker path".to_owned()),
             Job::StashAction { id, expected, operation } => {
                 let session = open_trusted(&self.options, &self.worktree)?;
@@ -1042,7 +1075,7 @@ pub(crate) mod tests {
 
     fn full(reply: Reply) -> Snapshot {
         match reply {
-            Reply::Full(snapshot) | Reply::Committed(snapshot) | Reply::BranchCreated(snapshot) => snapshot,
+            Reply::Full(snapshot) | Reply::Committed(snapshot) | Reply::BranchCreated(snapshot) | Reply::LocaleChanged(snapshot) => snapshot,
             other => panic!("expected a full snapshot, got {other:?}"),
         }
     }

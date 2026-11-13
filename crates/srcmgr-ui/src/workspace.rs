@@ -1281,6 +1281,36 @@ impl Workspace {
     pub const fn snapshot(&self) -> &Snapshot {
         &self.snapshot
     }
+    /// The interface language this frame renders in.
+    #[must_use]
+    pub const fn locale(&self) -> crate::Locale {
+        self.snapshot.locale
+    }
+
+    /// The stored language value, for the visible selector.
+    #[must_use]
+    pub fn locale_tag(&self) -> &str {
+        &self.snapshot.locale_tag
+    }
+
+    /// Walks System → English → 简体中文 → System. The window sends the result
+    /// to the backend, which validates and persists it before reloading, so a
+    /// refused value leaves the frame untouched.
+    pub fn cycle_locale(&mut self) -> Effect {
+        let next = match self.snapshot.locale_tag.as_str() {
+            "system" => "en",
+            "en" => "zh-CN",
+            _ => "system",
+        };
+        Effect::Send(Job::SetLocale(next.to_owned()))
+    }
+
+    /// One catalogue string in that language. Only display text goes through
+    /// here; paths, object ids and Git output are formatted literally.
+    #[must_use]
+    pub(crate) const fn t(&self, key: crate::messages::Key) -> &'static str {
+        crate::messages::text(key, self.locale())
+    }
 
     #[must_use]
     pub const fn focus(&self) -> Pane {
@@ -1525,6 +1555,7 @@ impl Workspace {
         }
         if self.is_welcome() {
             return match key {
+                Key::Char('y') => self.cycle_locale(),
                 Key::Char('T') => self.request_tools(),
                 Key::Char('L') => self.request_locate(),
                 Key::Char('G') => self.request_git_settings(),
@@ -1773,6 +1804,21 @@ impl Workspace {
                     form.review = Some((ticket, lines));
                     form.submitted = false;
                     self.trust_scroll = 0;
+                }
+                Effect::Nothing
+            }
+            Reply::LocaleChanged(snapshot) => {
+                // The language is display state: it replaces the strings every
+                // later frame draws and nothing else. Lists, selections, drafts
+                // and the open repository stay exactly as they were.
+                self.snapshot.locale = snapshot.locale;
+                self.snapshot.locale_tag = snapshot.locale_tag;
+                if self.is_welcome() {
+                    self.main = MainView::text("Welcome to MiniCon SrcMgr
+Open a local Git repository with Ctrl+O or Open.
+There are no recent repositories yet.
+An installed Git is needed only when opening a repository.
+No account or network is required for local work.");
                 }
                 Effect::Nothing
             }
@@ -2849,8 +2895,35 @@ mod tests {
         CommitRow { id: id.to_owned(), subject: format!("subject {id}"), merge: false }
     }
 
+
+    #[test]
+    fn the_language_control_cycles_through_the_three_stored_values() {
+        let mut workspace = Workspace::new(Snapshot::welcome());
+        assert_eq!(workspace.locale_tag(), "system");
+        assert_eq!(workspace.cycle_locale(), Effect::Send(Job::SetLocale("en".into())));
+        workspace.reply(Reply::LocaleChanged(Snapshot { locale_tag: "en".into(), locale: crate::Locale::En, ..Snapshot::welcome() }));
+        assert_eq!(workspace.locale_tag(), "en");
+        assert_eq!(workspace.cycle_locale(), Effect::Send(Job::SetLocale("zh-CN".into())));
+        workspace.reply(Reply::LocaleChanged(Snapshot { locale_tag: "zh-CN".into(), locale: crate::Locale::ZhCn, ..Snapshot::welcome() }));
+        assert_eq!(workspace.locale(), crate::Locale::ZhCn);
+        assert_eq!(workspace.cycle_locale(), Effect::Send(Job::SetLocale("system".into())));
+    }
+
+    #[test]
+    fn a_language_change_keeps_the_open_lists_and_selection() {
+        let mut workspace = Workspace::new(snapshot(None));
+        let before = workspace.snapshot().clone();
+        workspace.reply(Reply::LocaleChanged(Snapshot { locale_tag: "zh-CN".into(), locale: crate::Locale::ZhCn, ..Snapshot::welcome() }));
+        assert_eq!(workspace.locale(), crate::Locale::ZhCn);
+        assert_eq!(workspace.snapshot().files, before.files, "a language change must not touch the lists");
+        assert_eq!(workspace.snapshot().repository, before.repository);
+        assert_eq!(workspace.snapshot().commits, before.commits);
+    }
+
     fn snapshot(draft: Option<&str>) -> Snapshot {
         Snapshot {
+            locale: crate::Locale::En,
+            locale_tag: "system".to_owned(),
             history_limit: 200,
             navigation: None,
             repository: Some(NativePath::new("fixture-repository")),

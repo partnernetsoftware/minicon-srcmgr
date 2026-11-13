@@ -439,6 +439,38 @@ fn short_object_id(object_id: &str) -> &str {
 const HISTORY_LIMIT_KEY: &str = "history.limit";
 const DEFAULT_HISTORY_LIMIT: usize = 20;
 const MAX_HISTORY_LIMIT: usize = 200;
+/// The interface language. `system` follows the environment once at startup;
+/// `en` and `zh-CN` are explicit and persist across restarts.
+const UI_LOCALE_KEY: &str = "ui.locale";
+
+/// The environment's own language preference. Windows has no `LANG` unless the
+/// user set one, so `system` resolves to English there and an explicit choice is
+/// the only way to Chinese; that is stated in the release notes rather than
+/// guessed from a registry value this build does not read.
+pub(crate) fn chinese_environment() -> bool {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .filter_map(|name| env::var(name).ok())
+        .any(|value| value.to_ascii_lowercase().trim_start().starts_with("zh"))
+}
+
+/// Resolves the stored language against the environment. Reading the setting is
+/// the only profile access here, so a language change needs no repository.
+pub(crate) fn interface_locale(store: &srcmgr_state::ProfileStore) -> Result<srcmgr_ui::Locale, String> {
+    let saved = store.get_setting(UI_LOCALE_KEY).map_err(|error| error.to_string())?;
+    Ok(srcmgr_ui::Locale::resolve(saved.as_deref(), chinese_environment()))
+}
+
+/// Accepts only the three values the window can render. Anything else is a
+/// refusal rather than a silent fallback, so a typo cannot persist.
+fn parse_locale(text: &str) -> Result<&'static str, String> {
+    match text {
+        "system" => Ok("system"),
+        "en" => Ok("en"),
+        "zh-CN" | "zh_CN" | "zh" => Ok("zh-CN"),
+        _ => Err(format!("{UI_LOCALE_KEY} must be one of: system, en, zh-CN")),
+    }
+}
 
 /// `setting get|set <key> [value]`: app preferences kept in the profile store.
 /// Only the keys listed here are accepted, and each value is validated before
@@ -446,8 +478,10 @@ const MAX_HISTORY_LIMIT: usize = 200;
 fn setting_command(options: &Options) -> Result<(), String> {
     let action = options.positional.get(1).and_then(|word| word.to_str()).ok_or(USAGE)?;
     let key = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    if key != HISTORY_LIMIT_KEY {
-        return Err(format!("unknown setting '{key}'; known keys: {HISTORY_LIMIT_KEY}"));
+    if key != HISTORY_LIMIT_KEY && key != UI_LOCALE_KEY {
+        return Err(format!(
+            "unknown setting '{key}'; known keys: {HISTORY_LIMIT_KEY}, {UI_LOCALE_KEY}"
+        ));
     }
     let mut store = open_profile_store(options)?;
     match action {
@@ -457,11 +491,17 @@ fn setting_command(options: &Options) -> Result<(), String> {
         },
         "set" => {
             let value = options.positional.get(3).and_then(|word| word.to_str()).ok_or(USAGE)?;
-            let limit = parse_history_limit(value)?;
-            store
-                .put_setting(key, &limit.to_string())
-                .map_err(|error| error.to_string())?;
-            println!("{key} = {limit}");
+            if key == UI_LOCALE_KEY {
+                let locale = parse_locale(value)?;
+                store.put_setting(key, locale).map_err(|error| error.to_string())?;
+                println!("{key} = {locale}");
+            } else {
+                let limit = parse_history_limit(value)?;
+                store
+                    .put_setting(key, &limit.to_string())
+                    .map_err(|error| error.to_string())?;
+                println!("{key} = {limit}");
+            }
         }
         _ => return Err(USAGE.to_owned()),
     }
