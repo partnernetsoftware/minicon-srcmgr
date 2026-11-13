@@ -123,6 +123,10 @@ pub struct Snapshot {
     pub upstream: Option<String>,
     pub ahead: u32,
     pub behind: u32,
+    /// The integration Git is in the middle of, named as Git names it.
+    pub operation: Option<String>,
+    /// Paths the index reports as unmerged.
+    pub unmerged: Vec<String>,
     /// Configured remotes, already redacted for display.
     pub remotes: Vec<RemoteRow>,
 }
@@ -163,6 +167,8 @@ impl Snapshot {
             upstream: None,
             ahead: 0,
             behind: 0,
+            operation: None,
+            unmerged: Vec::new(),
             remotes: Vec::new(),
         }
     }
@@ -177,7 +183,8 @@ impl Snapshot {
             head: "Open a local repository. No account required.".into(),
             files: Vec::new(), branches: Vec::new(), commits: Vec::new(),
             draft: None, stage_result: None, stashes: Vec::new(),
-            upstream: None, ahead: 0, behind: 0, remotes: Vec::new(),
+            upstream: None, ahead: 0, behind: 0,
+            operation: None, unmerged: Vec::new(), remotes: Vec::new(),
         }
     }
 }

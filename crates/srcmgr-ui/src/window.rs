@@ -1171,8 +1171,8 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         grid,
         Panel { focused: focus == Pane::Status, title: "[1] Status", empty: "" },
         &[Line { tone: Tone::Text, text: match &snapshot.upstream {
-            Some(upstream) => format!("{} | {upstream} ahead {} behind {}", snapshot.head, snapshot.ahead, snapshot.behind),
-            None => snapshot.head.clone(),
+            Some(upstream) => format!("{} | {upstream} ahead {} behind {}{}", snapshot.head, snapshot.ahead, snapshot.behind, operation_suffix(snapshot)),
+            None => format!("{}{}", snapshot.head, operation_suffix(snapshot)),
         } }],
         selected(Pane::Status),
     );
@@ -1647,6 +1647,17 @@ fn tool_scene(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
     let info = tool_info(form);
     text_panel(draws, geometry.info, grid, false, if editable { "Settings / destination" } else { "Working; fields are read-only" }, &wrapped_lines(&info, inner_of(geometry.info, grid).cols), workspace.trust_scroll(), None);
     for (index, label) in [workspace.t(TextKey::ToolsSave), workspace.t(TextKey::ToolsReview), "Clear saved", workspace.t(TextKey::ActionClose)].into_iter().enumerate() { button_draw(draws, geometry.buttons[index], grid, label, if index == 3 { FOCUS_BORDER } else if editable { BORDER } else { MUTED_TEXT }); }
+}
+
+/// Names an unfinished integration next to the branch, so a user who left a
+/// conflicted merge in a terminal sees the same state the write guard enforces.
+fn operation_suffix(snapshot: &crate::Snapshot) -> String {
+    match (&snapshot.operation, snapshot.unmerged.len()) {
+        (None, 0) => String::new(),
+        (Some(operation), 0) => format!(" | {operation} in progress"),
+        (Some(operation), count) => format!(" | {operation} in progress, {count} unmerged"),
+        (None, count) => format!(" | {count} unmerged"),
+    }
 }
 
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
@@ -2343,6 +2354,8 @@ mod tests {
             upstream: None,
             ahead: 0,
             behind: 0,
+            operation: None,
+            unmerged: Vec::new(),
             remotes: Vec::new(),
         }
     }

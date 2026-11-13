@@ -22,6 +22,7 @@ mod clone;
 mod remote_edit;
 mod durability;
 mod remotes;
+mod operation_state;
 mod repository;
 mod runner;
 mod status;
@@ -43,6 +44,7 @@ pub use clone::{ClonePreview, CloneRequest, clone as clone_repository, preview a
 pub use remote_edit::{RemoteChange, RemotePreview, apply as apply_remote_change, preview as preview_remote_change, target as remote_change_target};
 pub use remotes::{FetchReport, FetchUpdate, RemoteSummary, TrackingState, fetch, list as list_remotes, progress_line, redact_url, tracking};
 pub use runner::ProgressSink;
+pub use operation_state::{Operation, OperationState, detect as detect_operation};
 pub use repository::{reference_target, retain_recovery_ref};
 pub use repository::ReviewedDiff;
 pub use repository::{

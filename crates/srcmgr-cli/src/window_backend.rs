@@ -111,6 +111,22 @@ impl Backend for WindowBackend {
 }
 
 impl WindowBackend {
+    /// Refuses a write while Git reports an unfinished operation or unmerged
+    /// paths. The check reads Git's own metadata, so an operation started in a
+    /// terminal blocks the window too; the reason names what to resolve and the
+    /// repository path to hand to a terminal.
+    fn refuse_while_unresolved(&self, session: &crate::Session) -> Result<(), String> {
+        let state = srcmgr_git::detect_operation(&session.installation, &session.identity)
+            .map_err(|error| format!("Cannot read the repository's operation state: {error}"))?;
+        match state.refusal() {
+            Some(reason) => Err(format!(
+                "{reason}\nRepository: {}",
+                crate::NativePath::new(session.identity.worktree_root.as_os_str()).display_label()
+            )),
+            None => Ok(()),
+        }
+    }
+
     /// A snapshot that carries only the interface language. The window merges
     /// it, so a language change never replaces lists or an open repository.
     fn locale_only(options: &Options) -> Snapshot {
@@ -168,6 +184,10 @@ impl WindowBackend {
         let mut snapshot = Snapshot::new(NativePath::new(identity.worktree_root.as_os_str()), format!("MiniCon SrcMgr - {name} | {location}"), &status, branches, commits, draft);
         snapshot.history_limit = limit;
         snapshot.locale = crate::interface_locale(&store)?;
+        if let Ok(state) = srcmgr_git::detect_operation(installation, identity) {
+            snapshot.operation = state.operation.map(|operation| operation.name().to_owned());
+            snapshot.unmerged = state.unmerged;
+        }
         snapshot.locale_tag = store
             .get_setting(UI_LOCALE_KEY)
             .map_err(|e| e.to_string())?
@@ -214,6 +234,7 @@ impl WindowBackend {
             }
             Job::Pull => {
                 let session = open_trusted(&self.options, &self.worktree)?;
+                self.refuse_while_unresolved(&session)?;
                 let cancel = std::sync::atomic::AtomicBool::new(false);
                 let report = srcmgr_git::pull_ff(&session.installation, &session.identity, &cancel, None).map_err(|e| e.to_string())?;
                 let mut snapshot = self.snapshot()?;
@@ -226,6 +247,7 @@ impl WindowBackend {
             }
             Job::Push { remote } => {
                 let session = open_trusted(&self.options, &self.worktree)?;
+                self.refuse_while_unresolved(&session)?;
                 let cancel = std::sync::atomic::AtomicBool::new(false);
                 let report = srcmgr_git::push_current(&session.installation, &session.identity, &remote, &cancel, None).map_err(|e| e.to_string())?;
                 let mut snapshot = self.snapshot()?;
@@ -253,6 +275,7 @@ impl WindowBackend {
             }
             Job::Main { generation, request } => Reply::Main { generation, view: self.main(request)? },
             Job::SetFile { path, stage } => {
+                self.refuse_while_unresolved(&open_trusted(&self.options, &self.worktree)?)?;
                 self.set_file(&path, stage)?;
                 self.stage_result(Some(&path))?
             }
@@ -328,6 +351,7 @@ impl WindowBackend {
                 }
             }
             Job::Commit { ticket, message } => {
+                self.refuse_while_unresolved(&open_trusted(&self.options, &self.worktree)?)?;
                 let (id, warning) = match self.commit(&ticket, &message)? {
                     srcmgr_git::ReviewedCommit::Observed { oid, warning } => (oid, warning),
                     srcmgr_git::ReviewedCommit::Unknown(reason) => return Ok(Reply::PromptCompleted { action: PromptAction::Commit, text: format!("{reason}\nThe submitted draft and pending attempt are durable. Use repository Refresh to inspect current HEAD/index before retrying; no automatic retry was requested.") }),

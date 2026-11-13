@@ -2990,6 +2990,8 @@ mod tests {
             upstream: None,
             ahead: 0,
             behind: 0,
+            operation: None,
+            unmerged: Vec::new(),
             remotes: Vec::new(),
         }
     }
