@@ -78,7 +78,7 @@ An unsigned build is never published. Development candidates are private: they c
 
 ## 0.1.0 first-user beta delivery target
 
-Status: the Windows x86_64 cell is **published** (v0.1.0, 2026-11-07) and the remaining cells are not. Product admission is owned by [01](PRD_01_product.md#first-user-admission-matrix) and sequencing by [the roadmap](../plan/roadmap-0.1.0.md). Existing 0.0.x source releases retain their original scope; a source archive alone does not satisfy the first-user runnable-client target. The published artifact meets the package, signature and first-run parts of this section, but **not** the accessibility, IME/DPI, clean-image and usability parts; [0.1.1](PRD_12_platform_delivery.md#011-delivery-target) carries those gates, and the 0.1.0 release notes name them as limits rather than passes.
+Status: the Windows x86_64 cell is **published** (v0.1.0, 2026-11-07) and the remaining cells are not. Product admission is owned by [01](PRD_01_product.md#first-user-admission-matrix) and sequencing by [the roadmap](../plan/roadmap-0.1.0.md). Existing 0.0.x source releases retain their original scope; a source archive alone does not satisfy the first-user runnable-client target. The published artifact meets the package, signature and first-run parts of this section, but **not** the accessibility, IME/DPI, clean-image and usability parts; [0.1.3](PRD_12_platform_delivery.md#011-delivery-target) carries those gates, and the 0.1.0 release notes name them as limits rather than passes.
 
 The first named beta cell is **Windows x86_64** at this document's supported OS floor. Supply the signed portable ZIP, directly runnable executable, notices, actual runtime/Git prerequisites, concise start/known-limits instructions, version/source/artifact identity and a feedback path. A clean user profile must launch without Rust, a developer SDK, a mandatory account or admin installation. Git remains separately installed; missing Git has actionable guidance. Returning users keep settings/drafts; archive extraction is not permission to overwrite repository data.
 
@@ -107,11 +107,11 @@ Status: published 2026-11-09 as [v0.1.2](https://github.com/partnernetsoftware/m
 
 Per cell, an archive contains the executable, a README, a checksum list and a receipt naming the source SHA and the asset digests. A cell whose runtime court did not pass is never packaged, and a partial matrix is never a release candidate. [The 0.1.2 plan](../plan/plan-0.1.2.md) owns the evidence.
 
-## 0.1.1 delivery target
+## 0.1.3 delivery target
 
-Status: open. 0.1.1 closes the gaps the 0.1.0 release notes named, without widening reach: in-window Clone and Remotes surfaces bound to the existing preview/apply contracts, zh-CN primary strings with a persistent locale choice, reviewed divergence with conflict detection and terminal handoff, and the qualification courts that 0.1.0 could not run — clean-image launch, accessibility and CJK/clipboard checks, a long-session resource read and the five-participant study.
+Status: in progress. 0.1.3 closes the gaps the 0.1.0 release notes named, without widening reach: in-window Clone and Remotes surfaces bound to the existing preview/apply contracts, zh-CN primary strings with a persistent locale choice, reviewed divergence with conflict detection and terminal handoff, and the qualification courts that 0.1.0 could not run — clean-image launch, accessibility and CJK/clipboard checks, a long-session resource read and the five-participant study.
 
-The release gate is unchanged: `signing.mode=required`, an unpublished version, a release-eligible signature that the canonical inspector reports as `Valid` with the company organization and an RFC 3161 timestamp, and downloaded assets re-hashed and started before publication. Anything still unqualified is stated in the release notes. [The 0.1.1 plan](../plan/plan-0.1.1.md) owns the evidence.
+The release gate is unchanged: `signing.mode=required`, an unpublished version, a release-eligible signature that the canonical inspector reports as `Valid` with the company organization and an RFC 3161 timestamp, and downloaded assets re-hashed and started before publication. Anything still unqualified is stated in the release notes. [The 0.1.3 plan](../plan/plan-0.1.3.md) owns the evidence.
 
 ## 0.1.0 signed beta status
 

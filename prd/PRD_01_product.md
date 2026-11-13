@@ -253,7 +253,7 @@ This tree defines the first-user product target. It selects concrete behaviors f
 
 Must means a release-blocking task for the first-user target, not that it is already implemented. The version allocations and execution status live only in the roadmap/plans. Existing historical Shipped rows above remain scoped to their named source release.
 
-Status 2026-11-08: 0.1.0 **published** a signed, runnable Windows x86_64 beta. It satisfies three of the rows below in full — *Enter a project*, *Make a precise commit* and *Exchange work* — and partially satisfies *Operate comfortably* and *Trust daily use*. The remaining Must rows are **not** met and are not claimed: *Understand a change*, *Trace an ordinary file*, *Manage a task branch/release tag*, *Finish a conflicted integration* and *Park or correct work*. 0.1.1 is the version that closes the interaction, language, conflict-handoff and qualification gaps; merge, rebase, tags and history expansion stay unallocated after it. A published beta with named limits is honest delivery; treating the matrix as satisfied would not be.
+Status 2026-11-08: 0.1.0 **published** a signed, runnable Windows x86_64 beta. It satisfies three of the rows below in full — *Enter a project*, *Make a precise commit* and *Exchange work* — and partially satisfies *Operate comfortably* and *Trust daily use*. The remaining Must rows are **not** met and are not claimed: *Understand a change*, *Trace an ordinary file*, *Manage a task branch/release tag*, *Finish a conflicted integration* and *Park or correct work*. 0.1.3 is the version that closes the interaction, language, conflict-handoff and qualification gaps; merge, rebase, tags and history expansion stay unallocated after it. A published beta with named limits is honest delivery; treating the matrix as satisfied would not be.
 
 | User task / tier | 0.1.0 completion boundary | Behavior owner |
 |---|---|---|
@@ -277,7 +277,7 @@ Status 2026-11-08: 0.1.0 **published** a signed, runnable Windows x86_64 beta. I
 
 Three Must outcomes were selected: enter a repository (open/init/clone), make a precise commit, and exchange work (clone/fetch/fast-forward pull/reviewed push). Conflict center, tags, graph, file history/blame, stash management and reset moved to Should or unallocated. Merge and rebase are not admitted.
 
-Delivered 2026-11-07: the signed Windows x86_64 package with a runnable executable, a checksum list, a public signing receipt and first-run instructions, plus window fetch/pull/push actions. **Not delivered from this re-scope:** the five-participant study, the in-window Clone and Remotes surfaces, zh-CN primary flows, and conflict detection with terminal handoff. Those four are the 0.1.1 scope in [the 0.1.1 plan](../plan/plan-0.1.1.md), and 0.1.0's [release notes](../releases/0.1.0.md) name them as known limits rather than qualifying them silently.
+Delivered 2026-11-07: the signed Windows x86_64 package with a runnable executable, a checksum list, a public signing receipt and first-run instructions, plus window fetch/pull/push actions. **Not delivered from this re-scope:** the five-participant study, the in-window Clone and Remotes surfaces, zh-CN primary flows, and conflict detection with terminal handoff. Those four are the 0.1.3 scope in [the 0.1.3 plan](../plan/plan-0.1.3.md), and 0.1.0's [release notes](../releases/0.1.0.md) name them as known limits rather than qualifying them silently.
 
 ### Benchmark interpretation
 

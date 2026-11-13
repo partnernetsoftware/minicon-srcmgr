@@ -130,9 +130,9 @@ Status: delivered for remote observation and explicit fetch in 0.0.7. Clone and 
 - Freshness: only the active repository may watch. Inactive tabs show last observed values and refresh before display on return; there is no global timer and no background fetch.
 - Authenticated transports report the missing prerequisite explicitly. A success claim requires the controlled fixture evidence; a local-path remote is never displayed as authentication.
 
-## 0.1.1 window surfaces, language and handoff slice
+## 0.1.3 window surfaces, language and handoff slice
 
-Status: target contract for the planned slice, not implemented. [07](../prd/PRD_07_remotes.md) owns remote behavior, [08](../prd/PRD_08_recovery.md) owns operation state, and this section owns how the window presents them. Evidence and stopping conditions live in [the 0.1.1 plan](../plan/plan-0.1.1.md).
+Status: target contract for the active slice; the Clone form, Remotes panel, locale table and conflict handoff described below are in progress. [07](../prd/PRD_07_remotes.md) owns remote behavior, [08](../prd/PRD_08_recovery.md) owns operation state, and this section owns how the window presents them. Evidence and stopping conditions live in [the 0.1.3 plan](../plan/plan-0.1.3.md).
 
 - **Clone from Welcome.** Fields: URL, destination, branch, depth. The review shows the resolved absolute destination, the redacted transport, the branch or "remote default", the depth, and that checkout waits for a separate filter decision. Approve starts one clone; Cancel writes nothing. A failure keeps the target so it can be inspected, and the row offers Inspect and Remove; removal requires the same explicit confirmation as any destructive action.
 - **Remotes panel.** One row per remote: name, redacted fetch URL, redacted push URL when it differs, and the configured refspec. Actions Add, Set URL, Rename, Remove and Fetch this remote. Every write first shows the local effect — the exact values before and after, and the statement that no server repository is touched — and applies only from that review. A refusal leaves the configuration unchanged and explains the reason.
