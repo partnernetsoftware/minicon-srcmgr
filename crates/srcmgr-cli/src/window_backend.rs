@@ -202,6 +202,9 @@ impl WindowBackend {
         snapshot.upstream = tracking.upstream;
         snapshot.ahead = tracking.ahead;
         snapshot.behind = tracking.behind;
+        if let (Some(local), Some(upstream)) = (tracking.local_tip, tracking.upstream_tip) {
+            snapshot.divergence = Some((local, upstream));
+        }
         Ok(snapshot)
     }
 
@@ -235,6 +238,14 @@ impl WindowBackend {
             Job::Pull => {
                 let session = open_trusted(&self.options, &self.worktree)?;
                 self.refuse_while_unresolved(&session)?;
+                // Divergence is a decision, not an error to retry: refuse with
+                // both sides named so the user chooses how to integrate.
+                let tracking = srcmgr_git::tracking(&session.installation, &session.identity).map_err(|e| e.to_string())?;
+                if let (Some(local), Some(upstream)) = (&tracking.local_tip, &tracking.upstream_tip) {
+                    return Err(format!(
+                        "Refused: the local branch and its fetched upstream have both advanced.\nLocal: {local}\nFetched upstream: {upstream}\nPull never merges, rebases or stashes on its own; resolve the divergence in a terminal, then refresh."
+                    ));
+                }
                 let cancel = std::sync::atomic::AtomicBool::new(false);
                 let report = srcmgr_git::pull_ff(&session.installation, &session.identity, &cancel, None).map_err(|e| e.to_string())?;
                 let mut snapshot = self.snapshot()?;

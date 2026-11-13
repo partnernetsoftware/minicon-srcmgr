@@ -172,6 +172,33 @@ fn a_diverged_branch_is_refused_without_moving_head() {
 }
 
 #[test]
+fn a_diverged_branch_names_both_tips_and_a_linear_one_names_neither() {
+    let (_fixture, _remote, first, second) = two_copies("tips");
+    let installation = installation();
+    let repository = locate(&installation, &first).expect("locate");
+    commit(&first, "local.txt", "local\n", "local work");
+    commit(&second, "notes.txt", "one\nremote\n", "remote work");
+    git(&second, &["push", "origin", "main"]);
+    let cancel = AtomicBool::new(false);
+    fetch(&installation, &repository, "origin", &cancel, None).expect("fetch");
+    let diverged = tracking(&installation, &repository).expect("tracking");
+    assert!(diverged.ahead > 0 && diverged.behind > 0, "{diverged:?}");
+    let (local, upstream) = (
+        diverged.local_tip.expect("local tip"),
+        diverged.upstream_tip.expect("upstream tip"),
+    );
+    assert!(local.contains("local work"), "{local}");
+    assert!(upstream.contains("remote work"), "{upstream}");
+    // Both tips are short-oid plus subject, so the line stays one row wide.
+    assert!(local.split_once(' ').is_some_and(|(oid, _)| oid.len() >= 7), "{local}");
+    // A branch that only moved forward is not diverged and names no tips.
+    git(&first, &["reset", "--hard", "origin/main"]);
+    let linear = tracking(&installation, &repository).expect("tracking after reset");
+    assert_eq!(linear.ahead, 0);
+    assert!(linear.local_tip.is_none() && linear.upstream_tip.is_none(), "{linear:?}");
+}
+
+#[test]
 fn a_missing_upstream_is_reported_before_any_merge() {
     let (_fixture, _remote, first, _second) = two_copies("no-upstream");
     let installation = installation();

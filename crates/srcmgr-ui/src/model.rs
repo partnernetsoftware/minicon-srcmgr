@@ -127,6 +127,9 @@ pub struct Snapshot {
     pub operation: Option<String>,
     /// Paths the index reports as unmerged.
     pub unmerged: Vec<String>,
+    /// The local and fetched tips when both sides advanced, each as
+    /// `short-oid subject`. They are what the last fetch recorded.
+    pub divergence: Option<(String, String)>,
     /// Configured remotes, already redacted for display.
     pub remotes: Vec<RemoteRow>,
 }
@@ -169,6 +172,7 @@ impl Snapshot {
             behind: 0,
             operation: None,
             unmerged: Vec::new(),
+            divergence: None,
             remotes: Vec::new(),
         }
     }
@@ -184,7 +188,7 @@ impl Snapshot {
             files: Vec::new(), branches: Vec::new(), commits: Vec::new(),
             draft: None, stage_result: None, stashes: Vec::new(),
             upstream: None, ahead: 0, behind: 0,
-            operation: None, unmerged: Vec::new(), remotes: Vec::new(),
+            operation: None, unmerged: Vec::new(), divergence: None, remotes: Vec::new(),
         }
     }
 }

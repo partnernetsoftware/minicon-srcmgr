@@ -30,11 +30,15 @@ pub struct TrackingState {
     pub upstream: Option<String>,
     pub ahead: u32,
     pub behind: u32,
+    /// The local branch tip as `short-oid subject`, when both sides advanced.
+    pub local_tip: Option<String>,
+    /// The fetched upstream tip as `short-oid subject`, when both sides advanced.
+    pub upstream_tip: Option<String>,
 }
 
 impl TrackingState {
     const fn none() -> Self {
-        Self { upstream: None, ahead: 0, behind: 0 }
+        Self { upstream: None, ahead: 0, behind: 0, local_tip: None, upstream_tip: None }
     }
 }
 
@@ -186,7 +190,37 @@ pub fn tracking(git: &GitInstallation, repo: &RepositoryIdentity) -> Result<Trac
     let (Some(behind), Some(ahead)) = (behind, ahead) else {
         return Err(GitError::MalformedOutput { record: 0 });
     };
-    Ok(TrackingState { upstream: Some(NativePath::new(&upstream).display_label()), ahead, behind })
+    // Both sides advanced: name them so a user sees what would have to be
+    // integrated instead of only a pair of counts. This is a read of local refs;
+    // the upstream commit is what the last fetch recorded, never live server
+    // truth, which is why the status line says "as of the last fetch".
+    let (local_tip, upstream_tip) = if ahead > 0 && behind > 0 {
+        (tip(git, repo, "HEAD")?, tip(git, repo, "@{upstream}")?)
+    } else {
+        (None, None)
+    };
+    Ok(TrackingState {
+        upstream: Some(NativePath::new(&upstream).display_label()),
+        ahead,
+        behind,
+        local_tip,
+        upstream_tip,
+    })
+}
+
+/// One commit as `short-oid subject`, with control characters removed so a
+/// crafted subject cannot rewrite the terminal line it is displayed on.
+fn tip(git: &GitInstallation, repo: &RepositoryIdentity, reference: &str) -> Result<Option<String>, GitError> {
+    let output = runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["log", "-1", "--format=%h %s", "--no-decorate", reference],
+        None,
+        Limits::METADATA,
+    )?;
+    let text = String::from_utf8(output.stdout).map_err(|_| GitError::MalformedOutput { record: 0 })?;
+    let cleaned: String = text.trim().chars().filter(|c| !c.is_control()).collect();
+    Ok((!cleaned.is_empty()).then_some(cleaned))
 }
 
 /// Fetches one configured remote and returns exactly the refs Git reported.

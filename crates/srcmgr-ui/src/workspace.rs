@@ -2992,6 +2992,7 @@ mod tests {
             behind: 0,
             operation: None,
             unmerged: Vec::new(),
+            divergence: None,
             remotes: Vec::new(),
         }
     }

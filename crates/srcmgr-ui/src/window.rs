@@ -1652,6 +1652,12 @@ fn tool_scene(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
 /// Names an unfinished integration next to the branch, so a user who left a
 /// conflicted merge in a terminal sees the same state the write guard enforces.
 fn operation_suffix(snapshot: &crate::Snapshot) -> String {
+    // Divergence is shown before anything is attempted, with both tips named and
+    // the fact that they are what the last fetch recorded. Pull is refused from
+    // this state rather than choosing an integration for the user.
+    if let Some((local, upstream)) = &snapshot.divergence {
+        return format!(" | diverged: local {local} | fetched upstream {upstream}");
+    }
     match (&snapshot.operation, snapshot.unmerged.len()) {
         (None, 0) => String::new(),
         (Some(operation), 0) => format!(" | {operation} in progress"),
@@ -2356,6 +2362,7 @@ mod tests {
             behind: 0,
             operation: None,
             unmerged: Vec::new(),
+            divergence: None,
             remotes: Vec::new(),
         }
     }
