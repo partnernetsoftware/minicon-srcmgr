@@ -100,7 +100,7 @@ Merge points: `window.rs` and `workspace.rs` take P1 and P2 in that order from o
 
 | Case | Required outcome | State |
 |---|---|---|
-| C1 · clone panel | A reviewed clone lands in an empty destination without checkout; a nonempty destination is refused with its contents intact; a partial target can be inspected and removed | `[_]` |
+| C1 · clone panel | A reviewed clone lands in an empty destination without checkout; a nonempty destination is refused with its contents intact; a partial target can be inspected and removed | `[-]` form, review and one-use approval delivered with 7 workspace cases; a local clone is verified end to end (destination holds only `.git`, `a.txt` absent); in-panel Inspect/Remove of a partial target is not built yet |
 | C2 · remotes panel | Each panel action shows the local effect first and changes only what it showed; a refusal leaves the configuration byte-identical; no server is contacted | `[_]` |
 | C3 · language | Every primary control, status and refusal has a zh-CN string; the override survives restart; paths and OIDs are untouched | `[-]` catalog, selector and persistence delivered; 63 controls translated, and 57 remaining hard-coded strings (43 notices, 9 main views, 4 hint lines, 1 welcome view) still need moving into the catalog |
 | C4 · divergence | A diverged branch shows both sides and a fetch timestamp, and no integration happens without an explicit choice | `[_]` |
@@ -116,4 +116,11 @@ Release gate: C1–C7 either pass with named evidence or are `BLOCKED` with a pr
 
 ## Execution record
 
-None yet. No 0.1.3 source, version or artifact exists.
+### 2026-11-13 · language and clone
+
+Workspace version stays 0.1.2 (the published six-cell release); this increment has no source, version or artifact of its own yet.
+
+- **Language (C3, partial).** The catalogue now holds both locales in one table, so a key without a translation cannot compile, and three tests fail if a translation is left as English, loses its Han characters, or if the two catalogues drift apart. Every control, status and refusal renders through the active locale; paths, object ids, branch names and Git output stay literal, which a frame test asserts both ways. The Welcome surface names the current language and cycles System, English and Simplified 中文 with one key; the value is validated, persisted under `ui.locale` and reloaded without a restart. `setting set ui.locale` accepts the same three values and refuses anything else. 57 hard-coded strings remain (43 notices, 9 main views, 4 hint lines, 1 Welcome view), which is why C3 is `[-]` and not `[v]`.
+- **Clone (C1, partial).** A Welcome form takes URL, absolute destination, branch and depth and walks them with Tab. Enter asks for a preview that validates transport and target without contacting the server or creating anything; approving sends only the one-use ticket, so the reviewed values are the values that run. Clone keeps `--no-checkout`. Verified on a local bare remote: the command reported the reviewed effect, cloned, and left the destination holding only `.git` with no `a.txt`; the branch was `main`. The panel cannot yet inspect or remove a partial target, so C1 stays `[-]`.
+
+Not built yet: the Remotes panel (C2), divergence review and conflict handoff (C4, C5), the clean-image and five-participant courts (C6, C7).
