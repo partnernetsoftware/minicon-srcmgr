@@ -109,9 +109,9 @@ Per cell, an archive contains the executable, a README, a checksum list and a re
 
 ## 0.1.3 delivery target
 
-Status: in progress. 0.1.3 closes the gaps the 0.1.0 release notes named, without widening reach: in-window Clone and Remotes surfaces bound to the existing preview/apply contracts, zh-CN primary strings with a persistent locale choice, reviewed divergence with conflict detection and terminal handoff, and the qualification courts that 0.1.0 could not run — clean-image launch, accessibility and CJK/clipboard checks, a long-session resource read and the five-participant study.
+Status: code complete against its five delivered criteria; two courts are NOT-RUN with a fixed path. 0.1.3 closes the gaps the 0.1.0 release notes named, without widening reach: in-window Clone and Remotes surfaces bound to the existing preview/apply contracts, zh-CN primary strings with a persistent locale choice, reviewed divergence with conflict detection and terminal handoff, and the qualification courts that 0.1.0 could not run — clean-image launch, accessibility and CJK/clipboard checks, a long-session resource read and the five-participant study.
 
-The release gate is unchanged: `signing.mode=required`, an unpublished version, a release-eligible signature that the canonical inspector reports as `Valid` with the company organization and an RFC 3161 timestamp, and downloaded assets re-hashed and started before publication. Anything still unqualified is stated in the release notes. [The 0.1.3 plan](../plan/plan-0.1.3.md) owns the evidence.
+The release gate is unchanged: `signing.mode=required`, an unpublished version, a release-eligible signature that the canonical inspector reports as `Valid` with the company organization and an RFC 3161 timestamp, and downloaded assets re-hashed and started before publication. Anything still unqualified is stated in the release notes. The clean-image and five-participant courts cannot be executed by this repository; their runbooks are [clean-image.md](../docs/qualification/clean-image.md) and [five-users.md](../docs/qualification/five-users.md), and the three ways the version may close are recorded in [the 0.1.3 plan](../plan/plan-0.1.3.md#qualification-path-and-exit-criteria). [The 0.1.3 plan](../plan/plan-0.1.3.md) owns the evidence.
 
 ## 0.1.0 signed beta status
 

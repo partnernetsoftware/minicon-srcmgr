@@ -105,8 +105,8 @@ Merge points: `window.rs` and `workspace.rs` take P1 and P2 in that order from o
 | C3 · language | Every primary control, status and refusal has a zh-CN string; the override survives restart; paths and OIDs are untouched | `[v]` 226 keys. Every control, status line, footer hint, pane title, notice and refusal the product composes is bilingual, including the backend's policy, result and entry refusals; key names, paths, object ids, refspecs and branch names stay literal in both. What stays English is stated: Git's own error detail (Git printed it) and six unreachable internal guards |
 | C4 · divergence | A diverged branch shows both sides and a fetch timestamp, and no integration happens without an explicit choice | `[v]` both tips are named as `short-oid subject` and the status line carries the fetch time read from `FETCH_HEAD`; pull refuses from that state with both sides named. A fixture test proves a diverged branch names both and carries a 20-character UTC stamp, and a linear one names neither |
 | C5 · conflict handoff | An unresolved operation blocks the write actions with reasons and hands off the exact repository path | `[v]` detection and blocking with three fixture tests (clean, merge conflict, cherry-pick conflict); the reason names the operation, the unmerged count and the repository path, and the status line shows the same state. `t` opens the tool handoff already on Terminal, and the blocked footer names it; the terminal must be configured once through the existing tool settings, which is a stated refusal rather than a guessed interpreter |
-| C6 · clean image | The signed archive launches and completes first-run on an image that never had the product or the Rust toolchain | `[_]` |
-| C7 · users | 4 of 5 participants complete clone → stage/commit → pull → push unaided; observed failures are fixed before release | `[_]` |
+| C6 · clean image | The signed archive launches and completes first-run on an image that never had the product or the Rust toolchain | `NOT-RUN` runbook and receipt fixed in [clean-image.md](../docs/qualification/clean-image.md): freshness checks, digest verification, first-run steps and a receipt that records each one. No machine in this repository qualifies, and Docker is unavailable, so nothing here can execute it |
+| C7 · users | 4 of 5 participants complete clone → stage/commit → pull → push unaided; observed failures are fixed before release | `NOT-RUN` protocol fixed in [five-users.md](../docs/qualification/five-users.md): participant profile, the one-sentence task, what counts as unaided, the record table and where results live. It needs five people who have never used the product; no commit can supply them |
 
 ## Selected verification and stopping
 
@@ -129,6 +129,41 @@ code without them is incomplete:
 
 The ledger is not append-only: a row is rewritten when its evidence changes, so a
 reader never has to diff history to learn the current state.
+
+Ledger marks: `[v]` delivered and verified; `[-]` partial, with the gap named;
+`[_]` not started; `NOT-RUN` the evidence needs something outside this repository
+and its path is fixed below; `BLOCKED` no path exists yet. A published artifact
+never keeps `[_]` or `NOT-RUN` silently: the release notes name it and the row is
+rewritten to say so.
+
+## Qualification path and exit criteria
+
+C6 and C7 are the only criteria this repository cannot execute, so their path is
+fixed before anyone tries to close the version:
+
+- **C6** — [clean-image.md](../docs/qualification/clean-image.md): the three
+  cleanliness checks, the digest check, the first-run steps and the receipt.
+- **C7** — [five-users.md](../docs/qualification/five-users.md): five
+  participants who have never used the product, one spoken sentence, the record
+  table and the pass rule of four unaided completions.
+
+0.1.3 closes in exactly one of three ways, and the choice is recorded here rather
+than inferred from silence:
+
+1. **Both courts pass.** Publish as a normal release; tag `v0.1.3`; the ledger
+   rows become `[v]` with the receipts linked.
+2. **One or both are NOT-RUN at publication.** Publish only as a pre-release,
+   `0.1.3-beta`, whose notes name exactly which court did not run and what it
+   would have proved. Precedent: 0.1.0 shipped as a beta naming six gaps rather
+   than implying it had qualified them. The ledger rows then say `NOT-RUN` in the
+   release record, never `[_]`, because a published artifact cannot carry a mark
+   that reads as future work.
+3. **A court fails.** Do not publish. The failing step becomes the first item of
+   the next plan, with the receipt attached.
+
+Closing the version therefore needs a clean image and five people, not another
+commit. Until one of the three states is chosen, 0.1.3 stays `[-]` as a version
+and the two rows stay `NOT-RUN`; nothing in the codebase can change that.
 
 ## Execution record
 
@@ -195,3 +230,9 @@ Workspace version stays 0.1.2 (the published six-cell release); this increment h
 - **Evidence.** The UI tests assert the English hint lines unchanged, the Chinese frame test asserts translated titles and notices, and two backend tests assert a refusal in both languages from one profile. The workspace test suite, clippy and the documentation check all pass.
 
 What 0.1.3 still cannot claim: the clean-image court (C6) and the five-participant study (C7). Both need something this repository cannot supply — a machine that never had the product or the Rust toolchain, and four people who have never used it. Neither is a code gap, and neither may be reported as passed.
+
+### 2026-11-14 · qualification path and exit criteria
+
+- **C6 and C7 are now `NOT-RUN` with a fixed path**, not open-ended `[_]`. Two runbooks state what a qualifying machine is, which three checks make an image clean, what the operator does in which order, and what receipt proves it; the second fixes the participant protocol before the first participant is recruited, so the result cannot be redefined afterwards.
+- **The version has three possible endings**, recorded above: both courts pass and it publishes normally; one or both are unrun and it publishes only as `0.1.3-beta` with the gap named, exactly as 0.1.0 did; or a court fails and the failure leads the next plan. That means 0.1.3 can close without pretending the courts ran.
+- **Why no code change follows.** Docker is unavailable here and no machine in this environment has never had the product or the Rust toolchain, so neither court can be executed by this repository. More commits cannot move these two rows; only a clean image and five people can.

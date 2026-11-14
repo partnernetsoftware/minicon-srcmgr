@@ -116,7 +116,7 @@ Use the linked record as truth; this table only tells you where to look.
 |---|---|---|
 | 0.1.0 | Published 2026-11-07: signed, runnable Windows x86_64 beta; its notes name six gaps | [notes](../releases/0.1.0.md) |
 | 0.1.2 | Published 2026-11-09: all six cells build/run/package; both Windows cells Authenticode-signed, `release_eligible=true`; macOS and Linux unsigned | [notes](../releases/0.1.2.md), [PRD 12](PRD_12_platform_delivery.md#support-matrix) |
-| 0.1.3 | Code complete against its five delivered criteria: Clone, Remotes, language, divergence and conflict handoff are `[v]`. The clean-image court and the five-participant study are `[_]` and BLOCKED on a clean machine and real users, so the version is not published | [plan](../plan/plan-0.1.3.md) |
+| 0.1.3 | Code complete against its five delivered criteria: Clone, Remotes, language, divergence and conflict handoff are `[v]`. The clean-image and five-participant courts are `NOT-RUN` with fixed runbooks; the version closes either as a normal release, as `0.1.3-beta` naming the unrun court, or not at all if one fails | [plan](../plan/plan-0.1.3.md#qualification-path-and-exit-criteria) |
 
 Two items are **BLOCKED by missing external conditions**, not by code: the
 clean-image court needs a machine that never had the product or the Rust
@@ -165,6 +165,10 @@ enforced in code or a fixture today.
   every one of them, not only for the destructive one.
 - **Locale changes display text only.** Paths, object ids, refspecs, ref names and
   Git's own output stay literal in every language.
+- **A gate that cannot run here becomes NOT-RUN, not an open-ended blank.** Give
+  it a runbook and a receipt shape, and write the three endings in advance: pass,
+  ship as a beta naming it, or fail and lead the next plan. 0.1.0 set the
+  precedent by shipping as a beta with six named gaps.
 - **Hints are translated too, but key names stay literal.** A footer line is a
   template of Latin key names plus translated verbs; translating "Space" or "Esc"
   would hide the key the user must press.
