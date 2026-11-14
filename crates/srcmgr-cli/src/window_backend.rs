@@ -25,6 +25,16 @@ pub struct WindowBackend {
     checkout: Option<(String, std::time::Instant)>,
 }
 
+/// One catalogue string for a caller that has options but no self parameter,
+/// such as an associated constructor. An unreadable profile falls back to
+/// English rather than failing the message it decorates.
+fn say_for(options: &Options, key: srcmgr_ui::TextKey) -> String {
+    let locale = open_profile_store(options)
+        .and_then(|store| crate::interface_locale(&store))
+        .unwrap_or(srcmgr_ui::Locale::En);
+    srcmgr_ui::text_of(key, locale).to_owned()
+}
+
 struct RemoteEditPending {
     ticket: String,
     change: srcmgr_git::RemoteChange,
@@ -96,7 +106,7 @@ impl Backend for WindowBackend {
                         Err(error)=>Reply::PromptCompleted {action:PromptAction::Ignore,text:format!("{note}\nState refresh unavailable: {error}. Refresh before further work; do not resubmit this consumed action.")},
                     }),
                     Err(error) => self.snapshot().map(|mut snapshot| {
-                        snapshot.stage_result = Some(format!("Action refused before execution; state refreshed: {error}"));
+                        snapshot.stage_result = Some(self.say(srcmgr_ui::TextKey::ResultRefusedBefore).replace("{error}", &error.to_string()));
                         Reply::Full(snapshot)
                     }).map_err(|_| format!("Action refused before execution: {error}; state refresh unavailable")),
                     Ok((action, note)) => (|| {
@@ -104,7 +114,7 @@ impl Backend for WindowBackend {
                             Ok(reply) => reply,
                             Err(error) => {
                                 let mut snapshot = self.snapshot().map_err(|refresh| format!("Action may have effects: {error}; refresh failed: {refresh}; {note}"))?;
-                                snapshot.stage_result = Some(format!("Action failed; state refreshed: {error}"));
+                                snapshot.stage_result = Some(self.say(srcmgr_ui::TextKey::ResultActionFailed).replace("{error}", &error.to_string()));
                                 Reply::Full(snapshot)
                             }
                         };
@@ -183,6 +193,12 @@ impl WindowBackend {
         crate::interface_locale(&store)
     }
 
+    /// One catalogue string in this window's language. An unreadable profile
+    /// falls back to English rather than failing the refusal it decorates.
+    fn say(&self, key: srcmgr_ui::TextKey) -> String {
+        say_for(&self.options, key)
+    }
+
     /// A snapshot that carries only the interface language. The window merges
     /// it, so a language change never replaces lists or an open repository.
     fn locale_only(options: &Options) -> Snapshot {
@@ -205,7 +221,7 @@ impl WindowBackend {
         snapshot.navigation = open_profile_store(options)?.navigation(&NativePath::new(candidate.worktree.as_os_str())).map_err(|e| e.to_string())?
             .map(|record| srcmgr_ui::Navigation::decode(&record)).transpose().map_err(str::to_owned)?;
         if let Err(error) = open_profile_store(options)?.remember_repository(BACKEND_GIT, &candidate.worktree) {
-            snapshot.stage_result = Some(format!("Recent list not updated: {error}; repository data was not changed"));
+            snapshot.stage_result = Some(say_for(options, srcmgr_ui::TextKey::ResultRecentNotUpdated).replace("{error}", &error.to_string()));
         }
         Ok((candidate, snapshot))
     }
@@ -292,10 +308,10 @@ impl WindowBackend {
             }
             Job::ApplyCheckout(ticket) => {
                 let Some((expected, expires)) = self.checkout.take() else {
-                    return Err("The checkout review expired or was already used; review it again.".into());
+                    return Err(self.say(srcmgr_ui::TextKey::NoteCheckoutExpired));
                 };
                 if expected != ticket || std::time::Instant::now() > expires {
-                    return Err("The checkout review expired or was already used; review it again.".into());
+                    return Err(self.say(srcmgr_ui::TextKey::NoteCheckoutExpired));
                 }
                 let session = open_trusted(&self.options, &self.worktree)?;
                 srcmgr_git::checkout_worktree(&session.installation, &session.identity)
@@ -320,10 +336,10 @@ impl WindowBackend {
             }
             Job::ApplyRemoteEdit(ticket) => {
                 let Some(pending) = self.remote_edit.take() else {
-                    return Err("The remote review expired or was already used; review the change again.".into());
+                    return Err(self.say(srcmgr_ui::TextKey::NoteRemoteReviewExpired));
                 };
                 if pending.ticket != ticket || std::time::Instant::now() > pending.expires {
-                    return Err("The remote review expired or was already used; review the change again.".into());
+                    return Err(self.say(srcmgr_ui::TextKey::NoteRemoteReviewExpired));
                 }
                 let session = open_trusted(&self.options, &self.worktree)?;
                 srcmgr_git::apply_remote_change(&session.installation, &session.identity, &pending.change)
@@ -351,11 +367,14 @@ impl WindowBackend {
                 let cancel = std::sync::atomic::AtomicBool::new(false);
                 let report = srcmgr_git::fetch(&session.installation, &session.identity, &remote, &cancel, None).map_err(|e| e.to_string())?;
                 let mut snapshot = self.snapshot()?;
-                snapshot.stage_result = Some(if report.updates.is_empty() {
-                    format!("{remote}: up to date")
+                let result = if report.updates.is_empty() {
+                    self.say(srcmgr_ui::TextKey::ResultFetchCurrent).replace("{remote}", &remote)
                 } else {
-                    format!("{remote}: {} refs updated", report.updates.len())
-                });
+                    self.say(srcmgr_ui::TextKey::ResultFetchUpdated)
+                        .replace("{remote}", &remote)
+                        .replace("{count}", &report.updates.len().to_string())
+                };
+                snapshot.stage_result = Some(result);
                 Reply::Full(snapshot)
             }
             Job::Pull => {
@@ -395,7 +414,7 @@ impl WindowBackend {
                 Reply::Full(snapshot)
             }
             Job::Prepare { .. } | Job::ExecutePrepared(_) | Job::CancelPrepared => return Err("nested confirmation is not allowed".to_owned()),
-            Job::Ignore {..}=>return Err("Ignore needs a fresh reviewed confirmation".into()),
+            Job::Ignore {..}=>return Err(self.say(srcmgr_ui::TextKey::RefuseIgnoreNeedsReview)),
             Job::LoadCommitReview { .. } | Job::CommitDiff { .. } => return Err("commit review must use its isolated worker path".into()),
             Job::Reload => {
                 let mut snapshot = self.snapshot()?;
@@ -492,7 +511,12 @@ impl WindowBackend {
                 };
                 match self.snapshot() {
                     Ok(mut snapshot) => {
-                        snapshot.stage_result = Some(format!("Observed commit OID: {id}{}", warning.map_or_else(String::new, |warning| format!("; {warning}"))));
+                        let detail = warning.map_or_else(String::new, |warning| format!("; {warning}"));
+                        snapshot.stage_result = Some(
+                            self.say(srcmgr_ui::TextKey::ResultCommitObserved)
+                                .replace("{id}", &id)
+                                .replace("{warning}", &detail),
+                        );
                         Reply::Committed(snapshot)
                     }
                     Err(error) => Reply::PromptCompleted {
@@ -539,7 +563,7 @@ impl WindowBackend {
             MainRequest::CommitFile { id, file } => {
                 let git_file = srcmgr_git::CommitFile { status: file.status, old_mode: file.old_mode, new_mode: file.new_mode, path: file.path.clone(), old_path: file.old_path };
                 let detail = srcmgr_git::commit_files(&session.installation, &session.identity, &id).map_err(|e| e.to_string())?;
-                if !detail.files.contains(&git_file) { return Err("committed file does not belong to the selected comparison".to_owned()); }
+                if !detail.files.contains(&git_file) { return Err(self.say(srcmgr_ui::TextKey::RefuseCommittedFileScope)); }
                 let base = detail.parent.map_or_else(|| "empty tree (root commit)".to_owned(), |parent| format!("{parent} (first parent{})", if detail.merge { "; merge has other parents" } else { "" }));
                 let text = srcmgr_git::commit_file_diff(&session.installation, &session.identity, &id, &git_file).map_err(|e| e.to_string())?;
                 Ok(MainView::text(&format!("Commit {id}\nBase: {base}\n{} [{} -> {}]\n{text}", file.path.display_label(), git_file.old_mode, git_file.new_mode)))
@@ -595,7 +619,7 @@ impl WindowBackend {
     fn load_commit_review(&mut self) -> Result<srcmgr_ui::CommitReview, String> {
         self.commit_review = None;
         let key = repository_key(&self.worktree)?;
-        if open_profile_store(&self.options)?.git_commit_intent(&key).map_err(|e| e.to_string())?.is_some() { return Err("Previous commit attempt needs reconciliation. Refresh repository state before opening another commit review; the draft is preserved.".into()); }
+        if open_profile_store(&self.options)?.git_commit_intent(&key).map_err(|e| e.to_string())?.is_some() { return Err(self.say(srcmgr_ui::TextKey::NoteCommitNeedsReconcile)); }
         let session = open_trusted(&self.options, &self.worktree)?;
         let review = srcmgr_git::StagedReview::read(&session.installation, &session.identity).map_err(|e| e.to_string())?;
         let bytes = minicon_platform::entropy::secure_random_array::<16>().map_err(|e| format!("Cannot prepare commit review: {e:?}"))?;
@@ -608,8 +632,8 @@ impl WindowBackend {
     }
 
     fn commit_diff(&self, ticket: &str, index: usize) -> Result<MainView, String> {
-        let (current, review) = self.commit_review.as_ref().ok_or("Commit review is unavailable; refresh it")?;
-        if current != ticket { return Err("Commit review changed; select again".into()); }
+        let (current, review) = self.commit_review.as_ref().ok_or_else(|| self.say(srcmgr_ui::TextKey::NoteCommitReviewUnavailable))?;
+        if current != ticket { return Err(self.say(srcmgr_ui::TextKey::NoteCommitReviewSelectAgain)); }
         let session = open_trusted(&self.options, &self.worktree)?;
         let text = review.diff(&session.installation, &session.identity, index).map_err(|e| e.to_string())?;
         let mut lines = vec![srcmgr_ui::Line { tone: srcmgr_ui::Tone::Heading, text: format!("Staged path: {}", review.files[index].path.display_label()) }];
@@ -620,12 +644,13 @@ impl WindowBackend {
 
     fn commit(&mut self, ticket: &str, message: &str) -> Result<srcmgr_git::ReviewedCommit, String> {
         if message.trim().is_empty() {
-            return Err("the commit message is empty".to_owned());
+            return Err(self.say(srcmgr_ui::TextKey::NoteCommitMessageEmpty));
         }
         let key = repository_key(&self.worktree)?;
         let session = open_trusted(&self.options, &self.worktree)?;
-        let (current, review) = self.commit_review.take().ok_or("Load the complete staged-index review before committing")?;
-        if current != ticket { return Err("Commit review changed; refresh before submitting".into()); }
+        let missing_review = self.say(srcmgr_ui::TextKey::NoteLoadReviewFirst);
+        let (current, review) = self.commit_review.take().ok_or(missing_review)?;
+        if current != ticket { return Err(self.say(srcmgr_ui::TextKey::NoteCommitReviewRefresh)); }
         let mut store = open_profile_store(&self.options)?;
         if let Some(reason) = &review.blocked {
             store.put_draft(BACKEND_GIT, &key, message).map_err(|e| e.to_string())?;
@@ -835,6 +860,22 @@ pub(crate) mod tests {
         };
         assert_eq!(after.pending_checkout, None);
         assert_eq!(std::fs::read_to_string(target.join("a.txt")).unwrap(), "one\n");
+    }
+
+    #[test]
+    fn a_policy_refusal_follows_the_language_too() {
+        let root = Scratch::new("policy-locale");
+        let repo = repository(&root.0, "repo");
+        let mut active = backend(&root.0, &repo, true);
+        crate::open_profile_store(&active.options).unwrap().put_setting("ui.locale", "en").unwrap();
+        let english = active.run(Job::Commit { ticket: "t".into(), message: "   ".into() });
+        let Reply::PromptFailed { text, .. } = english else { panic!("{english:?}") };
+        assert_eq!(text, "the commit message is empty");
+
+        crate::open_profile_store(&active.options).unwrap().put_setting("ui.locale", "zh-CN").unwrap();
+        let chinese = active.run(Job::Commit { ticket: "t".into(), message: "".into() });
+        let Reply::PromptFailed { text, .. } = chinese else { panic!("{chinese:?}") };
+        assert!(text.contains("\u{63d0}\u{4ea4}\u{8bf4}\u{660e}\u{4e3a}\u{7a7a}"), "{text}");
     }
 
     #[test]

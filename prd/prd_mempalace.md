@@ -168,11 +168,15 @@ enforced in code or a fixture today.
 - **The catalogue is one table, so a key without a translation cannot compile.**
   Templates keep their placeholders and substitute at the call site; do not build
   translated sentences by concatenation.
-- **Refusal text belongs to the window, not to \`srcmgr-git\`.** A blocked write and
+- **Backend sentences come from the catalogue too, through one helper.** Every
+  refusal the product composes itself is a template plus data; a caller without
+  a self parameter uses the free helper, and both fall back to English rather
+  than losing the message. Git's own error detail stays literal in both
+  languages, because Git printed it.
+- **Refusal text belongs to the window, not to `srcmgr-git`.** A blocked write and
   a diverged pull are composed in the catalogue from Git's own state fields, so
-  the Git crate keeps no locale. Raw Git error detail stays literal in both
-  languages; other backend policy messages still travel as English strings and
-  need the same treatment.
+  the Git crate keeps no locale. Older backend messages that still travel as
+  strings are named in the plan rather than assumed translated.
 - **Windows canonical paths break Git.** `fs::canonicalize` returns a verbatim
   `\\?\` path that Git rejects with status 128; resolve a symlinked temp root on
   unix only.
