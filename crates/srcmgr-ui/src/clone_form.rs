@@ -38,6 +38,19 @@ impl CloneField {
     }
 }
 
+/// What a failed clone left behind. The backend holds the path and offers the
+/// two actions; this state only carries what the review needs to draw.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CloneFailure {
+    pub reason: String,
+    pub destination: String,
+    pub removable: bool,
+    /// Entries and whether the listing was cut at the limit.
+    pub listing: Option<(Vec<String>, bool)>,
+    /// Ticket and lines for the removal review.
+    pub review: Option<(String, Vec<String>)>,
+}
+
 pub struct CloneForm {
     editors: [ComposerState; 4],
     pub focus: CloneField,
@@ -47,6 +60,9 @@ pub struct CloneForm {
     pub review: Option<(String, Vec<String>)>,
     pub detail: String,
     pub cancel: bool,
+    /// Present means the clone failed and the form is showing the target instead
+    /// of its fields. It is dismissed with Escape or by a completed removal.
+    pub failure: Option<CloneFailure>,
 }
 
 impl Default for CloneForm {
@@ -64,6 +80,35 @@ impl CloneForm {
             review: None,
             detail: "Clone keeps the working tree absent until the repository is trusted and a checkout review approves it. Nothing is transferred until you approve the review.".into(),
             cancel: false,
+            failure: None,
+        }
+    }
+
+    /// Records a failed transfer. The form stops accepting field edits: the
+    /// only things left to do are inspect, remove or dismiss.
+    pub fn fail(&mut self, reason: String, destination: String, removable: bool) {
+        self.working = false;
+        self.review = None;
+        self.detail = reason.clone();
+        self.failure = Some(CloneFailure { reason, destination, removable, listing: None, review: None });
+    }
+
+    pub fn show_listing(&mut self, entries: Vec<String>, more: bool, removable: bool) {
+        if let Some(failure) = self.failure.as_mut() {
+            failure.listing = Some((entries, more));
+            failure.removable = removable;
+        }
+    }
+
+    pub fn show_removal_review(&mut self, ticket: String, lines: Vec<String>) {
+        if let Some(failure) = self.failure.as_mut() {
+            failure.review = Some((ticket, lines));
+        }
+    }
+
+    pub fn clear_removal_review(&mut self) {
+        if let Some(failure) = self.failure.as_mut() {
+            failure.review = None;
         }
     }
 

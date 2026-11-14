@@ -328,6 +328,13 @@ pub enum Job {
     /// the review showed.
     ApplyRemoteEdit(String),
     CancelRemoteEdit,
+    /// Lists the target a failed clone left behind. The backend holds the path;
+    /// the UI never names one, so it cannot point inspection at another place.
+    InspectCloneTarget,
+    /// Builds the removal review for that same recorded target.
+    PrepareCloneRemoval,
+    /// Deletes the recorded target. The ticket is one-use.
+    RemoveCloneTarget(String),
     /// Reads the stored locale once at startup, so the Welcome surface renders
     /// in the user's language before any repository is open.
     LoadLocale,
@@ -443,6 +450,23 @@ pub enum Reply {
         ticket: String,
         lines: Vec<String>,
     },
+    /// A clone failed and left its target. The target is kept so it can be
+    /// inspected; removal is offered only when this attempt created it.
+    CloneFailed {
+        destination: NativePath,
+        reason: String,
+        removable: bool,
+    },
+    CloneTarget {
+        entries: Vec<String>,
+        more: bool,
+        removable: bool,
+    },
+    CloneRemovalReview {
+        ticket: String,
+        lines: Vec<String>,
+    },
+    CloneTargetRemoved,
     /// The edit was applied. The repository configuration changed, so its trust
     /// fingerprint changed with it; the reply says so instead of pretending the
     /// loaded snapshot is still current.

@@ -116,7 +116,7 @@ Use the linked record as truth; this table only tells you where to look.
 |---|---|---|
 | 0.1.0 | Published 2026-11-07: signed, runnable Windows x86_64 beta; its notes name six gaps | [notes](../releases/0.1.0.md) |
 | 0.1.2 | Published 2026-11-09: all six cells build/run/package; both Windows cells Authenticode-signed, `release_eligible=true`; macOS and Linux unsigned | [notes](../releases/0.1.2.md), [PRD 12](PRD_12_platform_delivery.md#support-matrix) |
-| 0.1.3 | In progress: closes the gaps 0.1.0 named. Remotes panel, divergence and conflict handoff `[v]`; Clone panel `[-]`, language `[-]`, clean image `[_]`, five users `[_]` | [plan](../plan/plan-0.1.3.md) |
+| 0.1.3 | In progress: closes the gaps 0.1.0 named. Remotes panel, divergence, conflict handoff and Clone panel `[v]`; language `[-]`, clean image `[_]`, five users `[_]` | [plan](../plan/plan-0.1.3.md) |
 
 Two items are **BLOCKED by missing external conditions**, not by code: the
 clean-image court needs a machine that never had the product or the Rust
@@ -144,6 +144,15 @@ enforced in code or a fixture today.
   not clean.
 - **A preview is not a permission.** Approval sends a one-use ticket bound to the
   values the review showed, so a field edited after review cannot execute.
+- **A failed clone keeps its target, and only the backend names it.** Inspection
+  and removal take no path from the interface: the backend holds the recorded
+  destination, and removal is offered only when the destination did not exist
+  before the attempt. Anything else is refused, because deleting a directory the
+  product did not create is not a recovery.
+- **A surface that is drawn but not routed is inert.** `key_inner` must hand keys
+  to every open surface; the clone form was rendered and titled for a whole round
+  while no keystroke reached it, and only a workspace-level key test caught it.
+  Test keys through `Workspace::key`, not only through the form's own methods.
 - **Editing repository configuration invalidates trust.** The trust fingerprint
   covers `.git/config`, so any remote or identity write makes the loaded session
   stale; the window must ask for a fresh trust review instead of refreshing.

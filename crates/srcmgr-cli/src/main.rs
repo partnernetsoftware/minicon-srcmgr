@@ -24,6 +24,7 @@ use srcmgr_git::{
 use srcmgr_state::{TrustStore, default_root, fingerprint};
 
 mod window_backend;
+mod clone_cleanup;
 mod confirmation;
 mod entry;
 mod tools;

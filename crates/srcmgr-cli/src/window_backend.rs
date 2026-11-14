@@ -277,7 +277,10 @@ impl WindowBackend {
         Ok(match job {
             Job::LoadIdentity | Job::SaveIdentity { .. } | Job::LoadGitSettings | Job::ConfigureGit(_) | Job::PrepareCreate { .. } | Job::ExecuteCreate(_) | Job::LoadWelcome | Job::ForgetRecent { .. } | Job::GrantRepositoryTrust(_) | Job::CancelEntry => return Err("repository entry requires the application entry boundary".into()),
             Job::LoadLocale | Job::SetLocale(_) => return Err("the interface language is not a repository action".into()),
-            Job::PreviewClone { .. } | Job::ExecuteClone(_) | Job::CancelClone => return Err("clone runs at the application entry boundary, before a repository exists".into()),
+            Job::PreviewClone { .. } | Job::ExecuteClone(_) | Job::CancelClone
+            | Job::InspectCloneTarget | Job::PrepareCloneRemoval | Job::RemoveCloneTarget(_) => {
+                return Err("clone runs at the application entry boundary, before a repository exists".into());
+            }
             Job::PrepareLocate { .. } | Job::SaveLocated(_) | Job::CancelLocate | Job::OpenRepository(_) | Job::EnterRepository { .. } | Job::ResetNavigation(_) | Job::LoadToolSettings(_) | Job::SaveToolSettings { .. } | Job::PrepareTool { .. } | Job::LaunchTool(_) | Job::CancelTool => return Err("repository entry and tools must use the application worker path".to_owned()),
             Job::PreviewCheckout => {
                 let session = open_trusted(&self.options, &self.worktree)?;

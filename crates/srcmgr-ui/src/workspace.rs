@@ -496,6 +496,35 @@ impl Workspace {
 
     /// Tab and Enter reach the form; Escape and Ctrl+C leave it.
     pub fn clone_key(&mut self, key: Key) -> Effect {
+        // A failed transfer replaces the fields with its target. Only inspect,
+        // remove and dismiss are left, and removal needs its own review.
+        if let Some(failure) = self.clone.as_ref().and_then(|form| form.failure.as_ref()) {
+            let reviewing = failure.review.is_some();
+            let removable = failure.removable;
+            return match key {
+                Key::Escape | Key::CtrlC => { self.clone = None; Effect::Nothing }
+                Key::Char('y') if reviewing => match self
+                    .clone
+                    .as_ref()
+                    .and_then(|form| form.failure.as_ref())
+                    .and_then(|failure| failure.review.as_ref())
+                {
+                    Some((ticket, _)) => Effect::Send(Job::RemoveCloneTarget(ticket.clone())),
+                    None => Effect::Nothing,
+                },
+                Key::Char('n') if reviewing => {
+                    if let Some(form) = self.clone.as_mut() { form.clear_removal_review(); }
+                    Effect::Nothing
+                }
+                Key::Char('i') => Effect::Send(Job::InspectCloneTarget),
+                Key::Char('x') if removable && !reviewing => Effect::Send(Job::PrepareCloneRemoval),
+                Key::Up => self.scroll_trust(-1),
+                Key::Down => self.scroll_trust(1),
+                Key::PageUp => self.scroll_trust(-(PAGE_LINES as isize)),
+                Key::PageDown => self.scroll_trust(PAGE_LINES as isize),
+                _ => Effect::Nothing,
+            };
+        }
         let Some(form) = self.clone.as_mut() else { return Effect::Nothing };
         match key {
             Key::Escape | Key::CtrlC if !form.working => { self.clone = None; Effect::Send(Job::CancelClone) }
@@ -1617,6 +1646,9 @@ impl Workspace {
     fn key_inner(&mut self, key: Key) -> Effect {
         if self.remotes.is_some() { return self.remotes_key(key); }
         if self.checkout.is_some() { return self.checkout_key(key); }
+        // The clone form owns the keys while it is open, including its failure
+        // state. Without this the fields could be drawn but never edited.
+        if self.clone.is_some() { return self.clone_key(key); }
         if let Some(form) = self.locate.as_mut() {
             if !form.editor.preedit.is_empty() { return form.edit(key); }
             if key == Key::Escape { return self.cancel_locate(); }
@@ -1995,6 +2027,38 @@ impl Workspace {
                         destination.display_label()
                     );
                 }
+                Effect::Nothing
+            }
+            Reply::CloneFailed { destination, reason, removable } => {
+                let reason_text = reason.clone();
+                if let Some(form) = self.clone.as_mut() {
+                    form.fail(reason, destination.display_label(), removable);
+                }
+                self.notice = Some(
+                    crate::messages::text(crate::messages::Key::NoteCloneFailed, self.locale())
+                        .replace("{reason}", &reason_text),
+                );
+                Effect::Nothing
+            }
+            Reply::CloneTarget { entries, more, removable } => {
+                if let Some(form) = self.clone.as_mut() {
+                    form.show_listing(entries, more, removable);
+                }
+                self.trust_scroll = 0;
+                Effect::Nothing
+            }
+            Reply::CloneRemovalReview { ticket, lines } => {
+                if let Some(form) = self.clone.as_mut() {
+                    form.show_removal_review(ticket, lines);
+                }
+                self.trust_scroll = 0;
+                Effect::Nothing
+            }
+            Reply::CloneTargetRemoved => {
+                self.clone = None;
+                self.notice = Some(
+                    crate::messages::text(crate::messages::Key::NoteCloneTargetRemoved, self.locale()).to_owned(),
+                );
                 Effect::Nothing
             }
             Reply::Cloned { destination, lines } => {
@@ -3080,6 +3144,43 @@ mod tests {
         CommitRow { id: id.to_owned(), subject: format!("subject {id}"), merge: false }
     }
 
+
+    #[test]
+    fn a_failed_clone_offers_inspect_and_a_reviewed_removal() {
+        use crate::Reply;
+        let mut workspace = Workspace::new(Snapshot::welcome());
+        workspace.request_clone();
+        workspace.reply(Reply::CloneFailed {
+            destination: NativePath::new("/tmp/partial"),
+            reason: "the remote refused the transfer".into(),
+            removable: true,
+        });
+        let form = workspace.clone_form().expect("the form keeps the target");
+        assert!(form.failure.is_some());
+        assert_eq!(workspace.key(Key::Char('i')), Effect::Send(Job::InspectCloneTarget));
+        workspace.reply(Reply::CloneTarget { entries: vec![".git/".into()], more: false, removable: true });
+        assert_eq!(workspace.key(Key::Char('x')), Effect::Send(Job::PrepareCloneRemoval));
+        workspace.reply(Reply::CloneRemovalReview { ticket: "r1".into(), lines: vec!["remove /tmp/partial".into()] });
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Send(Job::RemoveCloneTarget("r1".into())));
+        workspace.reply(Reply::CloneTargetRemoved);
+        assert!(workspace.clone_form().is_none(), "a removed target closes the form");
+    }
+
+    #[test]
+    fn a_target_this_clone_did_not_create_is_not_offered_for_removal() {
+        use crate::Reply;
+        let mut workspace = Workspace::new(Snapshot::welcome());
+        workspace.request_clone();
+        workspace.reply(Reply::CloneFailed {
+            destination: NativePath::new("/tmp/existing"),
+            reason: "the destination was not empty".into(),
+            removable: false,
+        });
+        assert_eq!(workspace.key(Key::Char('x')), Effect::Nothing, "nothing may be deleted");
+        assert!(workspace.clone_form().is_some());
+        assert_eq!(workspace.key(Key::Escape), Effect::Nothing);
+        assert!(workspace.clone_form().is_none(), "Escape dismisses the failure");
+    }
 
     #[test]
     fn t_opens_the_terminal_handoff_rather_than_the_editor() {

@@ -9,7 +9,7 @@ mod tools;
 mod clone_form;
 mod locate;
 mod remotes_panel;
-pub use clone_form::{CloneField, CloneForm};
+pub use clone_form::{CloneFailure, CloneField, CloneForm};
 pub use locate::{LocateForm, LocateWork};
 pub use remotes_panel::{RemotesAction, RemotesField, RemotesPanel};
 pub use tools::{ToolForm, ToolWork};

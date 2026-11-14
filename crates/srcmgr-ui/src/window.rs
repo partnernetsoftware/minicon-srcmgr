@@ -191,7 +191,9 @@ impl StatusWindow {
             let title = if self.workspace.identity_form().is_some_and(|form| form.submitted) { "MiniCon SrcMgr - Identity settings | Working" } else { "MiniCon SrcMgr - Identity settings | Ready" };
             if self.native_title != title { window.set_title(title); self.native_title = title.into(); }
         } else if let Some(form) = self.workspace.clone_form() {
-            let title = if form.review.is_some() {
+            let title = if form.failure.is_some() {
+                "MiniCon SrcMgr - Clone failed".to_owned()
+            } else if form.review.is_some() {
                 "MiniCon SrcMgr - Clone review".to_owned()
             } else if form.working {
                 "MiniCon SrcMgr - Clone | Working".to_owned()
@@ -1776,6 +1778,35 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
     }
     if let Some(form) = workspace.clone_form() {
         let (allow, cancel) = trust_buttons(rect, grid);
+        if let Some(failure) = &form.failure {
+            if let Some((_, lines)) = &failure.review {
+                let body = trust_content(rect, grid).0;
+                text_panel(draws, body, grid, true, workspace.t(TextKey::CloneRemoveTitle), &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+            } else {
+                frame(draws, rect, grid, true, workspace.t(TextKey::CloneFailedTitle));
+                let body = locate_info(rect, grid);
+                let mut lines = vec![failure.reason.clone(), String::new()];
+                lines.push(workspace.t(TextKey::CloneTargetLine).replace("{destination}", &failure.destination));
+                if let Some((entries, more)) = &failure.listing {
+                    lines.push(String::new());
+                    lines.push(
+                        workspace
+                            .t(TextKey::CloneEntries)
+                            .replace("{shown}", &entries.len().min(20).to_string())
+                            .replace("{total}", &entries.len().to_string())
+                            .replace("{more}", if *more { workspace.t(TextKey::CloneMore) } else { "" }),
+                    );
+                    lines.extend(entries.iter().take(20).map(|entry| format!("  {entry}")));
+                }
+                lines.push(String::new());
+                lines.push(if failure.removable { workspace.t(TextKey::CloneRemovable) } else { workspace.t(TextKey::CloneNotRemovable) }.to_owned());
+                text_panel(draws, body, grid, false, workspace.t(TextKey::CloneFailedTitle), &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+            }
+            let reviewing = failure.review.is_some();
+            button_draw(draws, allow, grid, if reviewing { workspace.t(TextKey::CreateApprove) } else { workspace.t(TextKey::PanelReview) }, MUTED_TEXT);
+            button_draw(draws, cancel, grid, workspace.t(TextKey::ActionClose), FOCUS_BORDER);
+            return;
+        }
         if let Some((_, lines)) = &form.review {
             let body = trust_content(rect, grid).0;
             text_panel(draws, body, grid, true, "Review clone", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
@@ -2172,6 +2203,15 @@ fn window_start(selected: usize, length: usize, rows: i64) -> usize {
 
 /// Keys the window shows for the current state, most useful first.
 fn hints(workspace: &Workspace) -> String {
+    if let Some(form) = workspace.clone_form()
+        && let Some(failure) = &form.failure
+    {
+        return if failure.review.is_some() {
+            workspace.t(TextKey::CloneRemovalHint).to_owned()
+        } else {
+            workspace.t(TextKey::CloneFailureHint).to_owned()
+        };
+    }
     if workspace.checkout_review().is_some() {
         return "y Check out   n/Esc Cancel   Page keys Scroll   Enter does not approve".into();
     }

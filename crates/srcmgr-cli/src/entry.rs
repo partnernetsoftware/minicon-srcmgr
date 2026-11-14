@@ -20,6 +20,17 @@ fn recent_row(entry: RecentRepository) -> RecentRow {
 struct PendingClone {
     ticket: String,
     request: srcmgr_git::CloneRequest,
+    /// True when the destination did not exist before this attempt, which is
+    /// the only case where a failed target is ours to remove.
+    created: bool,
+    expires: Instant,
+}
+
+/// A failed attempt whose target is still on disk. It is the only target the
+/// window may inspect or remove, so no path travels back from the interface.
+struct FailedClone {
+    destination: PathBuf,
+    created: bool,
     expires: Instant,
 }
 
@@ -71,6 +82,9 @@ pub struct ApplicationBackend {
     create: Option<PendingCreate>,
     identity: Option<PendingIdentity>,
     clone: Option<PendingClone>,
+    failed_clone: Option<FailedClone>,
+    /// Ticket, target and expiry for a reviewed removal.
+    clone_removal: Option<(String, PathBuf, Instant)>,
 }
 
 impl ApplicationBackend {
@@ -85,6 +99,8 @@ impl ApplicationBackend {
             create: None,
             identity: None,
             clone: None,
+            failed_clone: None,
+            clone_removal: None,
         }
     }
 
@@ -116,6 +132,22 @@ impl ApplicationBackend {
         let lines = vec![format!("Previous recent location: {old}"), format!("New location: {}", NativePath::new(target.as_os_str()).display_label()), "Replace only this navigation record. An existing bookmark for the new location is deduplicated.".into(), "No files, Git metadata, drafts, saved views or trust grants are moved, merged or deleted.".into(), "This review does not prove that the two locations are the same repository. Old-path drafts remain retained separately.".into(), "Save returns to Recent repositories. Open explicitly afterward to check current Git state and review trust for the new location.".into(), "Changed or expired reviews require a new review. Enter does not approve; Cancel preserves the old record.".into()];
         self.locate = Some(PendingLocate { ticket: ticket.clone(), source, target, git_directory, fingerprint: digest, expires: Instant::now()+Duration::from_secs(60) });
         Ok(Reply::LocateReview { ticket, lines })
+    }
+
+    /// The recorded failed target, still within its window. It refuses rather
+    /// than falling back to a path from the interface.
+    fn failed_target(&self) -> Result<FailedClone, String> {
+        let target = self.failed_clone.as_ref().ok_or_else(|| {
+            srcmgr_ui::text_of(srcmgr_ui::TextKey::NoteCloneNothingToRemove, self.locale().unwrap_or(srcmgr_ui::Locale::En)).to_owned()
+        })?;
+        if Instant::now() > target.expires {
+            return Err(srcmgr_ui::text_of(srcmgr_ui::TextKey::NoteCloneReviewExpired, self.locale().unwrap_or(srcmgr_ui::Locale::En)).to_owned());
+        }
+        Ok(FailedClone { destination: target.destination.clone(), created: target.created, expires: target.expires })
+    }
+
+    fn locale(&self) -> Result<srcmgr_ui::Locale, String> {
+        crate::interface_locale(&open_profile_store(&self.options)?)
     }
 
     fn save_located(&mut self, ticket: &str) -> Result<Reply, String> {
@@ -385,8 +417,9 @@ impl Backend for ApplicationBackend {
                     };
                     let preview = srcmgr_git::preview_clone(&installation, &request)
                         .map_err(|error| error.to_string())?;
+                    let created = std::fs::symlink_metadata(&request.destination).is_err();
                     let ticket = crate::confirmation::ticket()?;
-                    self.clone = Some(PendingClone { ticket: ticket.clone(), request, expires: Instant::now() + Duration::from_secs(300) });
+                    self.clone = Some(PendingClone { ticket: ticket.clone(), request, created, expires: Instant::now() + Duration::from_secs(300) });
                     Ok(Reply::CloneReview { ticket, lines: preview.lines, destination })
                 })()
                 .unwrap_or_else(|text| Reply::Notice(format!("Clone not started: {text}")))
@@ -402,20 +435,79 @@ impl Backend for ApplicationBackend {
                     let installation = srcmgr_git::GitInstallation::probe(crate::selected_git(&self.options)?)
                         .map_err(|error| error.to_string())?;
                     let cancel = std::sync::atomic::AtomicBool::new(false);
-                    srcmgr_git::clone_repository(&installation, &pending.request, &cancel, None)
-                        .map_err(|error| {
-                            format!(
-                                "{error}; inspect {} for a partial clone before retrying",
-                                pending.request.destination.display()
-                            )
-                        })?;
-                    Ok(Reply::Cloned {
-                        destination: NativePath::new(pending.request.destination.to_string_lossy().as_ref()),
-                        lines: Vec::new(),
-                    })
+                    let destination = pending.request.destination.clone();
+                    match srcmgr_git::clone_repository(&installation, &pending.request, &cancel, None) {
+                        Ok(()) => Ok(Reply::Cloned {
+                            destination: NativePath::new(destination.to_string_lossy().as_ref()),
+                            lines: Vec::new(),
+                        }),
+                        Err(error) => {
+                            // Keep the target so it can be inspected, and offer
+                            // removal only when this attempt created it.
+                            self.failed_clone = Some(FailedClone {
+                                destination: destination.clone(),
+                                created: pending.created,
+                                expires: Instant::now() + Duration::from_secs(600),
+                            });
+                            Ok(Reply::CloneFailed {
+                                destination: NativePath::new(destination.to_string_lossy().as_ref()),
+                                reason: error.to_string(),
+                                removable: pending.created,
+                            })
+                        }
+                    }
                 })()
                 .unwrap_or_else(Reply::Notice)
             }
+            Job::InspectCloneTarget => (|| -> Result<Reply, String> {
+                let target = self.failed_target()?;
+                let listing = crate::clone_cleanup::inspect(&target.destination)?;
+                Ok(Reply::CloneTarget { entries: listing.entries, more: listing.more, removable: target.created })
+            })()
+            .unwrap_or_else(Reply::Notice),
+            Job::PrepareCloneRemoval => (|| -> Result<Reply, String> {
+                let target = self.failed_target()?;
+                if !target.created {
+                    return Err(srcmgr_ui::text_of(srcmgr_ui::TextKey::CloneNotRemovable, self.locale()?).to_owned());
+                }
+                let listing = crate::clone_cleanup::inspect(&target.destination)?;
+                let shown: Vec<String> = listing.entries.iter().take(40).cloned().collect();
+                let text = srcmgr_ui::text_of;
+                let locale = self.locale()?;
+                let mut lines = vec![text(srcmgr_ui::TextKey::CloneRemoveTarget, locale)
+                    .replace("{destination}", &target.destination.display().to_string())];
+                lines.push(
+                    text(srcmgr_ui::TextKey::CloneRemoveListing, locale)
+                        .replace("{shown}", &shown.len().to_string())
+                        .replace("{total}", &listing.entries.len().to_string())
+                        .replace("{more}", if listing.more { text(srcmgr_ui::TextKey::CloneMore, locale) } else { "" }),
+                );
+                lines.extend(shown.into_iter().map(|entry| format!("  {entry}")));
+                lines.push(text(srcmgr_ui::TextKey::CloneRemoveEffect, locale).to_owned());
+                let ticket = crate::confirmation::ticket()?;
+                self.clone_removal = Some((ticket.clone(), target.destination.clone(), Instant::now() + Duration::from_secs(300)));
+                Ok(Reply::CloneRemovalReview { ticket, lines })
+            })()
+            .unwrap_or_else(Reply::Notice),
+            Job::RemoveCloneTarget(ticket) => (|| -> Result<Reply, String> {
+                // Resolve the wording before taking the record: the texts borrow
+                // nothing from it, and the record must not stay half-consumed.
+                let locale = self.locale()?;
+                let expired = srcmgr_ui::text_of(srcmgr_ui::TextKey::NoteCloneReviewExpired, locale).to_owned();
+                let failed = srcmgr_ui::text_of(srcmgr_ui::TextKey::NoteCloneRemovalFailed, locale);
+                let Some((expected, destination, expires)) = self.clone_removal.take() else {
+                    return Err(expired);
+                };
+                if expected != ticket || Instant::now() > expires {
+                    return Err(expired);
+                }
+                if let Err(reason) = crate::clone_cleanup::remove(&destination) {
+                    return Err(failed.replace("{reason}", &reason));
+                }
+                self.failed_clone = None;
+                Ok(Reply::CloneTargetRemoved)
+            })()
+            .unwrap_or_else(Reply::Notice),
             Job::CancelClone => {
                 self.clone = None;
                 Reply::NoChange
@@ -994,6 +1086,81 @@ mod tests {
             Reply::PromptFailed { .. }
         ));
         assert_eq!(app.active.as_ref().unwrap().worktree, canonical);
+    }
+
+    fn clone_app(root: &std::path::Path) -> ApplicationBackend {
+        ApplicationBackend::welcome(Options {
+            profile: Some(root.join("profile")),
+            git: Some(git_executable()),
+            ..Options::default()
+        })
+    }
+
+    #[test]
+    fn a_failed_clone_keeps_its_target_and_removes_only_after_a_review() {
+        let root = Scratch::new("clone-cleanup");
+        let mut app = clone_app(&root.0);
+        let destination = root.0.join("partial");
+        let missing = root.0.join("absent-source");
+        let url = missing.display().to_string();
+        let Reply::CloneReview { ticket, .. } = app.run(Job::PreviewClone {
+            url,
+            destination: NativePath::new(destination.as_os_str()),
+            branch: None,
+            depth: None,
+        }) else {
+            panic!("expected a clone review");
+        };
+        let Reply::CloneFailed { removable, .. } = app.run(Job::ExecuteClone(ticket)) else {
+            panic!("cloning an absent path must fail");
+        };
+        assert!(removable, "the destination did not exist before the attempt");
+
+        // Git removes an empty directory when a transfer fails, so stand in for
+        // the leftovers a partial transfer would leave.
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(destination.join("partial.txt"), "leftover").unwrap();
+        std::fs::write(root.0.join("keep.txt"), "keep\n").unwrap();
+
+        let Reply::CloneTarget { entries, removable: can_remove, .. } = app.run(Job::InspectCloneTarget) else {
+            panic!("an existing target must be listable");
+        };
+        assert_eq!(entries, vec!["partial.txt"]);
+        assert!(can_remove);
+
+        let Reply::CloneRemovalReview { ticket, lines } = app.run(Job::PrepareCloneRemoval) else {
+            panic!("expected a removal review");
+        };
+        assert!(lines.iter().any(|line| line.contains("partial.txt")), "{lines:?}");
+        assert!(destination.exists(), "a review must not delete");
+
+        assert!(matches!(app.run(Job::RemoveCloneTarget(ticket)), Reply::CloneTargetRemoved));
+        assert!(!destination.exists());
+        assert_eq!(std::fs::read_to_string(root.0.join("keep.txt")).unwrap(), "keep\n");
+        // The record is consumed: a second removal has nothing to act on.
+        assert!(matches!(app.run(Job::PrepareCloneRemoval), Reply::Notice(_)));
+    }
+
+    #[test]
+    fn a_destination_this_clone_did_not_create_is_never_offered_for_removal() {
+        let root = Scratch::new("clone-existing");
+        let mut app = clone_app(&root.0);
+        let destination = root.0.join("existing");
+        std::fs::create_dir_all(&destination).unwrap();
+        let Reply::CloneReview { ticket, .. } = app.run(Job::PreviewClone {
+            url: root.0.join("absent-source").display().to_string(),
+            destination: NativePath::new(destination.as_os_str()),
+            branch: None,
+            depth: None,
+        }) else {
+            panic!("an empty existing directory is a valid destination");
+        };
+        let Reply::CloneFailed { removable, .. } = app.run(Job::ExecuteClone(ticket)) else {
+            panic!("cloning an absent path must fail");
+        };
+        assert!(!removable, "the directory existed before this attempt");
+        assert!(matches!(app.run(Job::PrepareCloneRemoval), Reply::Notice(_)));
+        assert!(destination.exists(), "the product must not delete what it did not create");
     }
 
     #[test]
