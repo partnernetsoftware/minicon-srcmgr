@@ -75,7 +75,7 @@ impl Backend for WindowBackend {
                     Ok::<_, String>(())
                 })()
                 .map_or_else(
-                    |text| Reply::Notice(format!("Language not saved: {text}")),
+                    |text| Reply::Notice(self.say(srcmgr_ui::TextKey::ResultLanguageNotSaved).replace("{text}", &text)),
                     |()| Reply::LocaleChanged(Self::locale_only(&self.options)),
                 ),
                 Err(text) => Reply::Notice(text),

@@ -1147,11 +1147,11 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
             draws.push(Draw::Text {
                 x: margin,
                 baseline: panels.footer_top + row + ascent,
-                text: format!("Language: {label} [y]   C Clone   Ctrl+O Open   N Create   G Git settings   T Tools   Enter Open selected   L Locate   d Remove   q Quit"),
+                text: workspace.t(TextKey::HintWelcomeFooter).replace("{label}", label),
                 colour: MUTED_TEXT,
             });
         } else {
-            draws.push(Draw::Text { x: margin, baseline: panels.footer_top + row + ascent, text: if workspace.clone_form().is_some() { "Tab Switch field   Enter Review   y Clone after review   Esc Back/cancel".into() } else if workspace.create_form().is_some() { "Tab Switch field   Enter Review   y Create after review   Esc Back/cancel".into() } else if workspace.modal() { hints(workspace) } else { "Ctrl+O Open   N Create   G Git settings   Enter Open selected   L Locate   d Remove   q Quit".into() }, colour: MUTED_TEXT });
+            draws.push(Draw::Text { x: margin, baseline: panels.footer_top + row + ascent, text: if workspace.clone_form().is_some() { workspace.t(TextKey::HintCloneFooter).into() } else if workspace.create_form().is_some() { workspace.t(TextKey::HintCreateFooter).into() } else if workspace.modal() { hints(workspace) } else { workspace.t(TextKey::HintRepoFooter).into() }, colour: MUTED_TEXT });
         }
         return draws;
     }
@@ -2213,36 +2213,36 @@ fn hints(workspace: &Workspace) -> String {
         };
     }
     if workspace.checkout_review().is_some() {
-        return "y Check out   n/Esc Cancel   Page keys Scroll   Enter does not approve".into();
+        return workspace.t(TextKey::HintCheckoutReview).into();
     }
     if let Some(panel) = workspace.remotes_panel() {
         return if panel.working {
-            "Working; wait for the actual result".into()
+            workspace.t(TextKey::HintWorking).into()
         } else if panel.review.is_some() {
-            "y Apply exactly this   n/Esc Cancel   Page keys Scroll   Enter does not approve".into()
+            workspace.t(TextKey::HintRemoteReview).into()
         } else if panel.action.is_some() {
-            "Tab Field   Enter Review   Space fetch/push (Set URL)   Esc Cancel".into()
+            workspace.t(TextKey::HintRemoteForm).into()
         } else {
-            "Up/Down Select   a Add   s Set URL   r Rename   d Remove   f Fetch   Esc Close".into()
+            workspace.t(TextKey::HintRemotesList).into()
         };
     }
-    if let Some(form) = workspace.locate_form() { return if form.working == Some(crate::LocateWork::Save) { "Saving location; wait for the actual result" } else if form.review.is_some() { "y Save location   n/Esc Back   Enter does not approve   Page keys Scroll" } else { "Enter Review location   Ctrl+A/C/V Edit   Esc Cancel" }.into(); }
-    if let Some(form) = workspace.tool_form() { return if form.working.is_some() { "Working; wait for the actual result. A submitted launch cannot be cancelled." } else if form.review.is_some() { "y Launch   n/Esc Cancel   Enter does not approve   Page keys Scroll" } else { "Ctrl+S Save   Ctrl+Enter Review launch   Tab Field   Esc Close" }.into(); }
-    if workspace.navigation_issue().is_some() { return "y Archive view and open   n/Esc Cancel   Enter does not approve".into(); }
-    if workspace.filter_editor().is_some() { return "Enter Apply   Esc Restore   Tab Change pane   Up/Down Preview   Ctrl+A/C/V Edit".into(); }
-    if let Some(form) = workspace.identity_form() { return if form.submitted { "Working; fields are read-only until completion. Esc cancels a read, not a submitted save." } else { "Tab Switch field   Enter Save local/reload   Page/Up/Down Scroll sources   Esc Cancel" }.into(); }
+    if let Some(form) = workspace.locate_form() { return if form.working == Some(crate::LocateWork::Save) { workspace.t(TextKey::HintLocateSaving) } else if form.review.is_some() { workspace.t(TextKey::HintLocateReview) } else { workspace.t(TextKey::HintLocateForm) }.into(); }
+    if let Some(form) = workspace.tool_form() { return if form.working.is_some() { workspace.t(TextKey::HintToolWorking) } else if form.review.is_some() { workspace.t(TextKey::HintToolReview) } else { workspace.t(TextKey::HintToolForm) }.into(); }
+    if workspace.navigation_issue().is_some() { return workspace.t(TextKey::HintNavigation).into(); }
+    if workspace.filter_editor().is_some() { return workspace.t(TextKey::HintFilter).into(); }
+    if let Some(form) = workspace.identity_form() { return if form.submitted { workspace.t(TextKey::HintIdentityWorking) } else { workspace.t(TextKey::HintIdentityForm) }.into(); }
     if workspace.help() {
-        return "Esc close help".to_owned();
+        return workspace.t(TextKey::HintHelp).to_owned();
     }
     if workspace.confirm().is_some() {
-        return "y confirm   n keep".to_owned();
+        return workspace.t(TextKey::HintConfirm).to_owned();
     }
     if let Some(prompt) = workspace.prompt() {
         return match prompt.kind() {
-            PromptKind::GitSettings => "Enter test and save   Esc close   Blank uses PATH".to_owned(),
-            PromptKind::Commit => "Ctrl+Enter commit   Enter new line   Esc save draft".to_owned(),
-            PromptKind::OpenRepository => "Enter open   Esc cancel   Existing repository trust is checked".to_owned(),
-            PromptKind::NewBranch => "Enter create   Esc cancel".to_owned(),
+            PromptKind::GitSettings => workspace.t(TextKey::HintPromptGit).to_owned(),
+            PromptKind::Commit => workspace.t(TextKey::HintPromptCommit).to_owned(),
+            PromptKind::OpenRepository => workspace.t(TextKey::HintPromptOpen).to_owned(),
+            PromptKind::NewBranch => workspace.t(TextKey::HintPromptBranch).to_owned(),
         };
     }
     // A clone that never checked out has an empty worktree; name the one action
@@ -2250,7 +2250,7 @@ fn hints(workspace: &Workspace) -> String {
     if !workspace.is_welcome()
         && let Some(files) = workspace.snapshot().pending_checkout
     {
-        return format!("No working tree yet: o reviews writing {files} file(s) from HEAD   R Remotes   ? help");
+        return workspace.t(TextKey::HintPendingCheckout).replace("{files}", &files.to_string());
     }
     // An unfinished integration makes every write refuse. Point at the one
     // action that can move it forward instead of leaving the user to guess.
@@ -2261,17 +2261,17 @@ fn hints(workspace: &Workspace) -> String {
         }
     }
     let focus = match workspace.focus() {
-        Pane::Status => "f fetch   p pull   P push   2 3 4 focus lists",
-        Pane::Files => "Space stage/unstage   a all   d discard   s stash   5 stashes   c commit",
-        Pane::Stashes => "Space/S apply and keep   p pop   d drop   2 files   Enter inspect",
-        Pane::Branches => "Space checkout   n new   d delete   Enter details",
-        Pane::Commits => "Enter files   Space checkout detached",
-        Pane::Main if workspace.main().committed.is_some() => "Enter file diff   Esc commits",
-        Pane::Main if workspace.main().file.is_none() => "j/k scroll   Esc back",
-        Pane::Main if workspace.anchor_set() => "Space stage lines   v end range   a stage hunk   Esc back",
-        Pane::Main => "Space stage line   v range   a stage hunk   d discard   Esc back",
+        Pane::Status => workspace.t(TextKey::HintPaneStatus),
+        Pane::Files => workspace.t(TextKey::HintPaneFiles),
+        Pane::Stashes => workspace.t(TextKey::HintPaneStashes),
+        Pane::Branches => workspace.t(TextKey::HintPaneBranches),
+        Pane::Commits => workspace.t(TextKey::HintPaneCommits),
+        Pane::Main if workspace.main().committed.is_some() => workspace.t(TextKey::HintMainCommitted),
+        Pane::Main if workspace.main().file.is_none() => workspace.t(TextKey::HintMainScroll),
+        Pane::Main if workspace.anchor_set() => workspace.t(TextKey::HintMainAnchor),
+        Pane::Main => workspace.t(TextKey::HintMainLines),
     };
-    format!("{focus}   Tab panels   ? help   q quit")
+    workspace.t(TextKey::HintSuffix).replace("{focus}", focus)
 }
 
 /// Shortens `text` to `columns` characters, marking the cut with "..". Control

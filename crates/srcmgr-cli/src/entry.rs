@@ -117,10 +117,10 @@ impl ApplicationBackend {
     }
 
     fn prepare_locate(&mut self, source: RecentRepository, target: NativePath) -> Result<Reply, String> {
-        if source.backend != "git" { return Err("This backend is unavailable; the recent entry was preserved".into()); }
-        if !open_profile_store(&self.options)?.recent_repositories().map_err(|e| e.to_string())?.contains(&source) { return Err("Recent entry changed; reload the list before locating again".into()); }
+        if source.backend != "git" { return Err(self.say(srcmgr_ui::TextKey::RefuseBackendRecentEntry)); }
+        if !open_profile_store(&self.options)?.recent_repositories().map_err(|e| e.to_string())?.contains(&source) { return Err(self.say(srcmgr_ui::TextKey::RefuseRecentEntryChanged)); }
         let input = std::path::Path::new(target.as_os_str());
-        if !input.is_absolute() { return Err("Enter an absolute local repository path".into()); }
+        if !input.is_absolute() { return Err(self.say(srcmgr_ui::TextKey::RefuseAbsolutePath)); }
         // Filesystem metadata only. Neither reviewing nor saving a bookmark
         // starts Git, grants trust or publishes a new active worker target.
         let target = canonical_worktree(input)?;
@@ -146,16 +146,22 @@ impl ApplicationBackend {
         Ok(FailedClone { destination: target.destination.clone(), created: target.created, expires: target.expires })
     }
 
+    /// One catalogue string in this window's language, falling back to English
+    /// when the profile cannot be read.
+    fn say(&self, key: srcmgr_ui::TextKey) -> String {
+        srcmgr_ui::text_of(key, self.locale().unwrap_or(srcmgr_ui::Locale::En)).to_owned()
+    }
+
     fn locale(&self) -> Result<srcmgr_ui::Locale, String> {
         crate::interface_locale(&open_profile_store(&self.options)?)
     }
 
     fn save_located(&mut self, ticket: &str) -> Result<Reply, String> {
         let pending = self.locate.take().ok_or("Location review is missing or consumed; review again")?;
-        if pending.ticket != ticket || Instant::now() >= pending.expires { return Err("Location review expired or changed; review again".into()); }
+        if pending.ticket != ticket || Instant::now() >= pending.expires { return Err(self.say(srcmgr_ui::TextKey::RefuseLocationReviewExpired)); }
         let canonical = canonical_worktree(&pending.target)?;
         let git_directory = git_dir_of(&canonical)?;
-        if canonical != pending.target || git_directory != pending.git_directory || fingerprint(&git_directory, &canonical).map_err(|e| e.to_string())? != pending.fingerprint { return Err("Repository metadata changed; review the location again".into()); }
+        if canonical != pending.target || git_directory != pending.git_directory || fingerprint(&git_directory, &canonical).map_err(|e| e.to_string())? != pending.fingerprint { return Err(self.say(srcmgr_ui::TextKey::RefuseMetadataChangedLocate)); }
         let mut store = open_profile_store(&self.options)?;
         let entries = store.relocate_repository(&pending.source, &canonical).map_err(|e| format!("Recent entry changed or could not be saved; reload and review again: {e}"))?;
         let target = NativePath::new(canonical.into_os_string()).encoded();
@@ -214,7 +220,7 @@ impl ApplicationBackend {
         };
         if let Some(reason) = needs_repair {
             let expected = open_profile_store(&self.options)?.navigation_for_repair(&path).map_err(|e| format!("Saved view cannot be safely reviewed (recovery limit 1 MiB). Preserve the profile database for manual recovery: {e}"))?.ok_or("Saved view changed; retry opening")?;
-            if srcmgr_ui::Navigation::decode(&expected).is_ok() { return Err("Saved view changed; retry opening to load the current record".into()); }
+            if srcmgr_ui::Navigation::decode(&expected).is_ok() { return Err(self.say(srcmgr_ui::TextKey::RefuseSavedViewChanged)); }
             let random = minicon_platform::entropy::secure_random_array::<16>().map_err(|e| format!("Cannot prepare navigation recovery: {e:?}"))?;
             let ticket: String = random.iter().map(|b| format!("{b:02x}")).collect();
             self.navigation = Some(PendingNavigation { ticket: ticket.clone(), worktree, expected, expires: Instant::now() + Duration::from_secs(60) });
@@ -227,7 +233,7 @@ impl ApplicationBackend {
 
     fn reset_navigation(&mut self, ticket: &str) -> Result<Reply, String> {
         let pending = self.navigation.take().ok_or("Navigation recovery is missing or consumed; open again to review")?;
-        if pending.ticket != ticket || Instant::now() >= pending.expires { return Err("Navigation recovery changed or expired; review again".into()); }
+        if pending.ticket != ticket || Instant::now() >= pending.expires { return Err(self.say(srcmgr_ui::TextKey::RefuseNavigationRecoveryExpired)); }
         let path = NativePath::new(pending.worktree.into_os_string());
         let archive = open_profile_store(&self.options)?.archive_navigation(&path, &pending.expected, &pending.ticket).map_err(|e| format!("Saved view changed or could not be archived; no reset was published. Reopen to review: {e}"))?;
         let detail = format!("Saved view archived as {archive}. Defaults were selected; drafts and Git data were retained.");
@@ -241,7 +247,7 @@ impl ApplicationBackend {
         self.create = None;
         let target = srcmgr_git::InitializationTarget::prepare(std::path::Path::new(path.as_os_str())).map_err(|e| e.to_string())?;
         if branch.is_empty() || branch.starts_with('-') || branch == "HEAD" || branch.len() > 255 {
-            return Err("Choose a valid initial branch name (up to 255 UTF-8 bytes)".into());
+            return Err(self.say(srcmgr_ui::TextKey::RefuseBranchNameInvalid));
         }
         let bytes = minicon_platform::entropy::secure_random_array::<16>().map_err(|e| format!("cannot prepare creation review: {e:?}"))?;
         let ticket: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
@@ -258,11 +264,11 @@ impl ApplicationBackend {
     fn create(&mut self, ticket: &str) -> Result<Reply, String> {
         let pending = self.create.take().ok_or("Creation review is missing or already consumed; review again")?;
         if pending.ticket != ticket || Instant::now() >= pending.expires {
-            return Err("Creation review expired or changed; review again".into());
+            return Err(self.say(srcmgr_ui::TextKey::RefuseCreateReviewExpired));
         }
         let executable = std::fs::canonicalize(crate::selected_git(&self.options)?).map_err(|_| "Selected Git is unavailable; choose an installed Git")?;
         if executable.starts_with(pending.target.path()) {
-            return Err("Select an installed Git outside the initialization target".into());
+            return Err(self.say(srcmgr_ui::TextKey::RefuseGitInsideTarget));
         }
         let git = srcmgr_git::GitInstallation::probe(executable).map_err(|error| error.to_string())?;
         let path = pending.target.execute(&git, &pending.branch).map_err(|error| format!("Create did not complete: {error}. Inspect the target before retrying; partial metadata may remain. Existing files were not staged or committed."))?;
@@ -275,14 +281,14 @@ impl ApplicationBackend {
             .take()
             .ok_or("trust review is missing, expired or already consumed; open again")?;
         if ticket != pending.ticket || Instant::now() >= pending.expires {
-            return Err("trust review expired or changed; open again".into());
+            return Err(self.say(srcmgr_ui::TextKey::RefuseTrustReviewExpired));
         }
         if canonical_worktree(&pending.worktree)? != pending.worktree
             || git_dir_of(&pending.worktree)? != pending.git_directory
             || fingerprint(&pending.git_directory, &pending.worktree).map_err(|e| e.to_string())?
                 != pending.fingerprint
         {
-            return Err("repository metadata changed after review; open and review again".into());
+            return Err(self.say(srcmgr_ui::TextKey::RefuseMetadataChangedTrust));
         }
         let (_, mut grants) = trust_store(&self.options)?;
         grants.grant(pending.git_directory, pending.fingerprint);
@@ -315,9 +321,9 @@ impl ApplicationBackend {
 
     fn save_identity(&mut self, ticket: &str, name: &str, email: &str) -> Result<Reply, String> {
         let pending = self.identity.take().ok_or("Identity preview is missing or consumed; reload before saving")?;
-        if ticket != pending.ticket || Instant::now() >= pending.expires { return Err("Identity preview expired or changed; reload before saving".into()); }
+        if ticket != pending.ticket || Instant::now() >= pending.expires { return Err(self.say(srcmgr_ui::TextKey::RefuseIdentityPreviewExpired)); }
         let active = self.active.as_ref().ok_or("Repository is no longer open")?;
-        if active.worktree != pending.worktree { return Err("Active repository changed; identity was not saved".into()); }
+        if active.worktree != pending.worktree { return Err(self.say(srcmgr_ui::TextKey::RefuseActiveRepoChanged)); }
         let session = crate::open_trusted(&active.options, &active.worktree)?;
         let durability_warning = pending.config.save_local(&session.installation, &session.identity, name, email).map_err(|e| format!("Identity was not published: {e}; reload before retrying"))?;
         let path = NativePath::new(pending.worktree.into_os_string());
@@ -337,7 +343,7 @@ impl ApplicationBackend {
             None => crate::find_git_on_path().ok_or("No Git was found on PATH; select an installed executable")?,
         };
         let executable = std::fs::canonicalize(executable).map_err(|_| "Selected executable is unavailable; previous Git preference was preserved")?;
-        if !executable.is_file() { return Err("Select a Git executable file".into()); }
+        if !executable.is_file() { return Err(self.say(srcmgr_ui::TextKey::RefuseSelectGitFile)); }
         // Explicit selection is execution authority, but cannot admit a known
         // active or pending repository's executable before its trust boundary.
         let mut roots = Vec::new();
@@ -345,7 +351,7 @@ impl ApplicationBackend {
         if let Some(trust) = &self.trust { roots.push(trust.worktree.as_path()); }
         if let Some(create) = &self.create { roots.push(create.target.path()); }
         if roots.iter().any(|root| executable.starts_with(root)) {
-            return Err("Choose an installed Git outside the selected repositories".into());
+            return Err(self.say(srcmgr_ui::TextKey::RefuseGitOutsideRepos));
         }
         let installation = srcmgr_git::GitInstallation::probe(&executable).map_err(|e| e.to_string())?;
         installation.require_supported().map_err(|e| e.to_string())?;
@@ -382,12 +388,12 @@ impl Backend for ApplicationBackend {
             Job::EnterRepository { path, current } => (|| {
                 if let Some((source, navigation)) = current {
                     let active = self.active.as_ref().ok_or("No active repository for navigation save")?;
-                    if std::path::Path::new(source.as_os_str()) != active.worktree { return Err("Navigation belongs to another repository; target unchanged".into()); }
+                    if std::path::Path::new(source.as_os_str()) != active.worktree { return Err(self.say(srcmgr_ui::TextKey::RefuseNavigationOtherRepo)); }
                     open_profile_store(&self.options)?.put_navigation(&source, &navigation.encode()).map_err(|e| e.to_string())?;
-                } else if self.active.is_some() { return Err("Active repository context is required before entry".into()); }
+                } else if self.active.is_some() { return Err(self.say(srcmgr_ui::TextKey::RefuseActiveRepoRequired)); }
                 if let Some(path) = path { self.open(path) }
                 else {
-                    let Reply::Welcome(recents) = self.recent()? else { return Err("Recent list unavailable".into()); };
+                    let Reply::Welcome(recents) = self.recent()? else { return Err(self.say(srcmgr_ui::TextKey::RefuseRecentListUnavailable)); };
                     self.active = None;
                     self.tools.cancel();
                     self.navigation = None;
@@ -422,14 +428,14 @@ impl Backend for ApplicationBackend {
                     self.clone = Some(PendingClone { ticket: ticket.clone(), request, created, expires: Instant::now() + Duration::from_secs(300) });
                     Ok(Reply::CloneReview { ticket, lines: preview.lines, destination })
                 })()
-                .unwrap_or_else(|text| Reply::Notice(format!("Clone not started: {text}")))
+                .unwrap_or_else(|text| Reply::Notice(self.say(srcmgr_ui::TextKey::ResultCloneNotStarted).replace("{text}", &text)))
             }
             Job::ExecuteClone(ticket) => {
                 let Some(pending) = self.clone.take() else {
-                    return Reply::Notice("The clone review expired or was already used; review the clone again.".into());
+                    return Reply::Notice(self.say(srcmgr_ui::TextKey::NoteCloneApprovalExpired));
                 };
                 if pending.ticket != ticket || Instant::now() > pending.expires {
-                    return Reply::Notice("The clone review expired or was already used; review the clone again.".into());
+                    return Reply::Notice(self.say(srcmgr_ui::TextKey::NoteCloneApprovalExpired));
                 }
                 (|| -> Result<Reply, String> {
                     let installation = srcmgr_git::GitInstallation::probe(crate::selected_git(&self.options)?)
@@ -539,10 +545,11 @@ impl Backend for ApplicationBackend {
                 self.create = None;
                 Reply::NoChange
             }
-            job => self.active.as_mut().map_or_else(
-                || Reply::Notice("Open a repository before requesting repository work".into()),
-                |active| active.run(job),
-            ),
+            job => {
+                // Resolve the wording before borrowing the active backend.
+                let open_first = self.say(srcmgr_ui::TextKey::RefuseOpenBeforeWork);
+                self.active.as_mut().map_or_else(|| Reply::Notice(open_first.clone()), |active| active.run(job))
+            }
         }
     }
 }
