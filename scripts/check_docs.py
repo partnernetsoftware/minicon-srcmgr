@@ -17,7 +17,11 @@ PREFIXES = {
 
 def main() -> int:
     errors = []
-    modules = sorted((ROOT / "prd").glob("PRD_*.md"))
+    # Owner modules are exactly PRD_<two digits>_<name>.md. The narrower glob
+    # keeps a differently named companion file, such as the memory palace,
+    # from being counted as a sixteenth owner module on case-insensitive
+    # filesystems, where PRD_*.md also matches prd_*.md.
+    modules = sorted((ROOT / "prd").glob("PRD_[0-9][0-9]_*.md"))
     if len(modules) != len(PREFIXES):
         errors.append(f"Expected {len(PREFIXES)} owner modules, found {len(modules)}")
     index = (ROOT / "PRD.md").read_text(encoding="utf-8")

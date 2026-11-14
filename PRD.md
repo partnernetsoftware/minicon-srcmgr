@@ -2,6 +2,12 @@
 
 Requirements baseline: **1.6 · 2026-10-24 · defines the first-user 0.1.0 feature tree, workspace journeys and 0.0.x delivery allocation**. This is a documentation baseline number, not the application version. Repository: `partnernetsoftware/minicon-srcmgr`. Product name: MiniCon SrcMgr; executable name: `minicon-srcmgr`.
 
+## Memory palace
+
+[prd/prd_mempalace.md](prd/prd_mempalace.md) is the distilled map of this baseline: notation, the ten invariants, requirement ownership, the decisions that must not be re-proposed, where each version stands, and the operational facts that had to be re-learned. Read it first when returning to the project.
+
+It is a reading aid only. It carries no requirement text and no acceptance evidence; the owning module below always wins, and only a plan or release record can prove delivery. When this index and the memory palace disagree, this index and the owner modules are correct.
+
 ## Outcome tree DAG
 
 ```text
