@@ -1169,7 +1169,7 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         &mut draws,
         status_rect,
         grid,
-        Panel { focused: focus == Pane::Status, title: "[1] Status", empty: "" },
+        Panel { focused: focus == Pane::Status, title: workspace.t(TextKey::PaneStatusTitle), empty: "" },
         &[Line { tone: Tone::Text, text: match &snapshot.upstream {
             Some(upstream) => format!("{} | {upstream} ahead {} behind {}{}", snapshot.head, snapshot.ahead, snapshot.behind, operation_suffix(workspace)),
             None => format!("{}{}", snapshot.head, operation_suffix(workspace)),
@@ -1179,7 +1179,10 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
     let file_pane = if workspace.stash_list_visible() { Pane::Stashes } else { Pane::Files };
     if file_pane == Pane::Stashes {
         let rows: Vec<_> = snapshot.stashes.iter().enumerate().map(|(index, item)| Line { tone: Tone::Text, text: format!("stash@{{{index}}} {} {}", short(&item.id), item.subject) }).collect();
-        list_panel(&mut draws, files_rect, grid, Panel { focused: focus == Pane::Stashes, title: &format!("[5] Stashes ({}; max 200)", snapshot.stashes.len()), empty: "No stashes" }, &rows, selected(Pane::Stashes));
+        let stashes_title = workspace
+            .t(TextKey::PaneStashesTitle)
+            .replace("{count}", &snapshot.stashes.len().to_string());
+        list_panel(&mut draws, files_rect, grid, Panel { focused: focus == Pane::Stashes, title: &stashes_title, empty: workspace.t(TextKey::PaneStashesEmpty) }, &rows, selected(Pane::Stashes));
     } else {
         filtered_panel(&mut draws,file_list_body(files_rect,grid,workspace.locale()),grid,workspace,Pane::Files);
         for (rect,action,label) in file_actions(files_rect,grid,workspace.locale()) {button_draw(&mut draws,rect,grid,label,if workspace.change_available(action){BORDER}else{MUTED_TEXT});}
@@ -1488,6 +1491,16 @@ struct Panel<'a> {
     empty: &'a str,
 }
 
+/// The list panes that use the generic title. Commits and Stashes build their
+/// own, so the fallback here is never drawn.
+fn pane_name(pane: Pane, workspace: &Workspace) -> &'static str {
+    if pane == Pane::Branches {
+        workspace.t(TextKey::PaneBranchesLabel)
+    } else {
+        workspace.t(TextKey::PaneFilesLabel)
+    }
+}
+
 fn pane_label(pane: Pane) -> &'static str { match pane { Pane::Files => "Files", Pane::Branches => "Branches", Pane::Commits => "Commits", _ => "List" } }
 
 fn filter_controls(rect: Rect, grid: Grid) -> (Rect, Rect) {
@@ -1510,7 +1523,18 @@ fn filtered_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Wor
     let number = match pane { Pane::Files => 2, Pane::Branches => 3, _ => 4 };
     let query = workspace.filter_query(pane);
     let counts = if query.is_empty() { total.to_string() } else { format!("{}/{total}", rows.len()) };
-    let title = if pane == Pane::Commits { format!("[4] Loaded commits {counts} max{}", snapshot.history_limit) } else { format!("[{number}] {} ({counts})", pane_label(pane)) };
+    let title = if pane == Pane::Commits {
+        workspace
+            .t(TextKey::PaneCommitsTitle)
+            .replace("{count}", &counts)
+            .replace("{limit}", &snapshot.history_limit.to_string())
+    } else {
+        workspace
+            .t(TextKey::PaneListTitle)
+            .replace("{number}", &number.to_string())
+            .replace("{name}", pane_name(pane, workspace))
+            .replace("{count}", &counts)
+    };
     frame(draws, rect, grid, workspace.focus() == pane, &title);
     let (field, clear) = filter_controls(rect, grid);
     draws.push(Draw::Text { x: field.x, baseline: field.y + grid.ascent, text: fit(&format!("Filter /: {query}"), grid.columns(field.width)), colour: if query.is_empty() { MUTED_TEXT } else { colour(Tone::Heading) } });
@@ -2418,6 +2442,12 @@ mod tests {
         let text = drawn_text(&scene(&Workspace::new(chinese), 1040, 680, GRID, 0));
         let expected = crate::messages::chinese(crate::messages::Key::ChangesStage);
         assert!(text.contains(expected), "expected {expected} in the frame");
+        // Pane titles are chrome and follow the language, while the numbers
+        // and counts inside them stay data.
+        assert!(text.contains("状态"), "expected a Chinese status title in:
+{text}");
+        assert!(text.contains("文件"), "expected a Chinese files title in:
+{text}");
         // Object ids and path labels are data, not prose, and stay literal.
         assert!(text.contains("f0.txt"), "path labels must stay literal");
         assert!(text.contains("main"), "branch names must stay literal");

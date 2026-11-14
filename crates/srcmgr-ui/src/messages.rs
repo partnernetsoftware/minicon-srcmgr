@@ -210,6 +210,13 @@ catalog! {
     RefuseOpUnreadable => "Refused: the repository's operation state cannot be read ({detail}); inspect it before any write.", "已拒绝：无法读取仓库的操作状态（{detail}）；请先检查再进行任何写入。";
     RefusePath => "Repository: {path}", "仓库：{path}";
     RefuseDiverged => "Refused: the local branch and its fetched upstream have both advanced.\\nLocal: {local}\\nFetched upstream: {upstream}\\nPull never merges, rebases or stashes on its own; resolve the divergence in a terminal, then refresh.", "已拒绝：本地分支与已抓取的上游都已前进。\\n本地：{local}\\n已抓取的上游：{upstream}\\n拉取不会自行合并、变基或贮藏；请在终端中解决分歧后刷新。";
+    PaneStatusTitle => "[1] Status", "[1] 状态";
+    PaneFilesLabel => "Files", "文件";
+    PaneBranchesLabel => "Branches", "分支";
+    PaneListTitle => "[{number}] {name} ({count})", "[{number}] {name}（{count} 项）";
+    PaneCommitsTitle => "[4] Loaded commits {count} max{limit}", "[4] 已载入提交 {count}，上限 {limit}";
+    PaneStashesTitle => "[5] Stashes ({count}; max 200)", "[5] 贮藏（{count}；上限 200）";
+    PaneStashesEmpty => "No stashes", "没有贮藏";
     NoteBranchCheckedOut => "{branch} is already checked out", "已检出分支 {branch}";
     NoteBranchCannotDelete => "{branch} is checked out and cannot be deleted", "分支 {branch} 已检出，无法删除";
     NoteNothingToDiscard => "{path} has no unstaged changes to discard", "{path} 没有可丢弃的未暂存更改";
