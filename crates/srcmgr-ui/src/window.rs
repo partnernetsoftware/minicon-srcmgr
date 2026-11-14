@@ -1171,8 +1171,8 @@ fn scene(workspace: &Workspace, width: i64, height: i64, grid: Grid, pending: us
         grid,
         Panel { focused: focus == Pane::Status, title: "[1] Status", empty: "" },
         &[Line { tone: Tone::Text, text: match &snapshot.upstream {
-            Some(upstream) => format!("{} | {upstream} ahead {} behind {}{}", snapshot.head, snapshot.ahead, snapshot.behind, operation_suffix(snapshot)),
-            None => format!("{}{}", snapshot.head, operation_suffix(snapshot)),
+            Some(upstream) => format!("{} | {upstream} ahead {} behind {}{}", snapshot.head, snapshot.ahead, snapshot.behind, operation_suffix(workspace)),
+            None => format!("{}{}", snapshot.head, operation_suffix(workspace)),
         } }],
         selected(Pane::Status),
     );
@@ -1651,22 +1651,35 @@ fn tool_scene(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
 
 /// Names an unfinished integration next to the branch, so a user who left a
 /// conflicted merge in a terminal sees the same state the write guard enforces.
-fn operation_suffix(snapshot: &crate::Snapshot) -> String {
+fn operation_suffix(workspace: &Workspace) -> String {
+    let snapshot = workspace.snapshot();
     // Divergence is shown before anything is attempted, with both tips named and
     // the fact that they are what the last fetch recorded. Pull is refused from
     // this state rather than choosing an integration for the user.
     if let Some((local, upstream)) = &snapshot.divergence {
-        let age = match &snapshot.fetched_at {
-            Some(stamp) => format!(" as of the last fetch {stamp}"),
-            None => " as of the last fetch".to_owned(),
+        // Name the tips first; the freshness claim is only made when FETCH_HEAD
+        // actually recorded a fetch, and says so when it did not.
+        return match snapshot.fetched_at.as_deref() {
+            Some(stamp) => workspace
+                .t(crate::messages::Key::StatusDiverged)
+                .replace("{local}", local)
+                .replace("{upstream}", upstream)
+                .replace("{stamp}", stamp),
+            None => workspace
+                .t(crate::messages::Key::StatusDivergedNoTime)
+                .replace("{local}", local)
+                .replace("{upstream}", upstream),
         };
-        return format!(" | diverged: local {local} | fetched upstream {upstream},{age}");
     }
-    match (&snapshot.operation, snapshot.unmerged.len()) {
+    let count = snapshot.unmerged.len();
+    match (&snapshot.operation, count) {
         (None, 0) => String::new(),
-        (Some(operation), 0) => format!(" | {operation} in progress"),
-        (Some(operation), count) => format!(" | {operation} in progress, {count} unmerged"),
-        (None, count) => format!(" | {count} unmerged"),
+        (Some(operation), 0) => workspace.t(crate::messages::Key::StatusInProgress).replace("{operation}", operation),
+        (Some(operation), count) => workspace
+            .t(crate::messages::Key::StatusInProgressUnmerged)
+            .replace("{operation}", operation)
+            .replace("{count}", &count.to_string()),
+        (None, count) => workspace.t(crate::messages::Key::StatusUnmerged).replace("{count}", &count.to_string()),
     }
 }
 
@@ -2489,14 +2502,39 @@ mod tests {
         let mut snapshot = super::tests::snapshot(1);
         snapshot.divergence = Some(("0123456 local work".into(), "abcdef0 remote work".into()));
         snapshot.fetched_at = Some("2026-11-14 09:12 UTC".into());
-        let line = operation_suffix(&snapshot);
+        let workspace = Workspace::new(snapshot.clone());
+        let line = operation_suffix(&workspace);
         assert!(line.contains("local 0123456 local work"), "{line}");
         assert!(line.contains("fetched upstream abcdef0 remote work"), "{line}");
         assert!(line.contains("as of the last fetch 2026-11-14 09:12 UTC"), "{line}");
         // Without a fetch record the line still refuses to invent one.
         snapshot.fetched_at = None;
-        assert!(operation_suffix(&snapshot).contains("as of the last fetch"), "{}", operation_suffix(&snapshot));
-        assert!(!operation_suffix(&snapshot).contains("UTC"));
+        let without = operation_suffix(&Workspace::new(snapshot));
+        assert!(without.contains("fetch time unavailable"), "{without}");
+        assert!(!without.contains("UTC"), "{without}");
+    }
+
+    #[test]
+    fn the_status_line_speaks_chinese_when_the_locale_does() {
+        let mut snapshot = super::tests::snapshot(1);
+        snapshot.locale = crate::Locale::ZhCn;
+        snapshot.operation = Some("merge".into());
+        snapshot.unmerged = vec!["a.txt".into(), "b.txt".into()];
+        let line = operation_suffix(&Workspace::new(snapshot));
+        assert!(line.contains("merge"), "{line}");
+        assert!(line.contains("\u{6b63}\u{5728}\u{8fdb}\u{884c}"), "{line}");
+        assert!(line.contains("2"), "{line}");
+    }
+
+    #[test]
+    fn a_notice_follows_the_locale_instead_of_staying_english() {
+        let mut snapshot = super::tests::snapshot(1);
+        snapshot.locale = crate::Locale::ZhCn;
+        let mut workspace = Workspace::new(snapshot);
+        workspace.reply(crate::Reply::RemoteApplied { lines: Vec::new() });
+        let text = drawn_text(&scene(&workspace, 1040, 680, GRID, 0));
+        assert!(text.contains("\u{5df2}\u{5e94}\u{7528}"), "expected a Chinese notice in: {text}");
+        assert!(!text.contains("Applied."), "the English notice leaked into a Chinese frame");
     }
 
     pub(super) fn snapshot(files: usize) -> Snapshot {

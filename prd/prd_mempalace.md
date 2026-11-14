@@ -149,6 +149,12 @@ enforced in code or a fixture today.
   every one of them, not only for the destructive one.
 - **Locale changes display text only.** Paths, object ids, refspecs, ref names and
   Git's own output stay literal in every language.
+- **The catalogue is one table, so a key without a translation cannot compile.**
+  Templates keep their placeholders and substitute at the call site; do not build
+  translated sentences by concatenation.
+- **Backend refusals are English today.** The backend has no locale, so a refusal
+  it produces is not translated even in a Chinese frame. Translating them needs
+  structured refusal codes with data, not passing a string through.
 - **Windows canonical paths break Git.** `fs::canonicalize` returns a verbatim
   `\\?\` path that Git rejects with status 128; resolve a symlinked temp root on
   unix only.

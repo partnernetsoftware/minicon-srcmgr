@@ -358,7 +358,7 @@ impl Workspace {
     /// Requests the main-panel content for the first list. Call once after `new`.
     pub fn open(&mut self) -> Effect {
         if self.is_welcome() {
-            self.main = MainView::text("Open a repository by path, or select a recent location.\nRecent locations are not trusted automatically.\nNo repository commands run while browsing this screen.\n\nCtrl+O: Open path\nEnter: Open selected recent location\nL: Locate selected recent location\nd: Remove selected recent record only\nr: Reload recent records");
+            self.main = MainView::text(self.t(crate::messages::Key::ViewOpenScreen));
             return Effect::Send(Job::LoadWelcome);
         }
         if let Some(navigation) = self.snapshot.navigation.take() { return self.restore_navigation(navigation); }
@@ -375,7 +375,7 @@ impl Workspace {
         self.closing_tab = false;
         if self.tab_entry { self.prompt = None; self.tab_entry = false; }
         else if let Some(prompt) = self.prompt.as_mut() { prompt.submitted = None; }
-        self.notice = Some("Opening cancelled; saved view was retained".into());
+        self.notice = Some(crate::messages::text(crate::messages::Key::NoteOpenCancelled, self.locale()).to_owned());
         Effect::Send(Job::CancelEntry)
     }
 
@@ -487,7 +487,7 @@ impl Workspace {
         let from_open = self.prompt.as_ref().filter(|p| p.kind == PromptKind::OpenRepository && !p.pending()).map(|p| p.text.clone());
         if !self.is_welcome() || (self.modal() && (from_open.is_none() || self.trust.is_some() || self.navigation_issue.is_some())) { return Effect::Nothing; }
         let Some(source) = self.snapshot.recents.get(self.files).cloned() else { return Effect::Nothing; };
-        if source.backend != "git" { self.notice = Some("This backend is unavailable; its recent record was preserved".into()); return Effect::Nothing; }
+        if source.backend != "git" { self.notice = Some(crate::messages::text(crate::messages::Key::NoteBackendRecentPreserved, self.locale()).to_owned()); return Effect::Nothing; }
         let mut form = crate::LocateForm::new(source);
         if let Some(text) = from_open { form.editor.text = text; form.editor.caret = form.editor.text.len(); composer::select_all(&mut form.editor); }
         self.prompt = None; self.notice = None; self.trust_scroll = 0; self.locate = Some(form);
@@ -512,17 +512,17 @@ impl Workspace {
     /// Fetches the current branch upstream's remote, else the first configured remote.
     pub fn fetch_remote(&mut self) -> Effect {
         let target = self.snapshot.upstream.as_ref().and_then(|upstream| upstream.split('/').next().filter(|name| !name.is_empty()).map(str::to_owned)).or_else(|| self.snapshot.remotes.first().map(|remote| remote.name.clone()));
-        target.map_or_else(|| { self.notice = Some("No remote is configured; add one with Git or clone a repository".into()); Effect::Nothing }, |remote| Effect::Send(Job::Fetch { remote }))
+        target.map_or_else(|| { self.notice = Some(crate::messages::text(crate::messages::Key::NoteNoRemote, self.locale()).to_owned()); Effect::Nothing }, |remote| Effect::Send(Job::Fetch { remote }))
     }
     /// Fast-forward pull of the current upstream; local only, no hidden merge.
     pub fn pull(&mut self) -> Effect {
-        if self.snapshot.repository.is_none() { self.notice = Some("Open a repository before pulling".into()); return Effect::Nothing; }
+        if self.snapshot.repository.is_none() { self.notice = Some(crate::messages::text(crate::messages::Key::NoteOpenBeforePull, self.locale()).to_owned()); return Effect::Nothing; }
         Effect::Send(Job::Pull)
     }
     /// Pushes the current branch to the upstream-named remote, else the first one.
     pub fn push_branch(&mut self) -> Effect {
         let target = self.snapshot.upstream.as_ref().and_then(|upstream| upstream.split('/').next().filter(|name| !name.is_empty()).map(str::to_owned)).or_else(|| self.snapshot.remotes.first().map(|remote| remote.name.clone()));
-        target.map_or_else(|| { self.notice = Some("No remote is configured; add one with Git or clone a repository".into()); Effect::Nothing }, |remote| Effect::Send(Job::Push { remote }))
+        target.map_or_else(|| { self.notice = Some(crate::messages::text(crate::messages::Key::NoteNoRemote, self.locale()).to_owned()); Effect::Nothing }, |remote| Effect::Send(Job::Push { remote }))
     }
     pub fn forget_recent(&mut self) -> Effect {
         if !self.is_welcome() || self.modal() { return Effect::Nothing; }
@@ -645,7 +645,7 @@ impl Workspace {
 
     pub fn finish_filter(&mut self, apply: bool, inspect: bool) -> Effect {
         let Some(form) = self.filter_editor.take() else { return Effect::Nothing; };
-        if !form.editor.preedit.is_empty() { self.notice = Some("Finish IME composition before leaving the filter".into()); self.filter_editor = Some(form); return Effect::Nothing; }
+        if !form.editor.preedit.is_empty() { self.notice = Some(crate::messages::text(crate::messages::Key::NoteImeLeaveFilter, self.locale()).to_owned()); self.filter_editor = Some(form); return Effect::Nothing; }
         let slot = Self::filter_slot(form.pane).unwrap();
         self.focus = form.pane;
         self.source = form.pane;
@@ -675,7 +675,7 @@ impl Workspace {
 
     pub fn clear_filter(&mut self, pane: Pane) -> Effect {
         let Some(slot) = Self::filter_slot(pane) else { return Effect::Nothing; };
-        if self.filter_editor.as_ref().is_some_and(|e| !e.editor.preedit.is_empty()) { self.notice = Some("Finish IME composition before clearing the filter".into()); return Effect::Nothing; }
+        if self.filter_editor.as_ref().is_some_and(|e| !e.editor.preedit.is_empty()) { self.notice = Some(crate::messages::text(crate::messages::Key::NoteImeClearFilter, self.locale()).to_owned()); return Effect::Nothing; }
         self.filter_editor = None;
         self.filters[slot].query.clear();
         self.filters[slot].project();
@@ -716,7 +716,7 @@ impl Workspace {
             key => {
                 let text = match key { Key::Char(c) => c.to_string(), Key::Text(s) | Key::Pasted(s) => s, Key::Space => " ".into(), _ => return Effect::Nothing };
                 let removed = composer::selection_bounds(&form.editor).map_or(0, |(a,b)| form.editor.text[a..b].chars().count());
-                if text.contains(['\n', '\r']) || form.editor.text.chars().count() - removed + text.chars().count() > 256 { self.notice = Some("Filter limit is 256 Unicode characters on one line; input was not inserted".into()); return Effect::Nothing; }
+                if text.contains(['\n', '\r']) || form.editor.text.chars().count() - removed + text.chars().count() > 256 { self.notice = Some(crate::messages::text(crate::messages::Key::NoteFilterLimit, self.locale()).to_owned()); return Effect::Nothing; }
                 composer::insert(&mut form.editor, &text);
             }
         }
@@ -769,7 +769,7 @@ impl Workspace {
         });
         let Some(request) = request else {
             let effect = self.show_source();
-            if had_request { self.notice = Some("Saved detail is outside the current loaded/filter state or changed side; current selection was refreshed".into()); }
+            if had_request { self.notice = Some(crate::messages::text(crate::messages::Key::NoteSavedDetailStale, self.locale()).to_owned()); }
             return effect;
         };
         self.history_back = navigation.back;
@@ -783,7 +783,7 @@ impl Workspace {
 
     fn entry(&mut self, path: Option<NativePath>) -> Effect {
         if path.as_ref().is_some_and(|p| self.tabs.len() >= 16 && !self.tabs.iter().any(|t| &t.path == p)) {
-            self.notice = Some("16 repositories are open; close a tab before opening another".into());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteTabsFull, self.locale()).to_owned());
             if let Some(prompt) = self.prompt.as_mut() { prompt.submitted = None; }
             self.closing_tab = false;
             return Effect::Nothing;
@@ -806,14 +806,14 @@ impl Workspace {
             if self.filter_editor.is_some() { return Effect::Nothing; }
         }
         if self.composer.is_some() {
-            if self.composer.as_ref().is_some_and(|form| !form.editor.preedit.is_empty()) { self.notice = Some("Finish IME composition before changing repositories".into()); return Effect::Nothing; }
-            if self.prompt.as_ref().is_some_and(Prompt::pending) { self.notice = Some("Wait for the current save or commit before switching repositories".into()); return Effect::Nothing; }
+            if self.composer.as_ref().is_some_and(|form| !form.editor.preedit.is_empty()) { self.notice = Some(crate::messages::text(crate::messages::Key::NoteImeSwitchRepo, self.locale()).to_owned()); return Effect::Nothing; }
+            if self.prompt.as_ref().is_some_and(Prompt::pending) { self.notice = Some(crate::messages::text(crate::messages::Key::NoteWaitSaveBeforeSwitch, self.locale()).to_owned()); return Effect::Nothing; }
             self.tab_action = Some(action);
             let effect = self.close_commit(false);
             if self.composer.is_none() { return self.finish_repository_action(); }
             return effect;
         }
-        if self.modal() { self.notice = Some("Finish or cancel this dialog before changing repositories".into()); return Effect::Nothing; }
+        if self.modal() { self.notice = Some(crate::messages::text(crate::messages::Key::NoteDialogBeforeSwitch, self.locale()).to_owned()); return Effect::Nothing; }
         self.tab_action = Some(action);
         self.finish_repository_action()
     }
@@ -1007,7 +1007,7 @@ impl Workspace {
         editor.focused = true;
         self.composer = Some(CommitComposer { editor, review: None, selected: 0, focus: CommitFocus::Message, diff: MainView::note("Select a staged path to review its Diff"), diff_scroll: 0, diff_column: 0, diff_ready: false, diff_generation: self.generation, review_generation: self.generation, id: self.generation, saved: text.clone(), in_flight: None, dirty_since: None, save_error: None, closing: false, quit: false });
         self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::Commit, text, submitted: None });
-        self.notice = Some("Loading complete staged-index review...".into());
+        self.notice = Some(crate::messages::text(crate::messages::Key::NoteLoadingIndex, self.locale()).to_owned());
         Effect::Send(Job::LoadCommitReview { generation: self.generation })
     }
 
@@ -1035,7 +1035,7 @@ impl Workspace {
     pub fn close_commit(&mut self, quit: bool) -> Effect {
         let Some(form) = self.composer.as_mut() else { return if quit { Effect::Quit } else { Effect::Nothing }; };
         if self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(PromptAction::Commit)) {
-            self.notice = Some("Commit is running; wait for its observed result before closing".into());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteCommitRunning, self.locale()).to_owned());
             return Effect::Nothing;
         }
         form.closing = true;
@@ -1059,7 +1059,7 @@ impl Workspace {
         form.review_generation = self.generation;
         form.diff_generation = self.generation;
         form.diff = MainView::note("Loading a fresh complete staged review; message retained");
-        self.notice = Some("Loading complete staged-index review...".into());
+        self.notice = Some(crate::messages::text(crate::messages::Key::NoteLoadingIndex, self.locale()).to_owned());
         Effect::Send(Job::LoadCommitReview { generation: self.generation })
     }
 
@@ -1130,7 +1130,7 @@ impl Workspace {
     fn commit_key(&mut self, key: Key) -> Effect {
         if let Some(form) = self.composer.as_mut() && !form.editor.preedit.is_empty() {
             if matches!(key, Key::Escape) { form.editor.preedit.clear(); }
-            else { self.notice = Some("Finish IME composition before using editor commands".into()); }
+            else { self.notice = Some(crate::messages::text(crate::messages::Key::NoteImeEditorCommand, self.locale()).to_owned()); }
             return Effect::Nothing;
         }
         if matches!(key, Key::Escape) { return self.close_commit(false); }
@@ -1195,7 +1195,7 @@ impl Workspace {
                 let addition = match key { Key::Enter => "\n".into(), Key::Space => " ".into(), Key::Char(ch) => ch.to_string(), Key::Text(text) | Key::Pasted(text) => text, _ => return Effect::Nothing };
                 let selected = composer::selection_bounds(&form.editor).map_or(0, |(start, end)| end - start);
                 if form.editor.text.len().saturating_sub(selected).saturating_add(addition.len()) > composer::PASTE_LIMIT_BYTES {
-                    self.notice = Some("Message limit is 64 KiB UTF-8; input was not inserted".into());
+                    self.notice = Some(crate::messages::text(crate::messages::Key::NoteMessageLimit, self.locale()).to_owned());
                     return Effect::Nothing;
                 }
                 if pasted { composer::paste(&mut form.editor, &addition); }
@@ -1250,7 +1250,7 @@ impl Workspace {
                     Key::Space => " ".into(), Key::Char(ch) => ch.to_string(), Key::Text(text) => text,
                     _ => return Effect::Nothing,
                 };
-                if field.len().saturating_add(incoming.len()) > 1024 { self.notice = Some("Identity field limit is 1024 UTF-8 bytes; input was not appended".into()); }
+                if field.len().saturating_add(incoming.len()) > 1024 { self.notice = Some(crate::messages::text(crate::messages::Key::NoteIdentityLimit, self.locale()).to_owned()); }
                 else { field.push_str(&incoming); self.notice = None; }
                 Effect::Nothing
             }
@@ -1285,7 +1285,7 @@ impl Workspace {
         } else {
             form.id = Prompt::next_id();
             form.review = None;
-            self.notice = Some("Creation cancelled; no directory or metadata was created".into());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteCreateCancelled, self.locale()).to_owned());
             Effect::Send(Job::CancelEntry)
         }
     }
@@ -1323,7 +1323,7 @@ impl Workspace {
                     _ => return Effect::Nothing,
                 };
                 if field.len().saturating_add(incoming.len()) > limit {
-                    self.notice = Some(format!("Field limit is {limit} UTF-8 bytes; input was not appended"));
+                    self.notice = Some(self.t(crate::messages::Key::NoteFieldLimit).replace("{limit}", &limit.to_string()));
                 } else {
                     field.push_str(&incoming);
                     self.notice = None;
@@ -1352,7 +1352,7 @@ impl Workspace {
         } else {
             self.trust = None;
             if let Some(prompt) = self.prompt.as_mut() { prompt.submitted = None; }
-            self.notice = Some("Trust cancelled; repository opening was not requested".into());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteTrustCancelled, self.locale()).to_owned());
             Effect::Send(Job::CancelEntry)
         }
     }
@@ -1362,18 +1362,18 @@ impl Workspace {
         self.trust_scroll = 0;
         self.files = index;
         let entry = &self.snapshot.recents[index];
-        self.main = MainView::text(&format!("Recent location ({})\n{}\n\nNot checked or trusted by listing it.\nOpen: inspect this location through the ordinary trust gate.\nLocate: replace this bookmark's path after review.\nRemove: remove this navigation record only; keep files/drafts/trust.", entry.backend, entry.label));
+        self.main = MainView::text(&self.t(crate::messages::Key::ViewRecentDetail).replace("{backend}", &entry.backend).replace("{label}", &entry.label));
         Effect::Nothing
     }
 
     pub fn open_recent(&mut self) -> Effect {
         let Some(entry) = self.snapshot.recents.get(self.files) else { return self.request_open(); };
         if entry.backend != "git" {
-            self.notice = Some("This backend is not available; the record was preserved".into());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteBackendUnavailable, self.locale()).to_owned());
             return Effect::Nothing;
         }
         let Ok(path) = NativePath::from_encoded(entry.path.clone()) else {
-            self.notice = Some("This location belongs to another platform; select a local path".into());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteForeignPlatform, self.locale()).to_owned());
             return Effect::Nothing;
         };
         self.open_path(path)
@@ -1381,7 +1381,7 @@ impl Workspace {
 
     pub fn open_path(&mut self, path: NativePath) -> Effect {
         let Some(text) = path.as_os_str().to_str() else {
-            self.notice = Some("This native path is unavailable with the current Git adapter; no lossy conversion was used".into());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NotePathAdapterUnavailable, self.locale()).to_owned());
             return Effect::Nothing;
         };
         self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::OpenRepository, text: text.into(), submitted: Some(PromptAction::OpenRepository) });
@@ -1638,7 +1638,7 @@ impl Workspace {
             if prompt.kind == PromptKind::GitSettings {
                 let extra = match &key { Key::Text(text) => text.len(), Key::Char(ch) => ch.len_utf8(), Key::Space => 1, _ => 0 };
                 if extra > 0 && prompt.text.len().saturating_add(extra) > 32 * 1024 {
-                    self.notice = Some("Git path limit is 32 KiB UTF-8; input was not appended".into());
+                    self.notice = Some(crate::messages::text(crate::messages::Key::NoteGitPathLimit, self.locale()).to_owned());
                     self.prompt = Some(prompt);
                     return Effect::Nothing;
                 }
@@ -1817,9 +1817,9 @@ impl Workspace {
             Reply::RemoteApplied { lines } => {
                 self.remotes = None;
                 let detail = if lines.is_empty() { String::new() } else { format!(" {}", lines.join(" ")) };
-                self.notice = Some(format!(
-                    "Applied.{detail} The repository configuration changed, so its trust fingerprint changed with it. Reopen the repository from Recent to review the new fingerprint; until then no Git action will run."
-                ));
+                self.notice = Some(
+                    self.t(crate::messages::Key::NoteRemoteApplied).replace("{detail}", &detail),
+                );
                 Effect::Nothing
             }
             Reply::LocateReview { ticket, lines } => {
@@ -1906,11 +1906,13 @@ impl Workspace {
                 Effect::Nothing
             }
             Reply::GitSettings { path, detail } => {
+                // Read the translated note before borrowing the prompt mutably.
+                let not_utf8 = crate::messages::text(crate::messages::Key::NoteSavedPathNotUtf8, self.locale()).to_owned();
                 if let Some(prompt) = self.prompt.as_mut() && prompt.kind == PromptKind::GitSettings && prompt.submitted == Some(PromptAction::GitSettings) {
                     match path {
                         Some(path) => match path.as_os_str().to_str() {
                             Some(text) => prompt.text = text.into(),
-                            None => { self.notice = Some("Saved native Git path cannot be edited as UTF-8; it was preserved. Enter a replacement explicitly or cancel.".into()); }
+                            None => { self.notice = Some(not_utf8.clone()); }
                         },
                         None => prompt.text.clear(),
                     }
@@ -1946,11 +1948,7 @@ impl Workspace {
                 self.snapshot.locale = snapshot.locale;
                 self.snapshot.locale_tag = snapshot.locale_tag;
                 if self.is_welcome() {
-                    self.main = MainView::text("Welcome to MiniCon SrcMgr
-Open a local Git repository with Ctrl+O or Open.
-There are no recent repositories yet.
-An installed Git is needed only when opening a repository.
-No account or network is required for local work.");
+                    self.main = MainView::text(self.t(crate::messages::Key::ViewWelcome));
                 }
                 Effect::Nothing
             }
@@ -1967,11 +1965,12 @@ No account or network is required for local work.");
             }
             Reply::Cloned { destination, lines } => {
                 self.clone = None;
-                self.notice = Some(format!(
-                    "Cloned into {}. The working tree is not checked out: open the repository and approve trust to review the filter and check it out.{}",
-                    destination.display_label(),
-                    if lines.is_empty() { String::new() } else { format!(" {}", lines.join(" ")) }
-                ));
+                let detail = if lines.is_empty() { String::new() } else { format!(" {}", lines.join(" ")) };
+                self.notice = Some(
+                    self.t(crate::messages::Key::NoteCloned)
+                        .replace("{destination}", &destination.display_label())
+                        .replace("{detail}", &detail),
+                );
                 Effect::Send(Job::LoadWelcome)
             }
             Reply::Welcome(entries) => {
@@ -1979,7 +1978,7 @@ No account or network is required for local work.");
                     self.snapshot.recents = entries;
                     self.files = clamp_index(self.files, self.snapshot.recents.len());
                     if !self.snapshot.recents.is_empty() { return self.select_recent(self.files); }
-                    self.main = MainView::text("Welcome to MiniCon SrcMgr\nOpen a local Git repository with Ctrl+O or Open.\nThere are no recent repositories yet.\nAn installed Git is needed only when opening a repository.\nNo account or network is required for local work.");
+                    self.main = MainView::text(self.t(crate::messages::Key::ViewWelcome));
                 }
                 Effect::Nothing
             }
@@ -1988,7 +1987,7 @@ No account or network is required for local work.");
                     let path = review.worktree.as_os_str().to_str().unwrap_or_default().to_owned();
                     self.create = None;
                     self.prompt = Some(Prompt { id:Prompt::next_id(),kind: PromptKind::OpenRepository, text: path, submitted: Some(PromptAction::OpenRepository) });
-                    self.notice = Some("Repository created. Review trust before opening; existing files remain unstaged.".into());
+                    self.notice = Some(crate::messages::text(crate::messages::Key::NoteRepositoryCreated, self.locale()).to_owned());
                 }
                 if self.prompt.as_ref().is_some_and(|prompt| prompt.submitted == Some(PromptAction::OpenRepository)) {
                     self.trust = Some(review);
@@ -2093,7 +2092,7 @@ No account or network is required for local work.");
                     self.retained_refresh_generation = Some(self.generation);
                 }
                 if interrupted_confirmation {
-                    self.notice = Some("Repository state refreshed; confirmation cancelled. Preview the action again.".to_owned());
+                    self.notice = Some(crate::messages::text(crate::messages::Key::NoteRefreshCancelled, self.locale()).to_owned());
                     self.main = MainView::note("State refreshed. Press the pane number to reload details.");
                     Effect::Send(Job::CancelPrepared)
                 } else {
@@ -2124,7 +2123,7 @@ No account or network is required for local work.");
                     }
                     if let Some(path) = self.restore_detail_file.take() && let Some(list) = &self.main.committed {
                         if let Some(index) = list.files.iter().position(|f| f.path == path) { self.cursor = index + 2; self.follow(); }
-                        else { self.notice = Some("Previous committed file is unavailable in this comparison; current list is displayed".into()); }
+                        else { self.notice = Some(crate::messages::text(crate::messages::Key::NotePreviousFileMissing, self.locale()).to_owned()); }
                     }
                 }
                 Effect::Nothing
@@ -2216,7 +2215,7 @@ No account or network is required for local work.");
                 }
                 self.close_prompt(PromptAction::SaveDraft);
                 self.snapshot.draft = draft;
-                self.notice = Some("Draft saved".to_owned());
+                self.notice = Some(crate::messages::text(crate::messages::Key::NoteDraftSaved, self.locale()).to_owned());
                 Effect::Nothing
             }
         }
@@ -2423,7 +2422,7 @@ No account or network is required for local work.");
             },
             Pane::Branches => match self.snapshot.branches.get(self.branches) {
                 Some(branch) if branch.current => {
-                    self.notice = Some(format!("{} is already checked out", branch.name));
+                    self.notice = Some(self.t(crate::messages::Key::NoteBranchCheckedOut).replace("{branch}", &branch.name));
                     Effect::Nothing
                 }
                 Some(branch) => Effect::Send(Job::Switch(branch.name.clone())),
@@ -2438,7 +2437,7 @@ No account or network is required for local work.");
     /// `a`: stage or unstage every file, or stage the hunk under the cursor.
     fn act_all(&mut self) -> Effect {
         self.notice = None;
-        if self.focus == Pane::Files && !self.filter_query(Pane::Files).is_empty() { self.notice = Some("Clear Files filter to review the full operation scope".into()); return Effect::Nothing; }
+        if self.focus == Pane::Files && !self.filter_query(Pane::Files).is_empty() { self.notice = Some(crate::messages::text(crate::messages::Key::NoteClearFilterScope, self.locale()).to_owned()); return Effect::Nothing; }
         match self.focus {
             Pane::Files => {
                 let stage = self.snapshot.files.iter().any(|file| file.has_unstaged);
@@ -2446,7 +2445,7 @@ No account or network is required for local work.");
                 if stage || any_staged {
                     Effect::Send(Job::SetAll { stage })
                 } else {
-                    self.notice = Some("nothing to stage or unstage".to_owned());
+                    self.notice = Some(crate::messages::text(crate::messages::Key::NoteNothingToStage, self.locale()).to_owned());
                     Effect::Nothing
                 }
             }
@@ -2460,12 +2459,12 @@ No account or network is required for local work.");
     /// when it is staged.
     fn stage_lines(&mut self) -> Effect {
         let Some(target) = self.main.file.clone() else {
-            self.notice = Some("Space acts on a file diff".to_owned());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteSpaceFileDiff, self.locale()).to_owned());
             return Effect::Nothing;
         };
         let number = self.hunk();
         let Some(&start) = self.main.hunks.get(number) else {
-            self.notice = Some("this diff has no hunks".to_owned());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteNoHunks, self.locale()).to_owned());
             return Effect::Nothing;
         };
         let end = self.main.hunks.get(number + 1).copied().unwrap_or(self.main.lines.len());
@@ -2475,7 +2474,7 @@ No account or network is required for local work.");
             .map(|line| line - start)
             .collect();
         if lines.is_empty() {
-            self.notice = Some("select a changed line in the diff".to_owned());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteSelectChangedLine, self.locale()).to_owned());
             return Effect::Nothing;
         }
         self.anchor = None;
@@ -2490,11 +2489,11 @@ No account or network is required for local work.");
     /// Stages the whole hunk under the cursor, or unstages it in the index view.
     fn stage_hunk(&mut self) -> Effect {
         let Some(target) = self.main.file.clone() else {
-            self.notice = Some("a acts on a file diff".to_owned());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteAActsOnFileDiff, self.locale()).to_owned());
             return Effect::Nothing;
         };
         if self.main.hunks.is_empty() {
-            self.notice = Some("this diff has no hunks".to_owned());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteNoHunks, self.locale()).to_owned());
             return Effect::Nothing;
         }
         Effect::Send(Job::SetHunk { path: target.path, staged_view: target.staged_view, number: self.hunk() + 1 })
@@ -2506,7 +2505,7 @@ No account or network is required for local work.");
             return Effect::Nothing;
         };
         if branch.current {
-            self.notice = Some(format!("{} is checked out and cannot be deleted", branch.name));
+            self.notice = Some(self.t(crate::messages::Key::NoteBranchCannotDelete).replace("{branch}", &branch.name));
             return Effect::Nothing;
         }
         self.confirm = Some(Confirm::DeleteBranch(branch.name.clone()));
@@ -2521,7 +2520,7 @@ No account or network is required for local work.");
             return Effect::Nothing;
         };
         if !row.has_unstaged {
-            self.notice = Some(format!("{} has no unstaged changes to discard", row.path.display_label()));
+            self.notice = Some(self.t(crate::messages::Key::NoteNothingToDiscard).replace("{path}", &row.path.display_label()));
             return Effect::Nothing;
         }
         self.confirm = Some(Confirm::DiscardFile { path: row.path.clone(), untracked: row.untracked });
@@ -2533,19 +2532,19 @@ No account or network is required for local work.");
     fn ask_discard_hunk(&mut self) -> Effect {
         self.notice = None;
         let Some(target) = self.main.file.clone() else {
-            self.notice = Some("discard works on a file diff".to_owned());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteDiscardFileDiff, self.locale()).to_owned());
             return Effect::Nothing;
         };
         if target.staged_view {
-            self.notice = Some("discard works on unstaged changes; this view shows staged ones".to_owned());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteDiscardUnstagedOnly, self.locale()).to_owned());
             return Effect::Nothing;
         }
         if self.snapshot.files.iter().any(|file| file.path == target.path && file.untracked) {
-            self.notice = Some("an untracked file is discarded from the Files panel".to_owned());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteDiscardUntracked, self.locale()).to_owned());
             return Effect::Nothing;
         }
         if self.main.hunks.is_empty() {
-            self.notice = Some("this change has no hunk to discard".to_owned());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteNoHunkToDiscard, self.locale()).to_owned());
             return Effect::Nothing;
         }
         let index = self.hunk();
@@ -2557,9 +2556,9 @@ No account or network is required for local work.");
     /// left alone, so a list of only untracked files has nothing to save.
     fn stash(&mut self) -> Effect {
         self.notice = None;
-        if !self.filter_query(Pane::Files).is_empty() { self.notice = Some("Clear Files filter to review the full operation scope".into()); return Effect::Nothing; }
+        if !self.filter_query(Pane::Files).is_empty() { self.notice = Some(crate::messages::text(crate::messages::Key::NoteClearFilterScope, self.locale()).to_owned()); return Effect::Nothing; }
         if self.snapshot.files.iter().all(|file| file.untracked) {
-            self.notice = Some("no tracked changes to stash".to_owned());
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteNoTrackedToStash, self.locale()).to_owned());
             return Effect::Nothing;
         }
         Effect::Send(Job::Stash)
