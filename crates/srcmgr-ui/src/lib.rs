@@ -8,8 +8,10 @@ mod entry_input;
 mod tools;
 mod clone_form;
 mod locate;
+mod remotes_panel;
 pub use clone_form::{CloneField, CloneForm};
 pub use locate::{LocateForm, LocateWork};
+pub use remotes_panel::{RemotesAction, RemotesField, RemotesPanel};
 pub use tools::{ToolForm, ToolWork};
 mod filter;
 mod navigation;
@@ -21,7 +23,8 @@ mod timing_receipt;
 
 pub use messages::Locale;
 pub use model::{
-    Backend, BranchRow, CommitRow, FileRow, FileTarget, Job, Line, MainRequest, MainView, RemoteRow, Reply, Snapshot, Tone,
+    Backend, BranchRow, CommitRow, FileRow, FileTarget, Job, Line, MainRequest, MainView, RemoteEdit, RemoteRow, Reply,
+    Snapshot, Tone,
     diff_lines,
 };
 pub use window::{show, show_entry, show_with_timing};

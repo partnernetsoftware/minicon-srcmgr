@@ -152,6 +152,7 @@ catalog! {
     RecoveryArchiveOpen => "Archive view and open", "归档视图并打开";
     ToolsSave => "Save", "保存";
     ToolsReview => "Review launch", "复核启动";
+    PanelReview => "Review", "复核";
 }
 
 #[cfg(test)]

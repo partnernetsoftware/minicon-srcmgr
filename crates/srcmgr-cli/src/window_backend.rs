@@ -18,6 +18,31 @@ pub struct WindowBackend {
     pub worktree: PathBuf,
     pub prepared: Option<crate::confirmation::Prepared>,
     pub(crate) commit_review: Option<(String, srcmgr_git::StagedReview)>,
+    /// A remote edit whose effect was shown but not approved. The ticket is
+    /// one-use and expires, so a reviewed change cannot be swapped later.
+    remote_edit: Option<RemoteEditPending>,
+}
+
+struct RemoteEditPending {
+    ticket: String,
+    change: srcmgr_git::RemoteChange,
+    lines: Vec<String>,
+    expires: std::time::Instant,
+}
+
+/// The window's edit contract translated to the backend's. One mapping, so the
+/// panel cannot invent an operation the CLI does not have.
+fn remote_change(edit: srcmgr_ui::RemoteEdit) -> srcmgr_git::RemoteChange {
+    match edit {
+        srcmgr_ui::RemoteEdit::Add { name, url, push_url } => {
+            srcmgr_git::RemoteChange::Add { name, url, push_url }
+        }
+        srcmgr_ui::RemoteEdit::SetUrl { name, url, push } => {
+            srcmgr_git::RemoteChange::SetUrl { name, url, push }
+        }
+        srcmgr_ui::RemoteEdit::Rename { from, to } => srcmgr_git::RemoteChange::Rename { from, to },
+        srcmgr_ui::RemoteEdit::Remove { name } => srcmgr_git::RemoteChange::Remove { name },
+    }
 }
 
 impl Backend for WindowBackend {
@@ -144,7 +169,7 @@ impl WindowBackend {
         let worktree = crate::canonical_worktree(path)?;
         let mut selected = options.clone();
         if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
-        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None };
+        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None };
         let mut snapshot = candidate.snapshot()?;
         snapshot.navigation = open_profile_store(options)?.navigation(&NativePath::new(candidate.worktree.as_os_str())).map_err(|e| e.to_string())?
             .map(|record| srcmgr_ui::Navigation::decode(&record)).transpose().map_err(str::to_owned)?;
@@ -196,7 +221,12 @@ impl WindowBackend {
             .map(|s| srcmgr_ui::StashRow { id: s.id, subject: s.subject }).collect();
         snapshot.remotes = srcmgr_git::list_remotes(installation, identity).map_err(|e| e.to_string())?
             .into_iter()
-            .map(|remote| srcmgr_ui::RemoteRow { name: remote.name, fetch_url: remote.fetch_url, push_url: remote.push_url })
+            .map(|remote| srcmgr_ui::RemoteRow {
+                name: remote.name,
+                fetch_url: remote.fetch_url,
+                push_url: remote.push_url,
+                refspecs: remote.fetch_refspecs,
+            })
             .collect();
         let tracking = srcmgr_git::tracking(installation, identity).map_err(|e| e.to_string())?;
         snapshot.upstream = tracking.upstream;
@@ -214,6 +244,41 @@ impl WindowBackend {
             Job::LoadLocale | Job::SetLocale(_) => return Err("the interface language is not a repository action".into()),
             Job::PreviewClone { .. } | Job::ExecuteClone(_) | Job::CancelClone => return Err("clone runs at the application entry boundary, before a repository exists".into()),
             Job::PrepareLocate { .. } | Job::SaveLocated(_) | Job::CancelLocate | Job::OpenRepository(_) | Job::EnterRepository { .. } | Job::ResetNavigation(_) | Job::LoadToolSettings(_) | Job::SaveToolSettings { .. } | Job::PrepareTool { .. } | Job::LaunchTool(_) | Job::CancelTool => return Err("repository entry and tools must use the application worker path".to_owned()),
+            Job::PreviewRemoteEdit(edit) => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let change = remote_change(edit);
+                // Validation happens before any write, so a refusal leaves the
+                // configuration exactly as it was.
+                let preview = srcmgr_git::preview_remote_change(&session.installation, &session.identity, &change)
+                    .map_err(|error| error.to_string())?;
+                let ticket = crate::confirmation::ticket()?;
+                self.remote_edit = Some(RemoteEditPending {
+                    ticket: ticket.clone(),
+                    change,
+                    lines: preview.lines.clone(),
+                    expires: std::time::Instant::now() + std::time::Duration::from_secs(300),
+                });
+                Reply::RemoteReview { ticket, lines: preview.lines }
+            }
+            Job::ApplyRemoteEdit(ticket) => {
+                let Some(pending) = self.remote_edit.take() else {
+                    return Err("The remote review expired or was already used; review the change again.".into());
+                };
+                if pending.ticket != ticket || std::time::Instant::now() > pending.expires {
+                    return Err("The remote review expired or was already used; review the change again.".into());
+                }
+                let session = open_trusted(&self.options, &self.worktree)?;
+                srcmgr_git::apply_remote_change(&session.installation, &session.identity, &pending.change)
+                    .map_err(|error| error.to_string())?;
+                // The snapshot is deliberately not rebuilt here: the config it
+                // was built from changed, so it is no longer describable until
+                // the repository is re-trusted.
+                Reply::RemoteApplied { lines: pending.lines }
+            }
+            Job::CancelRemoteEdit => {
+                self.remote_edit = None;
+                Reply::NoChange
+            }
             Job::StashAction { id, expected, operation } => {
                 let session = open_trusted(&self.options, &self.worktree)?;
                 let ticket = ticket.ok_or_else(|| "stash action requires a consumed confirmation".to_owned())?;
@@ -675,7 +740,116 @@ pub(crate) mod tests {
             worktree: repo.to_path_buf(),
             prepared: None,
             commit_review: None,
+            remote_edit: None,
         }
+    }
+
+    fn config_bytes(repo: &Path) -> Vec<u8> {
+        fs::read(repo.join(".git").join("config")).expect("read config")
+    }
+
+    #[test]
+    fn a_remote_preview_states_the_local_effect_and_writes_nothing() {
+        let root = Scratch::new("remote-preview");
+        let repo = repository(&root.0, "repo");
+        let mut active = backend(&root.0, &repo, true);
+        let before = config_bytes(&repo);
+        let reply = active.run(Job::PreviewRemoteEdit(srcmgr_ui::RemoteEdit::Add {
+            name: "origin".into(),
+            url: "https://example.invalid/r.git".into(),
+            push_url: None,
+        }));
+        let Reply::RemoteReview { ticket, lines } = reply else {
+            panic!("expected a review, got {reply:?}");
+        };
+        let text = lines.join("
+");
+        assert!(text.contains("add remote 'origin'"), "{text}");
+        assert!(text.contains("https://example.invalid/r.git"), "{text}");
+        // Every write states that the server is untouched, not only renames.
+        assert!(text.contains("no server repository is contacted"), "{text}");
+        assert_eq!(config_bytes(&repo), before, "a preview must not write");
+        assert!(!ticket.is_empty());
+
+        let applied = active.run(Job::ApplyRemoteEdit(ticket));
+        assert!(matches!(applied, Reply::RemoteApplied { .. }), "{applied:?}");
+        let after = String::from_utf8(config_bytes(&repo)).unwrap();
+        assert!(after.contains("[remote"), "{after}");
+        assert!(after.contains("https://example.invalid/r.git"), "{after}");
+    }
+
+    #[test]
+    fn a_refused_remote_change_leaves_the_configuration_byte_identical() {
+        let root = Scratch::new("remote-refusal");
+        let repo = repository(&root.0, "repo");
+        let mut active = backend(&root.0, &repo, true);
+        let before = config_bytes(&repo);
+        // A name with a space is not a valid remote name, so validation fails
+        // before Git runs.
+        let refused = active.run(Job::PreviewRemoteEdit(srcmgr_ui::RemoteEdit::Add {
+            name: "bad name".into(),
+            url: "https://example.invalid/r.git".into(),
+            push_url: None,
+        }));
+        assert!(matches!(refused, Reply::Notice(_)), "{refused:?}");
+        assert_eq!(config_bytes(&repo), before);
+    }
+
+    #[test]
+    fn an_applied_remote_change_writes_only_what_the_review_showed() {
+        let root = Scratch::new("remote-apply");
+        let repo = repository(&root.0, "repo");
+        let mut active = backend(&root.0, &repo, true);
+        let Reply::RemoteReview { ticket, .. } = active.run(Job::PreviewRemoteEdit(srcmgr_ui::RemoteEdit::Add {
+            name: "origin".into(),
+            url: "https://example.invalid/one.git".into(),
+            push_url: None,
+        })) else {
+            panic!("expected a review");
+        };
+        assert!(matches!(active.run(Job::ApplyRemoteEdit(ticket)), Reply::RemoteApplied { .. }));
+
+        // Re-granting trust is what a real user does by reopening; the edit
+        // itself must not have touched anything else in the configuration.
+        let mut active = backend(&root.0, &repo, true);
+        let Reply::RemoteReview { ticket, lines } = active.run(Job::PreviewRemoteEdit(srcmgr_ui::RemoteEdit::SetUrl {
+            name: "origin".into(),
+            url: "https://example.invalid/two.git".into(),
+            push: false,
+        })) else {
+            panic!("expected a review");
+        };
+        let text = lines.join("
+");
+        assert!(text.contains("before: https://example.invalid/one.git"), "{text}");
+        assert!(text.contains("after:  https://example.invalid/two.git"), "{text}");
+        assert!(matches!(active.run(Job::ApplyRemoteEdit(ticket)), Reply::RemoteApplied { .. }));
+        let after = String::from_utf8(config_bytes(&repo)).unwrap();
+        assert!(after.contains("https://example.invalid/two.git"), "{after}");
+        assert!(!after.contains("one.git"), "{after}");
+        let remotes = Command::new(git_executable())
+            .current_dir(&repo)
+            .args(["remote"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&remotes.stdout).trim(), "origin");
+    }
+
+    #[test]
+    fn a_remote_ticket_is_one_use_and_an_expired_review_cannot_apply() {
+        let root = Scratch::new("remote-ticket");
+        let repo = repository(&root.0, "repo");
+        let mut active = backend(&root.0, &repo, true);
+        let Reply::RemoteReview { ticket, .. } = active.run(Job::PreviewRemoteEdit(srcmgr_ui::RemoteEdit::Add {
+            name: "origin".into(),
+            url: "https://example.invalid/r.git".into(),
+            push_url: None,
+        })) else {
+            panic!("expected a review");
+        };
+        assert!(matches!(active.run(Job::ApplyRemoteEdit(ticket.clone())), Reply::RemoteApplied { .. }));
+        let reused = backend(&root.0, &repo, true).run(Job::ApplyRemoteEdit(ticket));
+        assert!(matches!(reused, Reply::Notice(_)), "a consumed ticket must not apply again");
     }
 
     #[test]

@@ -116,7 +116,7 @@ Use the linked record as truth; this table only tells you where to look.
 |---|---|---|
 | 0.1.0 | Published 2026-11-07: signed, runnable Windows x86_64 beta; its notes name six gaps | [notes](../releases/0.1.0.md) |
 | 0.1.2 | Published 2026-11-09: all six cells build/run/package; both Windows cells Authenticode-signed, `release_eligible=true`; macOS and Linux unsigned | [notes](../releases/0.1.2.md), [PRD 12](PRD_12_platform_delivery.md#support-matrix) |
-| 0.1.3 | In progress: closes the gaps 0.1.0 named. Clone panel `[-]`, Remotes panel `[_]`, language `[-]`, divergence `[-]`, conflict handoff `[-]`, clean image `[_]`, five users `[_]` | [plan](../plan/plan-0.1.3.md) |
+| 0.1.3 | In progress: closes the gaps 0.1.0 named. Remotes panel `[v]`, Clone panel `[-]`, language `[-]`, divergence `[-]`, conflict handoff `[-]`, clean image `[_]`, five users `[_]` | [plan](../plan/plan-0.1.3.md) |
 
 Two items are **BLOCKED by missing external conditions**, not by code: the
 clean-image court needs a machine that never had the product or the Rust
@@ -140,6 +140,13 @@ enforced in code or a fixture today.
   not clean.
 - **A preview is not a permission.** Approval sends a one-use ticket bound to the
   values the review showed, so a field edited after review cannot execute.
+- **Editing repository configuration invalidates trust.** The trust fingerprint
+  covers `.git/config`, so any remote or identity write makes the loaded session
+  stale; the window must ask for a fresh trust review instead of refreshing.
+- **Fetch is not a write; every other remote action is.** Fetch contacts the
+  server by definition and skips the review. Add, Set URL, Rename and Remove must
+  state that no server is touched, and the preview carries that sentence for
+  every one of them, not only for the destructive one.
 - **Locale changes display text only.** Paths, object ids, refspecs, ref names and
   Git's own output stay literal in every language.
 - **Windows canonical paths break Git.** `fs::canonicalize` returns a verbatim

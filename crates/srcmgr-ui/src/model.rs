@@ -140,6 +140,18 @@ pub struct RemoteRow {
     pub name: String,
     pub fetch_url: String,
     pub push_url: Option<String>,
+    /// The configured fetch refspecs, in Git's order.
+    pub refspecs: Vec<String>,
+}
+
+/// One remote edit the window can propose. It mirrors the backend contract
+/// without depending on it, so the UI crate stays presentation-only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RemoteEdit {
+    Add { name: String, url: String, push_url: Option<String> },
+    SetUrl { name: String, url: String, push: bool },
+    Rename { from: String, to: String },
+    Remove { name: String },
 }
 
 impl Snapshot {
@@ -297,6 +309,13 @@ pub enum Job {
     /// the review showed, so a field edited after approval cannot be cloned.
     ExecuteClone(String),
     CancelClone,
+    /// Validates one remote edit and returns the exact local effect. Nothing is
+    /// written and no server is contacted.
+    PreviewRemoteEdit(RemoteEdit),
+    /// Applies the reviewed edit. The ticket is one-use and bound to the values
+    /// the review showed.
+    ApplyRemoteEdit(String),
+    CancelRemoteEdit,
     /// Reads the stored locale once at startup, so the Welcome surface renders
     /// in the user's language before any repository is open.
     LoadLocale,
@@ -399,6 +418,16 @@ pub enum Reply {
     /// says what to do next instead of opening it.
     Cloned {
         destination: NativePath,
+        lines: Vec<String>,
+    },
+    RemoteReview {
+        ticket: String,
+        lines: Vec<String>,
+    },
+    /// The edit was applied. The repository configuration changed, so its trust
+    /// fingerprint changed with it; the reply says so instead of pretending the
+    /// loaded snapshot is still current.
+    RemoteApplied {
         lines: Vec<String>,
     },
     TrustReview(TrustReview),

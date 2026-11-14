@@ -304,6 +304,7 @@ pub struct Workspace {
     git_detail: String,
     identity: Option<IdentityForm>,
     composer: Option<CommitComposer>,
+    remotes: Option<crate::RemotesPanel>,
 }
 
 impl Workspace {
@@ -314,6 +315,7 @@ impl Workspace {
             entry_input: None,
             locate: None,
             clone: None,
+            remotes: None,
             tools: None,
             navigation_issue: None,
             filters: std::array::from_fn(|_| Default::default()), filter_anchors: [None, None, None], filter_editor: None, next_position: None,
@@ -400,6 +402,75 @@ impl Workspace {
     pub fn close_clone(&mut self) -> Effect {
         self.clone = None;
         Effect::Send(Job::CancelClone)
+    }
+
+    pub fn remotes_panel(&self) -> Option<&crate::RemotesPanel> { self.remotes.as_ref() }
+
+    /// Opens the Remotes panel over an open repository. It is refused on the
+    /// Welcome surface, where there is no configuration to edit.
+    pub fn request_remotes(&mut self) -> Effect {
+        if self.is_welcome() || self.modal() {
+            return Effect::Nothing;
+        }
+        self.remotes = Some(crate::RemotesPanel::new());
+        Effect::Nothing
+    }
+
+    fn selected_remote(&self) -> Option<crate::RemoteRow> {
+        let panel = self.remotes.as_ref()?;
+        self.snapshot.remotes.get(panel.selected).cloned()
+    }
+
+    /// Keys for the Remotes surface. A review owns y/n and scrolling; an open
+    /// form owns text editing; otherwise the letters pick an action.
+    pub fn remotes_key(&mut self, key: Key) -> Effect {
+        if self.remotes.as_ref().is_none_or(|panel| panel.working) {
+            return Effect::Nothing;
+        }
+        if self.remotes.as_ref().is_some_and(|panel| panel.review.is_some()) {
+            return match key {
+                Key::Char('y') => self.remotes.as_mut().map_or(Effect::Nothing, crate::RemotesPanel::approve),
+                Key::Char('n') => {
+                    if let Some(panel) = self.remotes.as_mut() { panel.close(); }
+                    Effect::Send(Job::CancelRemoteEdit)
+                }
+                Key::Up => self.scroll_trust(-1),
+                Key::Down => self.scroll_trust(1),
+                Key::PageUp => self.scroll_trust(-(PAGE_LINES as isize)),
+                Key::PageDown => self.scroll_trust(PAGE_LINES as isize),
+                _ => Effect::Nothing,
+            };
+        }
+        if self.remotes.as_ref().is_some_and(|panel| panel.action.is_some()) {
+            if key == Key::Escape || key == Key::CtrlC {
+                if let Some(panel) = self.remotes.as_mut() { panel.close(); }
+                return Effect::Send(Job::CancelRemoteEdit);
+            }
+            return self.remotes.as_mut().map_or(Effect::Nothing, |panel| panel.edit(key));
+        }
+        if key == Key::Escape || key == Key::CtrlC {
+            self.remotes = None;
+            return Effect::Nothing;
+        }
+        let rows = self.snapshot.remotes.len();
+        let selected = self.selected_remote();
+        let Some(panel) = self.remotes.as_mut() else { return Effect::Nothing };
+        match key {
+            Key::Down | Key::Char('j') => panel.move_selection(1, rows),
+            Key::Up | Key::Char('k') => panel.move_selection(-1, rows),
+            Key::Char('a') => panel.begin_add(),
+            Key::Char('s') => panel.begin_on_selected(crate::RemotesAction::SetUrl, selected.as_ref()),
+            Key::Char('r') => panel.begin_on_selected(crate::RemotesAction::Rename, selected.as_ref()),
+            Key::Char('d') => panel.begin_on_selected(crate::RemotesAction::Remove, selected.as_ref()),
+            Key::Char('f') => match selected {
+                Some(row) => Effect::Send(Job::Fetch { remote: row.name }),
+                None => {
+                    panel.detail = "Select a remote first; there is nothing to fetch.".into();
+                    Effect::Nothing
+                }
+            },
+            _ => Effect::Nothing,
+        }
     }
 
     /// Tab and Enter reach the form; Escape and Ctrl+C leave it.
@@ -1488,7 +1559,7 @@ impl Workspace {
     /// waits until it closes.
     #[must_use]
     pub const fn modal(&self) -> bool {
-        self.locate.is_some() || self.tools.is_some() || self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some() || self.navigation_issue.is_some()
+        self.locate.is_some() || self.tools.is_some() || self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some() || self.navigation_issue.is_some() || self.remotes.is_some()
     }
 
     /// Tells the workspace how many main-panel lines are visible, so the cursor
@@ -1513,6 +1584,7 @@ impl Workspace {
     }
 
     fn key_inner(&mut self, key: Key) -> Effect {
+        if self.remotes.is_some() { return self.remotes_key(key); }
         if let Some(form) = self.locate.as_mut() {
             if !form.editor.preedit.is_empty() { return form.edit(key); }
             if key == Key::Escape { return self.cancel_locate(); }
@@ -1712,6 +1784,7 @@ impl Workspace {
             Key::Char('p') if !self.modal() && self.focus != Pane::Stashes => self.pull(),
             Key::Char('P') if !self.modal() => self.push_branch(),
             Key::Char('f') if !self.modal() => self.fetch_remote(),
+            Key::Char('R') => self.request_remotes(),
             Key::Char('r') => Effect::Send(Job::Reload),
             _ => Effect::Nothing,
         }
@@ -1721,6 +1794,23 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::RemoteReview { ticket, lines } => {
+                if let Some(panel) = self.remotes.as_mut() {
+                    panel.working = false;
+                    panel.review = Some((ticket, lines));
+                    panel.detail = "Review the local effect above. y applies exactly this; n cancels. No server repository is touched.".into();
+                }
+                self.trust_scroll = 0;
+                Effect::Nothing
+            }
+            Reply::RemoteApplied { lines } => {
+                self.remotes = None;
+                let detail = if lines.is_empty() { String::new() } else { format!(" {}", lines.join(" ")) };
+                self.notice = Some(format!(
+                    "Applied.{detail} The repository configuration changed, so its trust fingerprint changed with it. Reopen the repository from Recent to review the new fingerprint; until then no Git action will run."
+                ));
+                Effect::Nothing
+            }
             Reply::LocateReview { ticket, lines } => {
                 if let Some(form) = self.locate.as_mut() && form.working == Some(crate::LocateWork::Review) { form.working = None; form.review = Some((ticket, lines)); self.trust_scroll = 0; }
                 Effect::Nothing
@@ -3009,6 +3099,7 @@ mod tests {
         let mut state = snapshot(None);
         state.upstream = Some("origin/main".into());
         state.remotes = vec![crate::RemoteRow {
+            refspecs: Vec::new(),
             name: "backup".into(),
             fetch_url: "https://example.test/backup.git".into(),
             push_url: None,

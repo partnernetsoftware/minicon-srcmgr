@@ -56,6 +56,7 @@ pub fn preview(
             lines.push(format!("add remote '{name}'"));
             lines.push(format!("  fetch URL: {}", label(url)));
             lines.push(format!("  push URL:  {}", label(push_url.as_deref().unwrap_or(url))));
+            lines.push("  no server repository is contacted; only this repository's configuration changes".to_owned());
         }
         RemoteChange::SetUrl { name, url, push } => {
             let remote = find(name).ok_or(GitError::UnknownRemote)?;
@@ -63,6 +64,7 @@ pub fn preview(
             lines.push(format!("set {} URL of remote '{name}'", if *push { "push" } else { "fetch" }));
             lines.push(format!("  before: {current}"));
             lines.push(format!("  after:  {}", label(url)));
+            lines.push("  no server repository is contacted; only this repository's configuration changes".to_owned());
         }
         RemoteChange::Rename { from, to } => {
             let remote = find(from).ok_or(GitError::UnknownRemote)?;

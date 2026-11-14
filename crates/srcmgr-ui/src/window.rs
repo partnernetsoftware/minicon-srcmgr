@@ -1667,6 +1667,64 @@ fn operation_suffix(snapshot: &crate::Snapshot) -> String {
 }
 
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
+    if let Some(panel) = workspace.remotes_panel() {
+        let (apply, cancel) = trust_buttons(rect, grid);
+        let snapshot = workspace.snapshot();
+        if let Some((_, lines)) = &panel.review {
+            let body = trust_content(rect, grid).0;
+            text_panel(draws, body, grid, true, "Review remote change", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        } else {
+            frame(draws, rect, grid, true, "Remotes");
+            let body = locate_info(rect, grid);
+            let mut lines = Vec::new();
+            if snapshot.remotes.is_empty() {
+                lines.push("No remotes configured. a adds one; nothing is fetched until you ask.".to_owned());
+            }
+            for (index, row) in snapshot.remotes.iter().enumerate() {
+                let marker = if index == panel.selected { ">" } else { " " };
+                let mut line = format!("{marker} {}  {}", row.name, row.fetch_url);
+                if let Some(push) = &row.push_url {
+                    line.push_str(&format!("   push {push}"));
+                }
+                if let Some(refspec) = row.refspecs.first() {
+                    line.push_str(&format!("   {refspec}"));
+                }
+                lines.push(line);
+            }
+            if let Some(action) = panel.action {
+                lines.push(String::new());
+                match action {
+                    crate::RemotesAction::Add => {
+                        for (label, field) in [("Name", crate::RemotesField::Name), ("URL", crate::RemotesField::Url)] {
+                            let marker = if panel.focus == field { ">" } else { " " };
+                            let shown = if panel.text(field).is_empty() { "(empty)".to_owned() } else { panel.text(field).to_owned() };
+                            lines.push(format!("{marker} {label}: {shown}"));
+                        }
+                    }
+                    crate::RemotesAction::SetUrl => {
+                        lines.push(format!("  Remote: {}", panel.text(crate::RemotesField::Name)));
+                        lines.push(format!("{} URL: {}", if panel.focus == crate::RemotesField::Url { ">" } else { " " }, panel.text(crate::RemotesField::Url)));
+                        lines.push(format!("  {} [Space toggles]", if panel.push { "Editing the push URL" } else { "Editing the fetch URL" }));
+                    }
+                    crate::RemotesAction::Rename => {
+                        lines.push(format!("  From: {}", panel.text(crate::RemotesField::Name)));
+                        let marker = if panel.focus == crate::RemotesField::To { ">" } else { " " };
+                        lines.push(format!("{marker} To: {}", panel.text(crate::RemotesField::To)));
+                    }
+                    crate::RemotesAction::Remove => {
+                        lines.push(format!("  Remove remote {}", panel.text(crate::RemotesField::Name)));
+                        lines.push("  Its stored URL and refspecs are deleted; the server repository is not contacted.".to_owned());
+                    }
+                }
+            }
+            lines.push(String::new());
+            lines.push(panel.detail.clone());
+            text_panel(draws, body, grid, false, "Configured remotes and effect", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        }
+        button_draw(draws, apply, grid, if panel.working { workspace.t(TextKey::EntryWorking) } else if panel.review.is_some() { workspace.t(TextKey::CreateApprove) } else { workspace.t(TextKey::PanelReview) }, if panel.working { MUTED_TEXT } else { BORDER });
+        button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
+        return;
+    }
     if let Some(form) = workspace.clone_form() {
         let (allow, cancel) = trust_buttons(rect, grid);
         if let Some((_, lines)) = &form.review {
@@ -2065,6 +2123,17 @@ fn window_start(selected: usize, length: usize, rows: i64) -> usize {
 
 /// Keys the window shows for the current state, most useful first.
 fn hints(workspace: &Workspace) -> String {
+    if let Some(panel) = workspace.remotes_panel() {
+        return if panel.working {
+            "Working; wait for the actual result".into()
+        } else if panel.review.is_some() {
+            "y Apply exactly this   n/Esc Cancel   Page keys Scroll   Enter does not approve".into()
+        } else if panel.action.is_some() {
+            "Tab Field   Enter Review   Space fetch/push (Set URL)   Esc Cancel".into()
+        } else {
+            "Up/Down Select   a Add   s Set URL   r Rename   d Remove   f Fetch   Esc Close".into()
+        };
+    }
     if let Some(form) = workspace.locate_form() { return if form.working == Some(crate::LocateWork::Save) { "Saving location; wait for the actual result" } else if form.review.is_some() { "y Save location   n/Esc Back   Enter does not approve   Page keys Scroll" } else { "Enter Review location   Ctrl+A/C/V Edit   Esc Cancel" }.into(); }
     if let Some(form) = workspace.tool_form() { return if form.working.is_some() { "Working; wait for the actual result. A submitted launch cannot be cancelled." } else if form.review.is_some() { "y Launch   n/Esc Cancel   Enter does not approve   Page keys Scroll" } else { "Ctrl+S Save   Ctrl+Enter Review launch   Tab Field   Esc Close" }.into(); }
     if workspace.navigation_issue().is_some() { return "y Archive view and open   n/Esc Cancel   Enter does not approve".into(); }
@@ -2330,6 +2399,65 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn the_remotes_panel_draws_every_row_and_its_redacted_values() {
+        let mut snapshot = super::tests::snapshot(1);
+        snapshot.remotes = vec![
+            crate::RemoteRow {
+                name: "origin".into(),
+                fetch_url: "https://example.invalid/visible.git".into(),
+                push_url: Some("ssh://example.invalid/push.git".into()),
+                refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
+            },
+            crate::RemoteRow {
+                name: "backup".into(),
+                fetch_url: "https://example.invalid/backup.git".into(),
+                push_url: None,
+                refspecs: Vec::new(),
+            },
+        ];
+        let mut workspace = Workspace::new(snapshot);
+        workspace.request_remotes();
+        let text = drawn_text(&scene(&workspace, 1040, 680, GRID, 0));
+        assert!(text.contains("origin"), "{text}");
+        assert!(text.contains("backup"), "{text}");
+        assert!(text.contains("https://example.invalid/visible.git"), "{text}");
+        // The panel wraps to its column width, so assert the parts it keeps.
+        assert!(text.contains("push ssh://example.invalid/"), "{text}");
+        assert!(text.contains("push.git"), "{text}");
+        assert!(text.contains("+refs/heads/*:refs/remotes/origin/*"), "{text}");
+    }
+
+    #[test]
+    fn a_remotes_review_shows_the_effect_and_no_apply_happens_from_enter() {
+        let mut snapshot = super::tests::snapshot(1);
+        snapshot.remotes = vec![crate::RemoteRow {
+            name: "origin".into(),
+            fetch_url: "https://example.invalid/one.git".into(),
+            push_url: None,
+            refspecs: Vec::new(),
+        }];
+        let mut workspace = Workspace::new(snapshot);
+        workspace.request_remotes();
+        // A review line set, exactly as the backend would return it.
+        workspace.reply(crate::Reply::RemoteReview {
+            ticket: "t1".into(),
+            lines: vec![
+                "set fetch URL of remote 'origin'".into(),
+                "  before: https://example.invalid/one.git".into(),
+                "  after:  https://example.invalid/two.git".into(),
+                "  no server repository is contacted; only this repository's configuration changes".into(),
+            ],
+        });
+        let text = drawn_text(&scene(&workspace, 1040, 680, GRID, 0));
+        assert!(text.contains("before: https://example.invalid/one.git"), "{text}");
+        assert!(text.contains("after:  https://example.invalid/two.git"), "{text}");
+        assert!(text.contains("no server repository is contacted"), "{text}");
+        // Enter never approves a reviewed write; only y does.
+        assert_eq!(workspace.key(crate::Key::Enter), crate::Effect::Nothing);
+        assert_eq!(workspace.key(crate::Key::Char('y')), crate::Effect::Send(crate::Job::ApplyRemoteEdit("t1".into())));
     }
 
     pub(super) fn snapshot(files: usize) -> Snapshot {
