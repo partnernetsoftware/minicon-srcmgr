@@ -61,13 +61,13 @@ impl Locale {
 macro_rules! catalog {
     ($($key:ident => $en:literal, $zh:literal;)*) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-        pub(crate) enum Key { $($key),* }
+        pub enum Key { $($key),* }
 
-        pub(crate) const fn english(key: Key) -> &'static str {
+        pub const fn english(key: Key) -> &'static str {
             match key { $(Key::$key => $en),* }
         }
 
-        pub(crate) const fn chinese(key: Key) -> &'static str {
+        pub const fn chinese(key: Key) -> &'static str {
             match key { $(Key::$key => $zh),* }
         }
 
@@ -81,7 +81,7 @@ macro_rules! catalog {
     };
 }
 
-pub(crate) const fn text(key: Key, locale: Locale) -> &'static str {
+pub const fn text(key: Key, locale: Locale) -> &'static str {
     match locale {
         Locale::En => english(key),
         Locale::ZhCn => chinese(key),
@@ -204,6 +204,12 @@ catalog! {
     NoteRemoteApplied => "Applied.{detail} The repository configuration changed, so its trust fingerprint changed with it. Reopen the repository from Recent to review the new fingerprint; until then no Git action will run.", "已应用。{detail} 仓库配置已变更，其信任指纹随之改变。请从最近列表重新打开仓库以复核新指纹；在此之前不会执行任何 Git 操作。";
     NoteCloned => "Cloned into {destination}. The working tree is not checked out: open the repository and approve trust to review the filter and check it out.{detail}", "已克隆到 {destination}。工作树尚未检出：请打开该仓库并通过信任复核来检查过滤器并检出。{detail}";
     NoteCheckoutDone => "Working tree checked out from HEAD; the repository now has its files.", "工作树已从 HEAD 检出；仓库现在已有文件。";
+    RefuseOpInProgress => "Refused: {operation} is in progress. Resolve it in a terminal, then refresh. Press t in the window to open a configured terminal at this repository.", "已拒绝：{operation} 正在进行。请在终端中解决后刷新。在窗口中按 t 可打开已配置的终端。";
+    RefuseOpUnmerged => "Refused: {count} path(s) are unmerged. Resolve them in a terminal, then refresh. Press t in the window to open a configured terminal at this repository.", "已拒绝：{count} 个路径未合并。请在终端中解决后刷新。在窗口中按 t 可打开已配置的终端。";
+    RefuseOpBoth => "Refused: {operation} is in progress and {count} path(s) are unmerged. Resolve them in a terminal, then refresh. Press t in the window to open a configured terminal at this repository.", "已拒绝：{operation} 正在进行，且有 {count} 个路径未合并。请在终端中解决后刷新。在窗口中按 t 可打开已配置的终端。";
+    RefuseOpUnreadable => "Refused: the repository's operation state cannot be read ({detail}); inspect it before any write.", "已拒绝：无法读取仓库的操作状态（{detail}）；请先检查再进行任何写入。";
+    RefusePath => "Repository: {path}", "仓库：{path}";
+    RefuseDiverged => "Refused: the local branch and its fetched upstream have both advanced.\\nLocal: {local}\\nFetched upstream: {upstream}\\nPull never merges, rebases or stashes on its own; resolve the divergence in a terminal, then refresh.", "已拒绝：本地分支与已抓取的上游都已前进。\\n本地：{local}\\n已抓取的上游：{upstream}\\n拉取不会自行合并、变基或贮藏；请在终端中解决分歧后刷新。";
     NoteBranchCheckedOut => "{branch} is already checked out", "已检出分支 {branch}";
     NoteBranchCannotDelete => "{branch} is checked out and cannot be deleted", "分支 {branch} 已检出，无法删除";
     NoteNothingToDiscard => "{path} has no unstaged changes to discard", "{path} 没有可丢弃的未暂存更改";

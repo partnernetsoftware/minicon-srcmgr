@@ -145,13 +145,42 @@ impl WindowBackend {
     fn refuse_while_unresolved(&self, session: &crate::Session) -> Result<(), String> {
         let state = srcmgr_git::detect_operation(&session.installation, &session.identity)
             .map_err(|error| format!("Cannot read the repository's operation state: {error}"))?;
-        match state.refusal() {
-            Some(reason) => Err(format!(
-                "{reason}\nRepository: {}",
-                crate::NativePath::new(session.identity.worktree_root.as_os_str()).display_label()
-            )),
-            None => Ok(()),
+        if state.operation.is_none() && state.unmerged.is_empty() && state.unreadable.is_none() {
+            return Ok(());
         }
+        // Composed here rather than in srcmgr-git: this is interface language, and
+        // the Git crate has no locale. The state itself stays Git's own.
+        let locale = self.locale()?;
+        let text = srcmgr_ui::text_of;
+        let mut message = if let Some(detail) = &state.unreadable {
+            text(srcmgr_ui::TextKey::RefuseOpUnreadable, locale).replace("{detail}", detail)
+        } else {
+            let count = state.unmerged.len();
+            let operation = state.operation.map(|operation| operation.name());
+            match (operation, count) {
+                (Some(operation), 0) => text(srcmgr_ui::TextKey::RefuseOpInProgress, locale)
+                    .replace("{operation}", operation),
+                (None, count) => text(srcmgr_ui::TextKey::RefuseOpUnmerged, locale)
+                    .replace("{count}", &count.to_string()),
+                (Some(operation), count) => text(srcmgr_ui::TextKey::RefuseOpBoth, locale)
+                    .replace("{operation}", operation)
+                    .replace("{count}", &count.to_string()),
+            }
+        };
+        message.push('\n');
+        message.push_str(
+            &text(srcmgr_ui::TextKey::RefusePath, locale).replace(
+                "{path}",
+                &crate::NativePath::new(session.identity.worktree_root.as_os_str()).display_label(),
+            ),
+        );
+        Err(message)
+    }
+
+    /// The interface language this backend answers in. It changes wording only.
+    fn locale(&self) -> Result<srcmgr_ui::Locale, String> {
+        let store = open_profile_store(&self.options)?;
+        crate::interface_locale(&store)
     }
 
     /// A snapshot that carries only the interface language. The window merges
@@ -333,9 +362,9 @@ impl WindowBackend {
                 // both sides named so the user chooses how to integrate.
                 let tracking = srcmgr_git::tracking(&session.installation, &session.identity).map_err(|e| e.to_string())?;
                 if let (Some(local), Some(upstream)) = (&tracking.local_tip, &tracking.upstream_tip) {
-                    return Err(format!(
-                        "Refused: the local branch and its fetched upstream have both advanced.\nLocal: {local}\nFetched upstream: {upstream}\nPull never merges, rebases or stashes on its own; resolve the divergence in a terminal, then refresh."
-                    ));
+                    return Err(srcmgr_ui::text_of(srcmgr_ui::TextKey::RefuseDiverged, self.locale()?)
+                        .replace("{local}", local)
+                        .replace("{upstream}", upstream));
                 }
                 let cancel = std::sync::atomic::AtomicBool::new(false);
                 let report = srcmgr_git::pull_ff(&session.installation, &session.identity, &cancel, None).map_err(|e| e.to_string())?;
@@ -803,6 +832,47 @@ pub(crate) mod tests {
         };
         assert_eq!(after.pending_checkout, None);
         assert_eq!(std::fs::read_to_string(target.join("a.txt")).unwrap(), "one\n");
+    }
+
+    #[test]
+    fn a_blocked_write_answers_in_the_configured_language() {
+        let root = Scratch::new("refusal-locale");
+        let repo = repository(&root.0, "repo");
+        fixture_git(&repo, &["checkout", "-q", "-b", "other"]);
+        fs::write(repo.join("a.txt"), "other\n").unwrap();
+        fixture_git(&repo, &["commit", "-qam", "other"]);
+        fixture_git(&repo, &["checkout", "-q", "main"]);
+        fs::write(repo.join("a.txt"), "main\n").unwrap();
+        fixture_git(&repo, &["commit", "-qam", "main"]);
+        let merged = Command::new(git_executable())
+            .current_dir(&repo)
+            .args(["merge", "other"])
+            .output()
+            .unwrap();
+        assert!(!merged.status.success(), "the fixture must actually conflict");
+
+        let mut active = backend(&root.0, &repo, true);
+        crate::open_profile_store(&active.options).unwrap().put_setting("ui.locale", "en").unwrap();
+        let Reply::Notice(english) = active.run(Job::SetFile {
+            path: srcmgr_domain::NativePath::new("u.txt"),
+            stage: true,
+        }) else {
+            panic!("a blocked write must be refused with a reason");
+        };
+        assert!(english.contains("Refused: merge is in progress"), "{english}");
+        assert!(english.contains("Repository:"), "{english}");
+
+        crate::open_profile_store(&active.options).unwrap().put_setting("ui.locale", "zh-CN").unwrap();
+        let Reply::Notice(chinese) = active.run(Job::SetFile {
+            path: srcmgr_domain::NativePath::new("u.txt"),
+            stage: true,
+        }) else {
+            panic!("a blocked write must be refused with a reason");
+        };
+        assert!(chinese.contains("\u{5df2}\u{62d2}\u{7edd}"), "{chinese}");
+        assert!(chinese.contains("merge"), "the operation name stays literal: {chinese}");
+        assert!(chinese.contains("\u{4ed3}\u{5e93}\u{ff1a}"), "{chinese}");
+        assert!(!chinese.contains("Refused:"), "the English sentence leaked: {chinese}");
     }
 
     #[test]
