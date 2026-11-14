@@ -1,6 +1,6 @@
 # 0.1.3 window surfaces, Chinese and qualification plan
 
-Status: `[-]` release candidate. Workspace version is **0.1.3**; five criteria are `[v]` and the two courts are `NOT-RUN` with fixed runbooks, so this version publishes only as a pre-release under exit path 2, with the unrun courts named in its notes. This plan closed the gaps the 0.1.0 notes named; it adds no reach beyond them. Product admission is owned by [01](../prd/PRD_01_product.md#010-first-user-feature-tree), interaction by [10](../prd/PRD_10_desktop_ux.md), language and accessibility by [10](../prd/PRD_10_desktop_ux.md#input-language-and-accessibility), remotes by [07](../prd/PRD_07_remotes.md), recovery by [08](../prd/PRD_08_recovery.md), packaging by [12](../prd/PRD_12_platform_delivery.md), and sequencing by [the roadmap](roadmap-0.1.0.md).
+Status: `[v]` published as `0.1.3-beta` on 2026-11-14, under exit path 2 with C6 and C7 `NOT-RUN` and named in the notes. Workspace version is **0.1.3**; five criteria are `[v]` and the two courts are `NOT-RUN` with fixed runbooks, so it shipped only as a pre-release, with the unrun courts named in its notes. This plan closed the gaps the 0.1.0 notes named; it adds no reach beyond them. Product admission is owned by [01](../prd/PRD_01_product.md#010-first-user-feature-tree), interaction by [10](../prd/PRD_10_desktop_ux.md), language and accessibility by [10](../prd/PRD_10_desktop_ux.md#input-language-and-accessibility), remotes by [07](../prd/PRD_07_remotes.md), recovery by [08](../prd/PRD_08_recovery.md), packaging by [12](../prd/PRD_12_platform_delivery.md), and sequencing by [the roadmap](roadmap-0.1.0.md).
 
 0.1.0 published a signed, runnable Windows beta and named six gaps in its release notes. This version exists to close them, not to add reach. Every package below finishes a journey 0.1.0 already promised; nothing here widens the product.
 
@@ -272,3 +272,9 @@ What 0.1.3 still cannot claim: the clean-image court (C6) and the five-participa
   `[-]` version, and nothing else: C6 and C7 stay `NOT-RUN` in the release record,
   because a published artifact cannot carry a mark that reads as future work. If
   the next version also cannot run them, they lead its plan.
+- **The published page was checked from the outside.** The Windows x86_64 archive
+  was downloaded again from the release, re-hashed (1 921 047 bytes,
+  `c19ff3a1e6450210`), extracted and started (`minicon-srcmgr 0.1.3`); the
+  signature came back `Valid` with the company publisher and an RFC 3161
+  timestamp. Recording it here is the difference between "assembly succeeded"
+  and "the artifact a stranger downloads works".

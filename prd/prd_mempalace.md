@@ -116,7 +116,7 @@ Use the linked record as truth; this table only tells you where to look.
 |---|---|---|
 | 0.1.0 | Published 2026-11-07: signed, runnable Windows x86_64 beta; its notes name six gaps | [notes](../releases/0.1.0.md) |
 | 0.1.2 | Published 2026-11-09: all six cells build/run/package; both Windows cells Authenticode-signed, `release_eligible=true`; macOS and Linux unsigned | [notes](../releases/0.1.2.md), [PRD 12](PRD_12_platform_delivery.md#support-matrix) |
-| 0.1.3 | Release candidate at version 0.1.3: Clone, Remotes, language, divergence and conflict handoff are `[v]`; the clean-image and five-participant courts are `NOT-RUN`. Publishing as a pre-release under exit path 2, with both courts named in the notes | [notes](../releases/0.1.3.md), [plan](../plan/plan-0.1.3.md#qualification-path-and-exit-criteria) |
+| 0.1.3 | Published 2026-11-14 as `0.1.3-beta` (pre-release, `releases/tag/v0.1.3-beta`): Clone, Remotes, language, divergence and conflict handoff are `[v]`; the clean-image and five-participant courts are `NOT-RUN`; it closed under exit path 2 with both courts named in the notes | [notes](../releases/0.1.3.md), [plan](../plan/plan-0.1.3.md#qualification-path-and-exit-criteria) |
 
 Two items are **BLOCKED by missing external conditions**, not by code: the
 clean-image court needs a machine that never had the product or the Rust
