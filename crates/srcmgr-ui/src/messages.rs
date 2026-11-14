@@ -203,6 +203,7 @@ catalog! {
     NoteFieldLimit => "Field limit is {limit} UTF-8 bytes; input was not appended", "字段上限为 {limit} UTF-8 字节；未追加输入";
     NoteRemoteApplied => "Applied.{detail} The repository configuration changed, so its trust fingerprint changed with it. Reopen the repository from Recent to review the new fingerprint; until then no Git action will run.", "已应用。{detail} 仓库配置已变更，其信任指纹随之改变。请从最近列表重新打开仓库以复核新指纹；在此之前不会执行任何 Git 操作。";
     NoteCloned => "Cloned into {destination}. The working tree is not checked out: open the repository and approve trust to review the filter and check it out.{detail}", "已克隆到 {destination}。工作树尚未检出：请打开该仓库并通过信任复核来检查过滤器并检出。{detail}";
+    NoteCheckoutDone => "Working tree checked out from HEAD; the repository now has its files.", "工作树已从 HEAD 检出；仓库现在已有文件。";
     NoteBranchCheckedOut => "{branch} is already checked out", "已检出分支 {branch}";
     NoteBranchCannotDelete => "{branch} is checked out and cannot be deleted", "分支 {branch} 已检出，无法删除";
     NoteNothingToDiscard => "{path} has no unstaged changes to discard", "{path} 没有可丢弃的未暂存更改";

@@ -1684,6 +1684,14 @@ fn operation_suffix(workspace: &Workspace) -> String {
 }
 
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
+    if let Some((_, lines)) = workspace.checkout_review() {
+        let (apply, cancel) = trust_buttons(rect, grid);
+        let body = trust_content(rect, grid).0;
+        text_panel(draws, body, grid, true, "Review checkout", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        button_draw(draws, apply, grid, workspace.t(TextKey::PanelReview), BORDER);
+        button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
+        return;
+    }
     if let Some(panel) = workspace.remotes_panel() {
         let (apply, cancel) = trust_buttons(rect, grid);
         let snapshot = workspace.snapshot();
@@ -2140,6 +2148,9 @@ fn window_start(selected: usize, length: usize, rows: i64) -> usize {
 
 /// Keys the window shows for the current state, most useful first.
 fn hints(workspace: &Workspace) -> String {
+    if workspace.checkout_review().is_some() {
+        return "y Check out   n/Esc Cancel   Page keys Scroll   Enter does not approve".into();
+    }
     if let Some(panel) = workspace.remotes_panel() {
         return if panel.working {
             "Working; wait for the actual result".into()
@@ -2169,6 +2180,13 @@ fn hints(workspace: &Workspace) -> String {
             PromptKind::OpenRepository => "Enter open   Esc cancel   Existing repository trust is checked".to_owned(),
             PromptKind::NewBranch => "Enter create   Esc cancel".to_owned(),
         };
+    }
+    // A clone that never checked out has an empty worktree; name the one action
+    // that fills it instead of leaving the user with a blank repository.
+    if !workspace.is_welcome()
+        && let Some(files) = workspace.snapshot().pending_checkout
+    {
+        return format!("No working tree yet: o reviews writing {files} file(s) from HEAD   R Remotes   ? help");
     }
     // An unfinished integration makes every write refuse. Point at the one
     // action that can move it forward instead of leaving the user to guess.
@@ -2537,6 +2555,28 @@ mod tests {
         assert!(!text.contains("Applied."), "the English notice leaked into a Chinese frame");
     }
 
+    #[test]
+    fn a_pending_checkout_is_offered_and_never_written_without_approval() {
+        let mut snapshot = super::tests::snapshot(1);
+        snapshot.pending_checkout = Some(3);
+        let mut workspace = Workspace::new(snapshot);
+        assert_eq!(workspace.key(crate::Key::Char('o')), crate::Effect::Send(crate::Job::PreviewCheckout));
+        let hint = hints(&workspace);
+        assert!(hint.contains("No working tree yet"), "{hint}");
+        workspace.reply(crate::Reply::CheckoutReview {
+            ticket: "t7".into(),
+            lines: vec!["check out branch main".into(), "  files written: 3".into()],
+        });
+        assert_eq!(workspace.key(crate::Key::Enter), crate::Effect::Nothing, "Enter must not approve");
+        assert_eq!(
+            workspace.key(crate::Key::Char('y')),
+            crate::Effect::Send(crate::Job::ApplyCheckout("t7".into()))
+        );
+        workspace.reply(crate::Reply::CheckoutReview { ticket: "t8".into(), lines: Vec::new() });
+        workspace.key(crate::Key::Char('n'));
+        assert!(workspace.checkout_review().is_none(), "n must cancel the review");
+    }
+
     pub(super) fn snapshot(files: usize) -> Snapshot {
         Snapshot {
             locale: crate::Locale::En,
@@ -2569,6 +2609,7 @@ mod tests {
             unmerged: Vec::new(),
             divergence: None,
             fetched_at: None,
+            pending_checkout: None,
             remotes: Vec::new(),
         }
     }

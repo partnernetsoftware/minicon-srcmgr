@@ -132,6 +132,10 @@ pub struct Snapshot {
     pub divergence: Option<(String, String)>,
     /// When the fetch that produced the counts ran, as `YYYY-MM-DD HH:MM UTC`.
     pub fetched_at: Option<String>,
+    /// Files waiting to be written because the repository was cloned without a
+    /// checkout. `Some` means the worktree is still empty and a reviewed
+    /// checkout is the next step; nothing is written until it is approved.
+    pub pending_checkout: Option<usize>,
     /// Configured remotes, already redacted for display.
     pub remotes: Vec<RemoteRow>,
 }
@@ -188,6 +192,7 @@ impl Snapshot {
             unmerged: Vec::new(),
             divergence: None,
             fetched_at: None,
+            pending_checkout: None,
             remotes: Vec::new(),
         }
     }
@@ -203,7 +208,7 @@ impl Snapshot {
             files: Vec::new(), branches: Vec::new(), commits: Vec::new(),
             draft: None, stage_result: None, stashes: Vec::new(),
             upstream: None, ahead: 0, behind: 0,
-            operation: None, unmerged: Vec::new(), divergence: None, fetched_at: None, remotes: Vec::new(),
+            operation: None, unmerged: Vec::new(), divergence: None, fetched_at: None, pending_checkout: None, remotes: Vec::new(),
         }
     }
 }
@@ -312,6 +317,10 @@ pub enum Job {
     /// the review showed, so a field edited after approval cannot be cloned.
     ExecuteClone(String),
     CancelClone,
+    /// Describes what a pending checkout would write. Nothing is written.
+    PreviewCheckout,
+    /// Writes the reviewed checkout. The ticket is one-use.
+    ApplyCheckout(String),
     /// Validates one remote edit and returns the exact local effect. Nothing is
     /// written and no server is contacted.
     PreviewRemoteEdit(RemoteEdit),
@@ -423,6 +432,13 @@ pub enum Reply {
         destination: NativePath,
         lines: Vec<String>,
     },
+    CheckoutReview {
+        ticket: String,
+        lines: Vec<String>,
+    },
+    /// The reviewed checkout wrote its files; the snapshot reflects the new
+    /// worktree.
+    CheckoutDone(Snapshot),
     RemoteReview {
         ticket: String,
         lines: Vec<String>,

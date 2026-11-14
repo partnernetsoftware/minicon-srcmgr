@@ -26,6 +26,8 @@ pub enum GitError {
     RemotePolicy(&'static str),
     /// The remote URL uses an unsupported or insecure transport.
     InvalidRemoteUrl,
+    /// A checkout would write nothing, or its target is not acceptable.
+    CheckoutTarget(&'static str),
     /// The clone destination or option is not acceptable.
     CloneTarget(&'static str),
     /// The current branch has no configured upstream.
@@ -94,6 +96,7 @@ impl fmt::Display for GitError {
             Self::RemotePolicy(reason) => formatter.write_str(reason),
             Self::InvalidRemoteUrl => formatter.write_str("the remote URL must be HTTPS, SSH, git+ssh, file or a local path without spaces or control characters"),
             Self::CloneTarget(reason) => formatter.write_str(reason),
+            Self::CheckoutTarget(reason) => formatter.write_str(reason),
             Self::NoUpstream => formatter.write_str("the current branch has no upstream; set one before pulling or pushing"),
             Self::DetachedHead => formatter.write_str("HEAD is detached; switch to a branch before pulling or pushing"),
             Self::OutputLimit => formatter.write_str("Git produced more output than allowed; it was terminated"),

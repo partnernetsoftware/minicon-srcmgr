@@ -21,6 +21,8 @@ pub struct WindowBackend {
     /// A remote edit whose effect was shown but not approved. The ticket is
     /// one-use and expires, so a reviewed change cannot be swapped later.
     remote_edit: Option<RemoteEditPending>,
+    /// A reviewed checkout waiting for approval.
+    checkout: Option<(String, std::time::Instant)>,
 }
 
 struct RemoteEditPending {
@@ -169,7 +171,7 @@ impl WindowBackend {
         let worktree = crate::canonical_worktree(path)?;
         let mut selected = options.clone();
         if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
-        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None };
+        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None };
         let mut snapshot = candidate.snapshot()?;
         snapshot.navigation = open_profile_store(options)?.navigation(&NativePath::new(candidate.worktree.as_os_str())).map_err(|e| e.to_string())?
             .map(|record| srcmgr_ui::Navigation::decode(&record)).transpose().map_err(str::to_owned)?;
@@ -233,6 +235,9 @@ impl WindowBackend {
         snapshot.ahead = tracking.ahead;
         snapshot.behind = tracking.behind;
         snapshot.fetched_at = tracking.fetched_at.clone();
+        // A worktree with no files and a HEAD is a clone that never checked out.
+        // The read is metadata-only and short-circuits on a non-empty worktree.
+        snapshot.pending_checkout = srcmgr_git::pending_checkout(installation, identity).ok().flatten();
         if let (Some(local), Some(upstream)) = (tracking.local_tip, tracking.upstream_tip) {
             snapshot.divergence = Some((local, upstream));
         }
@@ -245,6 +250,26 @@ impl WindowBackend {
             Job::LoadLocale | Job::SetLocale(_) => return Err("the interface language is not a repository action".into()),
             Job::PreviewClone { .. } | Job::ExecuteClone(_) | Job::CancelClone => return Err("clone runs at the application entry boundary, before a repository exists".into()),
             Job::PrepareLocate { .. } | Job::SaveLocated(_) | Job::CancelLocate | Job::OpenRepository(_) | Job::EnterRepository { .. } | Job::ResetNavigation(_) | Job::LoadToolSettings(_) | Job::SaveToolSettings { .. } | Job::PrepareTool { .. } | Job::LaunchTool(_) | Job::CancelTool => return Err("repository entry and tools must use the application worker path".to_owned()),
+            Job::PreviewCheckout => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let preview = srcmgr_git::preview_checkout(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())?;
+                let ticket = crate::confirmation::ticket()?;
+                self.checkout = Some((ticket.clone(), std::time::Instant::now() + std::time::Duration::from_secs(300)));
+                Reply::CheckoutReview { ticket, lines: preview.lines }
+            }
+            Job::ApplyCheckout(ticket) => {
+                let Some((expected, expires)) = self.checkout.take() else {
+                    return Err("The checkout review expired or was already used; review it again.".into());
+                };
+                if expected != ticket || std::time::Instant::now() > expires {
+                    return Err("The checkout review expired or was already used; review it again.".into());
+                }
+                let session = open_trusted(&self.options, &self.worktree)?;
+                srcmgr_git::checkout_worktree(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())?;
+                Reply::CheckoutDone(self.snapshot()?)
+            }
             Job::PreviewRemoteEdit(edit) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
                 let change = remote_change(edit);
@@ -742,11 +767,42 @@ pub(crate) mod tests {
             prepared: None,
             commit_review: None,
             remote_edit: None,
+            checkout: None,
         }
     }
 
     fn config_bytes(repo: &Path) -> Vec<u8> {
         fs::read(repo.join(".git").join("config")).expect("read config")
+    }
+
+    #[test]
+    fn a_clone_without_checkout_is_completed_from_the_window() {
+        let root = Scratch::new("pending-checkout");
+        let source = repository(&root.0, "source");
+        let target = root.0.join("target");
+        fixture_git(&root.0, &["clone", "-q", "--no-checkout", source.to_str().unwrap(), target.to_str().unwrap()]);
+        let mut active = backend(&root.0, &target, true);
+        let Reply::RepositoryOpened(snapshot) = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(target.as_os_str()))) else {
+            panic!("open must succeed on a trusted clone");
+        };
+        let files = snapshot.pending_checkout.expect("the worktree is still empty");
+        assert!(files >= 1);
+        assert!(!target.join("a.txt").exists(), "opening must not write files");
+
+        let Reply::CheckoutReview { ticket, lines } = active.run(Job::PreviewCheckout) else {
+            panic!("expected a checkout review");
+        };
+        let text = lines.join("
+");
+        assert!(text.contains("branch main"), "{text}");
+        assert!(text.contains(&format!("files written: {files}")), "{text}");
+        assert!(!target.join("a.txt").exists(), "a review must not write files");
+
+        let Reply::CheckoutDone(after) = active.run(Job::ApplyCheckout(ticket)) else {
+            panic!("expected a completed checkout");
+        };
+        assert_eq!(after.pending_checkout, None);
+        assert_eq!(std::fs::read_to_string(target.join("a.txt")).unwrap(), "one\n");
     }
 
     #[test]

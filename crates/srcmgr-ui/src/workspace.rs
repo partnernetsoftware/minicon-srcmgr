@@ -305,6 +305,7 @@ pub struct Workspace {
     identity: Option<IdentityForm>,
     composer: Option<CommitComposer>,
     remotes: Option<crate::RemotesPanel>,
+    checkout: Option<(String, Vec<String>)>,
 }
 
 impl Workspace {
@@ -316,6 +317,7 @@ impl Workspace {
             locate: None,
             clone: None,
             remotes: None,
+            checkout: None,
             tools: None,
             navigation_issue: None,
             filters: std::array::from_fn(|_| Default::default()), filter_anchors: [None, None, None], filter_editor: None, next_position: None,
@@ -405,6 +407,25 @@ impl Workspace {
     }
 
     pub fn remotes_panel(&self) -> Option<&crate::RemotesPanel> { self.remotes.as_ref() }
+
+    /// The checkout review: the ticket plus the lines the backend produced.
+    pub fn checkout_review(&self) -> Option<&(String, Vec<String>)> { self.checkout.as_ref() }
+
+    /// y writes the files, n or Escape writes nothing.
+    pub fn checkout_key(&mut self, key: Key) -> Effect {
+        match key {
+            Key::Char('y') => match self.checkout.as_ref() {
+                Some((ticket, _)) => Effect::Send(Job::ApplyCheckout(ticket.clone())),
+                None => Effect::Nothing,
+            },
+            Key::Char('n') | Key::Escape | Key::CtrlC => { self.checkout = None; Effect::Nothing }
+            Key::Up => self.scroll_trust(-1),
+            Key::Down => self.scroll_trust(1),
+            Key::PageUp => self.scroll_trust(-(PAGE_LINES as isize)),
+            Key::PageDown => self.scroll_trust(PAGE_LINES as isize),
+            _ => Effect::Nothing,
+        }
+    }
 
     /// Opens the Remotes panel over an open repository. It is refused on the
     /// Welcome surface, where there is no configuration to edit.
@@ -1569,7 +1590,7 @@ impl Workspace {
     /// waits until it closes.
     #[must_use]
     pub const fn modal(&self) -> bool {
-        self.locate.is_some() || self.tools.is_some() || self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some() || self.navigation_issue.is_some() || self.remotes.is_some()
+        self.locate.is_some() || self.tools.is_some() || self.help || self.prompt.is_some() || self.confirm.is_some() || self.trust.is_some() || self.create.is_some() || self.identity.is_some() || self.filter_editor.is_some() || self.navigation_issue.is_some() || self.remotes.is_some() || self.checkout.is_some()
     }
 
     /// Tells the workspace how many main-panel lines are visible, so the cursor
@@ -1595,6 +1616,7 @@ impl Workspace {
 
     fn key_inner(&mut self, key: Key) -> Effect {
         if self.remotes.is_some() { return self.remotes_key(key); }
+        if self.checkout.is_some() { return self.checkout_key(key); }
         if let Some(form) = self.locate.as_mut() {
             if !form.editor.preedit.is_empty() { return form.edit(key); }
             if key == Key::Escape { return self.cancel_locate(); }
@@ -1795,6 +1817,7 @@ impl Workspace {
             Key::Char('P') if !self.modal() => self.push_branch(),
             Key::Char('f') if !self.modal() => self.fetch_remote(),
             Key::Char('R') => self.request_remotes(),
+            Key::Char('o') if !self.modal() && self.snapshot.pending_checkout.is_some() => Effect::Send(Job::PreviewCheckout),
             Key::Char('t') if !self.modal() => self.request_terminal(),
             Key::Char('r') => Effect::Send(Job::Reload),
             _ => Effect::Nothing,
@@ -1805,6 +1828,17 @@ impl Workspace {
     /// requested again for the current selection.
     pub fn reply(&mut self, reply: Reply) -> Effect {
         match reply {
+            Reply::CheckoutReview { ticket, lines } => {
+                self.checkout = Some((ticket, lines));
+                self.trust_scroll = 0;
+                Effect::Nothing
+            }
+            Reply::CheckoutDone(snapshot) => {
+                self.checkout = None;
+                let effect = self.reply(Reply::Full(snapshot));
+                self.notice = Some(crate::messages::text(crate::messages::Key::NoteCheckoutDone, self.locale()).to_owned());
+                effect
+            }
             Reply::RemoteReview { ticket, lines } => {
                 if let Some(panel) = self.remotes.as_mut() {
                     panel.working = false;
@@ -3104,6 +3138,7 @@ mod tests {
             unmerged: Vec::new(),
             divergence: None,
             fetched_at: None,
+            pending_checkout: None,
             remotes: Vec::new(),
         }
     }

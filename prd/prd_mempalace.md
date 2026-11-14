@@ -134,6 +134,10 @@ enforced in code or a fixture today.
 - **Clone is always `--no-checkout`.** The working tree appears only after the
   repository is trusted and a separate checkout review approves it, so a rejected
   filter leaves no files behind.
+- **`--no-checkout` leaves the index empty, not populated.** A checkout must read
+  HEAD's tree (`read-tree HEAD`, then `checkout-index -a` without `-f`); writing
+  from the index would write nothing. "Worktree empty except `.git`" is the cheap
+  signal that a checkout is pending.
 - **The write guard reads Git's own metadata**, never a filename: `MERGE_HEAD`,
   `rebase-merge`/`rebase-apply`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` plus
   `diff --diff-filter=U`. A marker that exists but cannot be read is *unknown*,
