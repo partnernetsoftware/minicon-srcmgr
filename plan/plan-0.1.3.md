@@ -236,3 +236,39 @@ What 0.1.3 still cannot claim: the clean-image court (C6) and the five-participa
 - **C6 and C7 are now `NOT-RUN` with a fixed path**, not open-ended `[_]`. Two runbooks state what a qualifying machine is, which three checks make an image clean, what the operator does in which order, and what receipt proves it; the second fixes the participant protocol before the first participant is recruited, so the result cannot be redefined afterwards.
 - **The version has three possible endings**, recorded above: both courts pass and it publishes normally; one or both are unrun and it publishes only as `0.1.3-beta` with the gap named, exactly as 0.1.0 did; or a court fails and the failure leads the next plan. That means 0.1.3 can close without pretending the courts ran.
 - **Why no code change follows.** Docker is unavailable here and no machine in this environment has never had the product or the Rust toolchain, so neither court can be executed by this repository. More commits cannot move these two rows; only a clean image and five people can.
+
+### 2026-11-14 · published as 0.1.3-beta
+
+- **Exit path 2 was taken, not assumed.** C6 and C7 have a fixed runbook and no
+  execution: no disposable image without the product or the toolchain, and no
+  five first-time participants were available. The release notes name both courts
+  and what each would have proved, so the gap is on the published page rather than
+  in a commit nobody reads.
+- **The bytes shipped were built once and checked twice.** Run 43591038741 produced
+  the six cells and run 43591044546 signed the two Windows executables, both from
+  source `16d68ce`; assembly exited 0 and `sha256sum -c SHA256SUMS.txt` accepted
+  all six archives. The extracted Windows executable reports
+  `minicon-srcmgr 0.1.3`, passed a runtime court on itself, and
+  `Get-AuthenticodeSignature` returned `Valid` with the company publisher and an
+  RFC 3161 timestamp.
+- **The notes carry the shipped sizes and digests**, so a reader can compare the
+  download against the page without trusting the page's prose. The tag is
+  `v0.1.3-beta` and the release is a GitHub pre-release; nothing here claims
+  `v0.1.3`.
+- **What closes 0.1.3 is the two rows, not the tag.** They stay `NOT-RUN` in the
+  release record until a receipt exists, and they lead the next plan if the next
+  version cannot run them either.
+
+### 2026-11-14 · assembled bytes
+
+- **The download table is measured, not copied.** Every row in
+  [the notes](../releases/0.1.3.md) carries the size of the archive that was
+  assembled here and the first sixteen hex digits of its digest: all six files
+  were measured in the assembly directory, `sha256sum -c SHA256SUMS.txt` returned
+  `OK` for each of them, the executable extracted from the packaged Windows zip
+  reports `minicon-srcmgr 0.1.3`, and `Get-AuthenticodeSignature` on it returns
+  `Valid` with the company publisher and an RFC 3161 timestamp.
+- **What the tag does and does not move.** Publishing under exit path 2 ends the
+  `[-]` version, and nothing else: C6 and C7 stay `NOT-RUN` in the release record,
+  because a published artifact cannot carry a mark that reads as future work. If
+  the next version also cannot run them, they lead its plan.

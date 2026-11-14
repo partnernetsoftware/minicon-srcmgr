@@ -200,6 +200,19 @@ enforced in code or a fixture today.
 - **Run identifiers exceed Int32.** Anything converting `GITHUB_RUN_ID` must read
   it as Int64 or it throws before the first file is signed.
 
+- **A beta is declared, not inferred.** The tag and the release page say
+  `0.1.3-beta` and name the unrun courts; a green suite cannot promote a build to
+  a normal release. Precedent: 0.1.0 shipped as a beta naming six gaps rather than
+  letting "we tested it" stand in for a court.
+- **A published version's ledger rows keep `NOT-RUN`, never `[_]`.** `[_]` reads
+  as future work on something already shipped; the honest mark is the one the
+  release record uses.
+
+- **A download table is a measurement, not a transcription.** Before the release
+  notes are committed, measure each archive, check every line of `SHA256SUMS.txt`,
+  run the packaged executable for its version and read the signature status back.
+  A table copied from a CI log is a claim; only the shipped bytes are evidence.
+
 ## Four reading paths
 
 1. **Implement a mutation** — this file, then the owning module, then
