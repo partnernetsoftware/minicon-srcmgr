@@ -112,7 +112,7 @@ Merge points: `window.rs` and `workspace.rs` take P1 and P2 in that order from o
 
 Start with the cheapest oracle per package: actual `.git` refs and config bytes for P1/P2, the key-coverage table for P1/P3, fixture repositories with a divergence and a real conflict for P4, and the clean image for P5. Run the affected `cargo test --workspace` selection with `SRCMGR_TEST_GIT`, `cargo clippy --workspace --all-targets` and `python scripts/check_docs.py`. Stop when the selected cases pass or are recorded `BLOCKED` with the missing prerequisite.
 
-Release gate: C1–C7 either pass with named evidence or are `BLOCKED` with a precise missing item; the version is unpublished before signing; the signed archive is downloaded again, re-hashed and started; the notes list what is still unqualified.
+Release gate: C1–C7 either pass with named evidence or are `NOT-RUN` with a fixed path and an honest mark in the notes (`BLOCKED` only when even the path is unknown); the version is unpublished before signing; the signed archive is downloaded again, re-hashed and started; the notes list what is still unqualified.
 
 ## Round protocol
 
@@ -169,7 +169,7 @@ and the two rows stay `NOT-RUN`; nothing in the codebase can change that.
 
 ### 2026-11-13 · language and clone
 
-Workspace version stays 0.1.2 (the published six-cell release); this increment has no source, version or artifact of its own yet.
+At this point the workspace version was still 0.1.2 (the published six-cell release); the increment had no artifact of its own yet.
 
 - **Language (C3, partial).** The catalogue now holds both locales in one table, so a key without a translation cannot compile, and three tests fail if a translation is left as English, loses its Han characters, or if the two catalogues drift apart. Every control, status and refusal renders through the active locale; paths, object ids, branch names and Git output stay literal, which a frame test asserts both ways. The Welcome surface names the current language and cycles System, English and Simplified 中文 with one key; the value is validated, persisted under `ui.locale` and reloaded without a restart. `setting set ui.locale` accepts the same three values and refuses anything else. 57 hard-coded strings remain (43 notices, 9 main views, 4 hint lines, 1 Welcome view), which is why C3 is `[-]` and not `[v]`.
 - **Clone (C1, partial).** A Welcome form takes URL, absolute destination, branch and depth and walks them with Tab. Enter asks for a preview that validates transport and target without contacting the server or creating anything; approving sends only the one-use ticket, so the reviewed values are the values that run. Clone keeps `--no-checkout`. Verified on a local bare remote: the command reported the reviewed effect, cloned, and left the destination holding only `.git` with no `a.txt`; the branch was `main`. The panel cannot yet inspect or remove a partial target, so C1 stays `[-]`.
