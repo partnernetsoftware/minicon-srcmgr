@@ -34,11 +34,14 @@ pub struct TrackingState {
     pub local_tip: Option<String>,
     /// The fetched upstream tip as `short-oid subject`, when both sides advanced.
     pub upstream_tip: Option<String>,
+    /// When the last fetch wrote `FETCH_HEAD`, as `YYYY-MM-DD HH:MM UTC`. This is
+    /// the age of the information the counts describe, not live server truth.
+    pub fetched_at: Option<String>,
 }
 
 impl TrackingState {
     const fn none() -> Self {
-        Self { upstream: None, ahead: 0, behind: 0, local_tip: None, upstream_tip: None }
+        Self { upstream: None, ahead: 0, behind: 0, local_tip: None, upstream_tip: None, fetched_at: None }
     }
 }
 
@@ -205,7 +208,43 @@ pub fn tracking(git: &GitInstallation, repo: &RepositoryIdentity) -> Result<Trac
         behind,
         local_tip,
         upstream_tip,
+        fetched_at: last_fetch_time(repo),
     })
+}
+
+/// The modification time of `FETCH_HEAD`, which Git rewrites on every fetch.
+/// A missing or unreadable file is `None` rather than a guessed time.
+fn last_fetch_time(repo: &RepositoryIdentity) -> Option<String> {
+    let modified = std::fs::metadata(repo.common_dir.join("FETCH_HEAD")).ok()?.modified().ok()?;
+    Some(utc_stamp(modified))
+}
+
+/// Formats an instant as `YYYY-MM-DD HH:MM UTC`. Written here rather than pulled
+/// in as a dependency: the product formats one timestamp and its build keeps no
+/// date library.
+fn utc_stamp(instant: std::time::SystemTime) -> String {
+    let seconds = instant
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs()) as i64;
+    let days = seconds.div_euclid(86_400);
+    let rest = seconds.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02} {:02}:{:02} UTC", rest / 3600, (rest % 3600) / 60)
+}
+
+/// Days since 1970-01-01 to a civil date, by Howard Hinnant's algorithm. It is
+/// exact for the whole range this product can meet and needs no table.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = (z - era * 146_097) as u64;
+    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era as i64 + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = (day_of_year - (153 * shifted_month + 2) / 5 + 1) as u32;
+    let month = if shifted_month < 10 { shifted_month + 3 } else { shifted_month - 9 } as u32;
+    (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
 /// One commit as `short-oid subject`, with control characters removed so a
@@ -347,5 +386,25 @@ mod tests {
     fn only_transfer_lines_become_progress() {
         assert_eq!(progress_line("Receiving objects: 42% (21/50)"), Some("Receiving objects: 42% (21/50)".to_owned()));
         assert_eq!(progress_line("From https://alice:token@example.test/repo"), None);
+    }
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    use super::utc_stamp;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn the_epoch_and_a_known_instant_format_as_utc() {
+        assert_eq!(utc_stamp(UNIX_EPOCH), "1970-01-01 00:00 UTC");
+        assert_eq!(
+            utc_stamp(UNIX_EPOCH + Duration::from_secs(1_700_000_000)),
+            "2023-11-14 22:13 UTC"
+        );
+        // A leap day, so the day arithmetic is exercised rather than assumed.
+        assert_eq!(
+            utc_stamp(UNIX_EPOCH + Duration::from_secs(1_709_164_800)),
+            "2024-02-29 00:00 UTC"
+        );
     }
 }

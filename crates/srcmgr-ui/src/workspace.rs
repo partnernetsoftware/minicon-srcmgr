@@ -530,6 +530,16 @@ impl Workspace {
     }
 
     pub fn tool_form(&self) -> Option<&crate::ToolForm> { self.tools.as_ref() }
+    /// Opens the tool handoff already on Terminal, for a repository whose writes
+    /// are blocked. It still goes through the same configure-and-review flow, so
+    /// an unconfigured terminal is a stated refusal rather than a guess.
+    pub fn request_terminal(&mut self) -> Effect {
+        if self.modal() { return Effect::Nothing; }
+        self.tools = Some(crate::ToolForm::new(srcmgr_domain::ToolKind::Terminal, None));
+        self.notice = None;
+        Effect::Send(Job::LoadToolSettings(srcmgr_domain::ToolKind::Terminal))
+    }
+
     pub fn request_tools(&mut self) -> Effect {
         if self.modal() { return Effect::Nothing; }
         let file = if !self.stash_mode && (self.focus == Pane::Files || self.source == Pane::Files) { self.snapshot.files.get(self.files).map(|f| f.path.clone()) } else { None };
@@ -1785,6 +1795,7 @@ impl Workspace {
             Key::Char('P') if !self.modal() => self.push_branch(),
             Key::Char('f') if !self.modal() => self.fetch_remote(),
             Key::Char('R') => self.request_remotes(),
+            Key::Char('t') if !self.modal() => self.request_terminal(),
             Key::Char('r') => Effect::Send(Job::Reload),
             _ => Effect::Nothing,
         }
@@ -3038,6 +3049,16 @@ mod tests {
 
 
     #[test]
+    fn t_opens_the_terminal_handoff_rather_than_the_editor() {
+        let mut workspace = Workspace::new(snapshot(None));
+        assert_eq!(
+            workspace.key(Key::Char('t')),
+            Effect::Send(Job::LoadToolSettings(srcmgr_domain::ToolKind::Terminal))
+        );
+        assert!(workspace.tool_form().is_some(), "the handoff surface must open");
+    }
+
+    #[test]
     fn the_language_control_cycles_through_the_three_stored_values() {
         let mut workspace = Workspace::new(Snapshot::welcome());
         assert_eq!(workspace.locale_tag(), "system");
@@ -3083,6 +3104,7 @@ mod tests {
             operation: None,
             unmerged: Vec::new(),
             divergence: None,
+            fetched_at: None,
             remotes: Vec::new(),
         }
     }

@@ -1656,7 +1656,11 @@ fn operation_suffix(snapshot: &crate::Snapshot) -> String {
     // the fact that they are what the last fetch recorded. Pull is refused from
     // this state rather than choosing an integration for the user.
     if let Some((local, upstream)) = &snapshot.divergence {
-        return format!(" | diverged: local {local} | fetched upstream {upstream}");
+        let age = match &snapshot.fetched_at {
+            Some(stamp) => format!(" as of the last fetch {stamp}"),
+            None => " as of the last fetch".to_owned(),
+        };
+        return format!(" | diverged: local {local} | fetched upstream {upstream},{age}");
     }
     match (&snapshot.operation, snapshot.unmerged.len()) {
         (None, 0) => String::new(),
@@ -2153,6 +2157,14 @@ fn hints(workspace: &Workspace) -> String {
             PromptKind::NewBranch => "Enter create   Esc cancel".to_owned(),
         };
     }
+    // An unfinished integration makes every write refuse. Point at the one
+    // action that can move it forward instead of leaving the user to guess.
+    if !workspace.is_welcome() {
+        let snapshot = workspace.snapshot();
+        if snapshot.operation.is_some() || !snapshot.unmerged.is_empty() {
+            return "Writes are blocked until this operation is resolved   t Terminal here   R Remotes   ? help".to_owned();
+        }
+    }
     let focus = match workspace.focus() {
         Pane::Status => "f fetch   p pull   P push   2 3 4 focus lists",
         Pane::Files => "Space stage/unstage   a all   d discard   s stash   5 stashes   c commit",
@@ -2460,6 +2472,33 @@ mod tests {
         assert_eq!(workspace.key(crate::Key::Char('y')), crate::Effect::Send(crate::Job::ApplyRemoteEdit("t1".into())));
     }
 
+    #[test]
+    fn a_blocked_repository_points_at_the_terminal_handoff() {
+        let mut blocked = super::tests::snapshot(1);
+        blocked.operation = Some("merge".into());
+        blocked.unmerged = vec!["a.txt".into()];
+        let hint = hints(&Workspace::new(blocked));
+        assert!(hint.contains("blocked"), "{hint}");
+        assert!(hint.contains("t Terminal here"), "{hint}");
+        let clean = hints(&Workspace::new(super::tests::snapshot(1)));
+        assert!(!clean.contains("blocked"), "{clean}");
+    }
+
+    #[test]
+    fn a_diverged_status_line_carries_the_fetch_time() {
+        let mut snapshot = super::tests::snapshot(1);
+        snapshot.divergence = Some(("0123456 local work".into(), "abcdef0 remote work".into()));
+        snapshot.fetched_at = Some("2026-11-14 09:12 UTC".into());
+        let line = operation_suffix(&snapshot);
+        assert!(line.contains("local 0123456 local work"), "{line}");
+        assert!(line.contains("fetched upstream abcdef0 remote work"), "{line}");
+        assert!(line.contains("as of the last fetch 2026-11-14 09:12 UTC"), "{line}");
+        // Without a fetch record the line still refuses to invent one.
+        snapshot.fetched_at = None;
+        assert!(operation_suffix(&snapshot).contains("as of the last fetch"), "{}", operation_suffix(&snapshot));
+        assert!(!operation_suffix(&snapshot).contains("UTC"));
+    }
+
     pub(super) fn snapshot(files: usize) -> Snapshot {
         Snapshot {
             locale: crate::Locale::En,
@@ -2491,6 +2530,7 @@ mod tests {
             operation: None,
             unmerged: Vec::new(),
             divergence: None,
+            fetched_at: None,
             remotes: Vec::new(),
         }
     }

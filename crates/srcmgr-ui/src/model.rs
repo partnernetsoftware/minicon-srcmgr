@@ -130,6 +130,8 @@ pub struct Snapshot {
     /// The local and fetched tips when both sides advanced, each as
     /// `short-oid subject`. They are what the last fetch recorded.
     pub divergence: Option<(String, String)>,
+    /// When the fetch that produced the counts ran, as `YYYY-MM-DD HH:MM UTC`.
+    pub fetched_at: Option<String>,
     /// Configured remotes, already redacted for display.
     pub remotes: Vec<RemoteRow>,
 }
@@ -185,6 +187,7 @@ impl Snapshot {
             operation: None,
             unmerged: Vec::new(),
             divergence: None,
+            fetched_at: None,
             remotes: Vec::new(),
         }
     }
@@ -200,7 +203,7 @@ impl Snapshot {
             files: Vec::new(), branches: Vec::new(), commits: Vec::new(),
             draft: None, stage_result: None, stashes: Vec::new(),
             upstream: None, ahead: 0, behind: 0,
-            operation: None, unmerged: Vec::new(), divergence: None, remotes: Vec::new(),
+            operation: None, unmerged: Vec::new(), divergence: None, fetched_at: None, remotes: Vec::new(),
         }
     }
 }

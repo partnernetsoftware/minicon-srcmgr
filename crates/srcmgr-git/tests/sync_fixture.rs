@@ -189,6 +189,11 @@ fn a_diverged_branch_names_both_tips_and_a_linear_one_names_neither() {
     );
     assert!(local.contains("local work"), "{local}");
     assert!(upstream.contains("remote work"), "{upstream}");
+    // The counts are as of the fetch that just ran; the stamp says when.
+    let stamp = diverged.fetched_at.clone().expect("a fetch writes FETCH_HEAD");
+    assert_eq!(stamp.len(), 20, "{stamp}");
+    assert!(stamp.ends_with(" UTC"), "{stamp}");
+    assert_eq!(&stamp[4..5], "-", "{stamp}");
     // Both tips are short-oid plus subject, so the line stays one row wide.
     assert!(local.split_once(' ').is_some_and(|(oid, _)| oid.len() >= 7), "{local}");
     // A branch that only moved forward is not diverged and names no tips.

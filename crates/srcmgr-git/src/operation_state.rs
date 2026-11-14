@@ -68,7 +68,7 @@ impl OperationState {
             None
         } else {
             Some(format!(
-                "Refused: {}. Resolve it in a terminal, then refresh.",
+                "Refused: {}. Resolve it in a terminal, then refresh. Press t in the window to open a configured terminal at this repository.",
                 parts.join(" and ")
             ))
         }

@@ -116,7 +116,7 @@ Use the linked record as truth; this table only tells you where to look.
 |---|---|---|
 | 0.1.0 | Published 2026-11-07: signed, runnable Windows x86_64 beta; its notes name six gaps | [notes](../releases/0.1.0.md) |
 | 0.1.2 | Published 2026-11-09: all six cells build/run/package; both Windows cells Authenticode-signed, `release_eligible=true`; macOS and Linux unsigned | [notes](../releases/0.1.2.md), [PRD 12](PRD_12_platform_delivery.md#support-matrix) |
-| 0.1.3 | In progress: closes the gaps 0.1.0 named. Remotes panel `[v]`, Clone panel `[-]`, language `[-]`, divergence `[-]`, conflict handoff `[-]`, clean image `[_]`, five users `[_]` | [plan](../plan/plan-0.1.3.md) |
+| 0.1.3 | In progress: closes the gaps 0.1.0 named. Remotes panel, divergence and conflict handoff `[v]`; Clone panel `[-]`, language `[-]`, clean image `[_]`, five users `[_]` | [plan](../plan/plan-0.1.3.md) |
 
 Two items are **BLOCKED by missing external conditions**, not by code: the
 clean-image court needs a machine that never had the product or the Rust

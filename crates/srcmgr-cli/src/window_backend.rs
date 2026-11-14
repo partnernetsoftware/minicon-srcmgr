@@ -232,6 +232,7 @@ impl WindowBackend {
         snapshot.upstream = tracking.upstream;
         snapshot.ahead = tracking.ahead;
         snapshot.behind = tracking.behind;
+        snapshot.fetched_at = tracking.fetched_at.clone();
         if let (Some(local), Some(upstream)) = (tracking.local_tip, tracking.upstream_tip) {
             snapshot.divergence = Some((local, upstream));
         }
