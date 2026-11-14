@@ -149,6 +149,9 @@ enforced in code or a fixture today.
   destination, and removal is offered only when the destination did not exist
   before the attempt. Anything else is refused, because deleting a directory the
   product did not create is not a recovery.
+- **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
+  taken.** Show it, or say the time is unavailable; never present ahead/behind as
+  live server truth.
 - **A surface that is drawn but not routed is inert.** `key_inner` must hand keys
   to every open surface; the clone form was rendered and titled for a whole round
   while no keystroke reached it, and only a workspace-level key test caught it.

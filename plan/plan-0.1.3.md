@@ -114,6 +114,22 @@ Start with the cheapest oracle per package: actual `.git` refs and config bytes 
 
 Release gate: C1–C7 either pass with named evidence or are `BLOCKED` with a precise missing item; the version is unpublished before signing; the signed archive is downloaded again, re-hashed and started; the notes list what is still unqualified.
 
+## Round protocol
+
+Every round of this plan changes three things together, and a round that touches
+code without them is incomplete:
+
+1. the acceptance ledger row for each criterion it moved, with the evidence it
+   actually has;
+2. an execution record entry naming what was built, what was found and what is
+   still open — including defects the round itself exposed;
+3. [the memory palace](../prd/prd_mempalace.md), where a fact that would otherwise
+   have to be re-learned becomes one line, and the version table follows the
+   ledger.
+
+The ledger is not append-only: a row is rewritten when its evidence changes, so a
+reader never has to diff history to learn the current state.
+
 ## Execution record
 
 ### 2026-11-13 · language and clone
