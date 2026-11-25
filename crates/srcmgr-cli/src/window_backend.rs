@@ -23,6 +23,28 @@ pub struct WindowBackend {
     remote_edit: Option<RemoteEditPending>,
     /// A reviewed checkout waiting for approval.
     checkout: Option<(String, std::time::Instant)>,
+    /// A reviewed merge waiting for approval, with the exact preview it showed.
+    merge: Option<MergePending>,
+}
+
+/// A merge whose effect was shown but not approved. The preview travels with
+/// the ticket so approval cannot be bound to a different target.
+struct MergePending {
+    ticket: String,
+    preview: srcmgr_git::MergePreview,
+    expires: std::time::Instant,
+}
+
+/// Fills the named placeholders of a catalogue template at the call site.
+fn fill(template: &str, pairs: &[(&str, String)]) -> String {
+    pairs
+        .iter()
+        .fold(template.to_owned(), |text, (name, value)| text.replace(name, value))
+}
+
+/// A short object id for a review line; the full id stays in the preview.
+fn short(oid: &str) -> String {
+    oid.chars().take(12).collect()
 }
 
 /// One catalogue string for a caller that has options but no self parameter,
@@ -216,7 +238,7 @@ impl WindowBackend {
         let worktree = crate::canonical_worktree(path)?;
         let mut selected = options.clone();
         if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
-        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None };
+        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None, merge: None };
         let mut snapshot = candidate.snapshot()?;
         snapshot.navigation = open_profile_store(options)?.navigation(&NativePath::new(candidate.worktree.as_os_str())).map_err(|e| e.to_string())?
             .map(|record| srcmgr_ui::Navigation::decode(&record)).transpose().map_err(str::to_owned)?;
@@ -317,6 +339,88 @@ impl WindowBackend {
                 srcmgr_git::checkout_worktree(&session.installation, &session.identity)
                     .map_err(|error| error.to_string())?;
                 Reply::CheckoutDone(self.snapshot()?)
+            }
+            Job::PreviewMerge(target) => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let preview = srcmgr_git::preview_merge(&session.installation, &session.identity, &target)
+                    .map_err(|error| error.to_string())?;
+                let line = match preview.outcome {
+                    srcmgr_git::MergeOutcome::UpToDate => fill(
+                        &self.say(srcmgr_ui::TextKey::MergeReviewUpToDate),
+                        &[("{target}", short(&preview.target))],
+                    ),
+                    srcmgr_git::MergeOutcome::FastForward => fill(
+                        &self.say(srcmgr_ui::TextKey::MergeReviewFastForward),
+                        &[
+                            ("{branch}", preview.branch.clone()),
+                            ("{current}", short(&preview.current)),
+                            ("{target}", short(&preview.target)),
+                            ("{commits}", preview.commits.to_string()),
+                        ],
+                    ),
+                    srcmgr_git::MergeOutcome::RealMerge => fill(
+                        &self.say(srcmgr_ui::TextKey::MergeReviewMerge),
+                        &[
+                            ("{commits}", preview.commits.to_string()),
+                            ("{target}", short(&preview.target)),
+                            ("{branch}", preview.branch.clone()),
+                        ],
+                    ),
+                    srcmgr_git::MergeOutcome::Conflicts => fill(
+                        &self.say(srcmgr_ui::TextKey::MergeReviewConflicts),
+                        &[
+                            ("{count}", preview.conflicted.len().to_string()),
+                            ("{paths}", preview.conflicted.join(", ")),
+                        ],
+                    ),
+                };
+                let mut lines = vec![line];
+                if preview.worktree_dirty {
+                    lines.push(self.say(srcmgr_ui::TextKey::MergeReviewDirty));
+                }
+                lines.push(self.say(srcmgr_ui::TextKey::MergeReviewFooter));
+                let ticket = crate::confirmation::ticket()?;
+                self.merge = Some(MergePending {
+                    ticket: ticket.clone(),
+                    preview,
+                    expires: std::time::Instant::now() + std::time::Duration::from_secs(300),
+                });
+                Reply::MergeReview { ticket, lines }
+            }
+            Job::ApplyMerge(ticket) => {
+                let refused = match self.merge.as_ref() {
+                    None => true,
+                    Some(pending) => {
+                        pending.ticket != ticket || std::time::Instant::now() > pending.expires
+                    }
+                };
+                if refused {
+                    // A wrong or expired ticket must not burn the review: the
+                    // correct one is still valid until it expires.
+                    return Err(self.say(srcmgr_ui::TextKey::NoteMergeExpired));
+                }
+                let Some(pending) = self.merge.take() else {
+                    return Err(self.say(srcmgr_ui::TextKey::NoteMergeExpired));
+                };
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let report = srcmgr_git::apply_merge(&session.installation, &session.identity, &pending.preview)
+                    .map_err(|error| error.to_string())?;
+                let lines = if report.moved {
+                    vec![fill(
+                        &self.say(srcmgr_ui::TextKey::NoteMergeDone),
+                        &[
+                            ("{target}", short(&pending.preview.target)),
+                            ("{branch}", pending.preview.branch.clone()),
+                            ("{after}", short(&report.after)),
+                        ],
+                    )]
+                } else {
+                    vec![fill(
+                        &self.say(srcmgr_ui::TextKey::NoteMergeStopped),
+                        &[("{count}", report.conflicted.len().to_string())],
+                    )]
+                };
+                Reply::MergeApplied { lines, snapshot: self.snapshot()? }
             }
             Job::PreviewRemoteEdit(edit) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
@@ -825,6 +929,7 @@ pub(crate) mod tests {
             commit_review: None,
             remote_edit: None,
             checkout: None,
+            merge: None,
         }
     }
 
@@ -1988,5 +2093,39 @@ pub(crate) mod tests {
         assert_eq!(git_text(&repo, &["rev-parse", "refs/heads/review"]), head);
         assert!(matches!(backend.run(Job::CreateBranch("review".into())), Reply::PromptFailed { action: srcmgr_ui::PromptAction::CreateBranch, .. }));
         assert_eq!(git_text(&repo, &["rev-parse", "refs/heads/review"]), head);
+    }
+
+    #[test]
+    fn a_reviewed_merge_moves_the_branch_only_after_its_ticket_is_used() {
+        let root = Scratch::new("merge-window");
+        let repo = repository(&root.0, "repo");
+        fixture_git(&repo, &["switch", "-q", "-c", "feature"]);
+        fs::write(repo.join("b.txt"), "two\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "two"]);
+        fixture_git(&repo, &["switch", "-q", "main"]);
+        let mut active = backend(&root.0, &repo, true);
+        let _ = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(repo.as_os_str())));
+
+        let Reply::MergeReview { ticket, lines } = active.run(Job::PreviewMerge("feature".into())) else {
+            panic!("expected a merge review");
+        };
+        let text = lines.join("\n");
+        assert!(text.contains("Fast-forward"), "{text}");
+        assert!(text.contains("No ref, index or worktree change"), "{text}");
+        assert!(!repo.join("b.txt").exists(), "a review must not merge");
+
+        let Reply::Notice(text) = active.run(Job::ApplyMerge("wrong".into())) else {
+            panic!("a different ticket must be refused with a notice");
+        };
+        assert!(text.contains("expired"), "{text}");
+        assert!(!repo.join("b.txt").exists());
+
+        let Reply::MergeApplied { lines, snapshot } = active.run(Job::ApplyMerge(ticket)) else {
+            panic!("expected the merge to run");
+        };
+        assert!(lines.join(" ").contains("Merged"), "{:?}", lines);
+        assert_eq!(snapshot.operation, None);
+        assert_eq!(std::fs::read_to_string(repo.join("b.txt")).unwrap(), "two\n");
     }
 }

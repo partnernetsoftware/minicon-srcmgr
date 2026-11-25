@@ -1871,6 +1871,17 @@ impl Workspace {
                 self.notice = Some(crate::messages::text(crate::messages::Key::NoteCheckoutDone, self.locale()).to_owned());
                 effect
             }
+            Reply::MergeReview { lines, .. } => {
+                // No approval surface yet: the review is shown, and the ticket
+                // stays with the backend until 0.2.0 wires the merge form.
+                self.notice = Some(lines.join(" "));
+                Effect::Nothing
+            }
+            Reply::MergeApplied { lines, snapshot } => {
+                let effect = self.reply(Reply::Full(snapshot));
+                self.notice = Some(lines.join(" "));
+                effect
+            }
             Reply::RemoteReview { ticket, lines } => {
                 if let Some(panel) = self.remotes.as_mut() {
                     panel.working = false;

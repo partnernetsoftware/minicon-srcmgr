@@ -155,7 +155,7 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 | Case | Required outcome | State |
 |---|---|---|
 | C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[-]` preview answers all four outcomes from Git in `srcmgr-git::integrate`, with five fixture tests; the window entry, the review text and the apply ticket are not built |
-| C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[-]` `apply_merge` revalidates HEAD and the target, runs one `git merge --no-edit`, and reports a conflict stop from Git's own state; three fixture tests cover fast-forward, conflict stop and a stale preview. No ticket or window action yet |
+| C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[-]` `apply_merge` revalidates HEAD and the target, runs one `git merge --no-edit`, and reports a conflict stop from Git's own state; three fixture tests cover fast-forward, conflict stop and a stale preview. The backend now issues a one-use ticket bound to the preview; no window action yet |
 | C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[_]` |
 | C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[_]` |
 | C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[_]` |
@@ -278,3 +278,30 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
   tests plus the integration targets) and clippy is clean.
 - **Open.** Still the Git layer: no ticket, no window action and no review text.
   C2 stays `[-]` until `Workspace::key` drives an approved merge end to end.
+
+### 2026-11-25 · merge behind a ticket and catalogued review lines
+
+- **Built.** `Job::PreviewMerge(target)` asks the Git layer for the effect and
+  returns `Reply::MergeReview { ticket, lines }`; `Job::ApplyMerge(ticket)` merges
+  the exact preview the ticket was issued for and returns `MergeApplied { lines,
+  snapshot }`. The nine review and result lines live in the catalogue in both
+  languages, with the branch, the short OIDs, the commit count and the paths
+  substituted at the call site.
+- **A defect the order of the test exposed.** The first version took the pending
+  review out of the backend before comparing the ticket, so one wrong ticket
+  destroyed a still-valid review. The handler now reads the pending entry,
+  refuses without consuming it, and only takes it once the ticket matches and
+  has not expired.
+- **The same defect exists in the checkout handler**, which still does
+  `self.checkout.take()` before comparing. It is recorded here rather than fixed
+  inside a merge round; the fix is one line and belongs to the next touch of that
+  code.
+- **Evidence.** One backend test drives a real repository: a fast-forward review
+  names itself and leaves the worktree untouched, a wrong ticket is refused with
+  the expired message and still leaves the file absent, and the right ticket
+  merges and reports `Merged` with no operation left behind. `cargo test -p
+  srcmgr-ui -p srcmgr-cli` passes (the one tool-launch case needs the harmless
+  `GIT_CONFIG_COUNT=0` the case itself names), and workspace clippy is clean.
+- **Open.** No window key sends `PreviewMerge` yet, so the review is reachable from
+  the backend and from tests only; the merge form, its keys and the approval are
+  the next round.

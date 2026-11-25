@@ -205,6 +205,9 @@ enforced in code or a fixture today.
   --name-only` it still appends its informational records to the same
   NUL-separated stream; `--no-messages` is what makes the output parsable, and the
   first field is the written tree OID, not a path.
+- **A refused ticket must not consume the review.** Read the pending entry,
+  compare the ticket, refuse without taking it, and take it only on a match.
+  `take()` before the comparison burns a valid review on one mistyped approval.
 - **A non-zero merge is not always a conflict.** `git merge` exits 1 both when it
   stops on conflicts and when it refuses; the only reliable difference is whether
   Git left merge state (`MERGE_HEAD` or unmerged entries). Read the state after

@@ -220,6 +220,15 @@ catalog! {
     CloneFailedTitle => "Clone failed", "克隆失败";
     CloneTargetLine => "Target: {destination}", "目标：{destination}";
     NoteCheckoutExpired => "The checkout review expired or was already used; review it again.", "检出复核已过期或已被使用；请重新复核。";
+    NoteMergeExpired => "The merge review expired or was already used; review the target again.", "合并复核已过期或已被使用；请重新复核目标。";
+    NoteMergeDone => "Merged {target} into {branch}; the branch now points at {after}.", "已将 {target} 合并到 {branch}；分支现指向 {after}。";
+    NoteMergeStopped => "The merge stopped on {count} conflicted path(s); HEAD did not move. Resolve them before committing.", "合并停在 {count} 个冲突路径上；HEAD 未移动。提交前请先解决。";
+    MergeReviewUpToDate => "Nothing to merge: {target} is already in this branch.", "无需合并：{target} 已在此分支中。";
+    MergeReviewFastForward => "Fast-forward: {branch} moves from {current} to {target} over {commits} commit(s); no merge commit is created.", "快进：{branch} 从 {current} 前移到 {target}，共 {commits} 次提交；不会创建合并提交。";
+    MergeReviewMerge => "Real merge: {commits} commit(s) from {target} become one new merge commit on {branch}.", "真实合并：来自 {target} 的 {commits} 次提交将在 {branch} 上形成一个新的合并提交。";
+    MergeReviewConflicts => "Conflicts: {count} path(s) would conflict — {paths}.", "冲突：{count} 个路径将发生冲突——{paths}。";
+    MergeReviewDirty => "The worktree already holds changes; Git may refuse to merge over them.", "工作树已有更改；Git 可能拒绝在其上合并。";
+    MergeReviewFooter => "No ref, index or worktree change has been made; approving merges exactly this target.", "尚未改动任何引用、索引或工作树；批准后只合并此目标。";
     NoteRemoteReviewExpired => "The remote review expired or was already used; review the change again.", "远端复核已过期或已被使用；请重新复核该变更。";
     RefuseIgnoreNeedsReview => "Ignore needs a fresh reviewed confirmation", "忽略操作需要一次新的复核确认";
     RefuseCommittedFileScope => "committed file does not belong to the selected comparison", "该已提交文件不属于所选比较";

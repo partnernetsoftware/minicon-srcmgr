@@ -321,6 +321,10 @@ pub enum Job {
     PreviewCheckout,
     /// Writes the reviewed checkout. The ticket is one-use.
     ApplyCheckout(String),
+    /// Describes what merging this target would do, without merging.
+    PreviewMerge(String),
+    /// Merges the reviewed target. The ticket is one-use.
+    ApplyMerge(String),
     /// Validates one remote edit and returns the exact local effect. Nothing is
     /// written and no server is contacted.
     PreviewRemoteEdit(RemoteEdit),
@@ -446,6 +450,17 @@ pub enum Reply {
     /// The reviewed checkout wrote its files; the snapshot reflects the new
     /// worktree.
     CheckoutDone(Snapshot),
+    /// A reviewed merge, waiting for approval. Nothing has been merged.
+    MergeReview {
+        ticket: String,
+        lines: Vec<String>,
+    },
+    /// The merge ran. `lines` says whether the branch moved or stopped on
+    /// conflicts; the snapshot reflects whatever Git actually did.
+    MergeApplied {
+        lines: Vec<String>,
+        snapshot: Snapshot,
+    },
     RemoteReview {
         ticket: String,
         lines: Vec<String>,
