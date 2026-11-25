@@ -201,6 +201,17 @@ enforced in code or a fixture today.
 - **Run identifiers exceed Int32.** Anything converting `GITHUB_RUN_ID` must read
   it as Int64 or it throws before the first file is signed.
 
+- **`merge-tree` mixes paths with prose unless told not to.** With `-z
+  --name-only` it still appends its informational records to the same
+  NUL-separated stream; `--no-messages` is what makes the output parsable, and the
+  first field is the written tree OID, not a path.
+- **A non-zero exit can be data.** `runner::run` turns any non-zero code into an
+  error and drops stdout, so a preview that reads Git's own verdict (`merge-tree`
+  exits 1 when paths conflict) needs `run_allowing_failure`; do not widen `run`.
+- **The host Git can be below the product floor.** This machine ships 2.42 against
+  a 2.43 floor, so every fixture test fails with `UnsupportedVersion` and looks
+  like a code defect. Point `SRCMGR_TEST_GIT` at a newer binary for fixtures; never
+  lower the floor to get a green run.
 - **A new capability class moves the minor number.** 0.1.1-0.1.3 closed promised gaps and kept the minor; merge and rebase write an integration commit the product never wrote before, so they opened 0.2.0. Gap closure and new reach are different claims and get different numbers.
 - **A beta is declared, not inferred.** The tag and the release page say
   `0.1.3-beta` and name the unrun courts; a green suite cannot promote a build to

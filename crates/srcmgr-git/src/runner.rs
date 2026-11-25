@@ -108,6 +108,9 @@ impl Limits {
 #[derive(Debug, Eq, PartialEq)]
 pub struct Output {
     pub stdout: Vec<u8>,
+    /// The exit code Git reported. Zero for every ordinary call; a preview that
+    /// reads a non-zero exit as data asks for it explicitly.
+    pub code: i32,
 }
 
 /// Runs `executable` with `arguments` and returns its stdout on exit code 0.
@@ -127,7 +130,7 @@ pub(crate) fn run<S: AsRef<OsStr>>(
         current_dir,
         arguments,
         limits,
-        RunOptions { text: input, bytes: None, cancel: None, sink: None },
+        RunOptions { text: input, bytes: None, cancel: None, sink: None, accept_failure: false },
     )
 }
 
@@ -150,7 +153,7 @@ pub(crate) fn run_network<S: AsRef<OsStr>>(
         current_dir,
         arguments,
         Limits::NETWORK,
-        RunOptions { text: None, bytes: None, cancel: Some(cancel), sink },
+        RunOptions { text: None, bytes: None, cancel: Some(cancel), sink, accept_failure: false },
     )
 }
 
@@ -164,7 +167,27 @@ pub(crate) fn run_bytes<S: AsRef<OsStr>>(
         current_dir,
         arguments,
         limits,
-        RunOptions { text: None, bytes: Some(input), cancel: None, sink: None },
+        RunOptions { text: None, bytes: Some(input), cancel: None, sink: None, accept_failure: false },
+    )
+}
+
+/// Runs a command whose non-zero exit is data rather than failure.
+///
+/// Only previews that read Git's own verdict use this: \`merge-tree\` exits 1 to
+/// report conflicts, and the conflicted paths are on stdout. Spawn, timeout,
+/// output-limit and signal failures stay typed errors.
+pub(crate) fn run_allowing_failure<S: AsRef<OsStr>>(
+    executable: &Path,
+    current_dir: Option<&Path>,
+    arguments: &[S],
+    limits: Limits,
+) -> Result<Output, GitError> {
+    run_input(
+        executable,
+        current_dir,
+        arguments,
+        limits,
+        RunOptions { text: None, bytes: None, cancel: None, sink: None, accept_failure: true },
     )
 }
 
@@ -174,6 +197,7 @@ struct RunOptions<'a> {
     bytes: Option<&'a [u8]>,
     cancel: Option<&'a AtomicBool>,
     sink: Option<&'a ProgressSink>,
+    accept_failure: bool,
 }
 
 fn run_input<S: AsRef<OsStr>>(
@@ -248,7 +272,11 @@ fn run_input<S: AsRef<OsStr>>(
         return Err(GitError::OutputLimit);
     }
     match exit {
-        Some(ProcessExit::Code(0)) => {if let Some(result)=input_result {result.map_err(GitError::Io)?;}Ok(Output { stdout })},
+        Some(ProcessExit::Code(0)) => {if let Some(result)=input_result {result.map_err(GitError::Io)?;}Ok(Output { stdout, code: 0 })},
+        Some(ProcessExit::Code(code)) if options.accept_failure => {
+            if let Some(result) = input_result { result.map_err(GitError::Io)?; }
+            Ok(Output { stdout, code })
+        }
         Some(ProcessExit::Code(code)) => Err(GitError::Exit { code, detail: first_error_line(&stderr) }),
         _ => Err(GitError::Terminated),
     }

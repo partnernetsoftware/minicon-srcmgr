@@ -154,7 +154,7 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 
 | Case | Required outcome | State |
 |---|---|---|
-| C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[_]` |
+| C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[-]` preview answers all four outcomes from Git in `srcmgr-git::integrate`, with five fixture tests; the window entry, the review text and the apply ticket are not built |
 | C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[_]` |
 | C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[_]` |
 | C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[_]` |
@@ -220,4 +220,37 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
 
 ## Execution record
 
-No round has run. The first round starts at P0 and records itself here.
+### 2026-11-25 · merge preview at the Git layer
+
+- **Built.** `crates/srcmgr-git/src/integrate.rs`: `MergePreview`, `MergeOutcome` and
+  `preview_merge` resolve a target to a commit, compute the merge base, classify
+  the outcome as up to date, fast-forward, real merge or conflicts, list the
+  conflicting paths and report whether the worktree already holds changes. The
+  target is refused before Git runs when it is empty, option-like, padded or
+  carries a control character. `GitError::IntegrationTarget` carries that refusal.
+- **A runner change the preview forced.** `runner::run` turns any non-zero exit
+  into an error and drops stdout, but `merge-tree` exits 1 to report conflicts and
+  prints the paths on stdout. `run_allowing_failure` returns the code beside the
+  bytes, so a preview reads Git's verdict instead of misreporting it as failure.
+  `Output` gained `code`, zero for every ordinary call.
+- **A defect the first failing test exposed.** `merge-tree --write-tree --name-only
+  -z` appends Git's informational records ("Auto-merging", "CONFLICT (content)")
+  to the same NUL-separated stream, so naive parsing returned nine "paths" for one
+  conflicted file. `--no-messages` removes them; the first field is the written
+  tree OID and is skipped.
+- **A limit stated rather than hidden.** Predicting a conflict writes
+  unreferenced objects into the object database. Refs, index, worktree and merge
+  state are untouched, and the test asserts the last three, but the preview is not
+  byte-for-byte read-only and the module says so.
+- **Evidence.** Five fixture tests on a real Git: up to date, fast-forward with
+  HEAD unmoved and no `MERGE_HEAD`, a real merge on disjoint paths with a clean
+  worktree, a conflict naming exactly `a.txt` with no merge started, and four
+  refused targets. `cargo test -p srcmgr-git` passes (45 library tests plus the
+  integration targets), and clippy is clean.
+- **Environment.** The host Git is 2.42, below the 2.43 product floor, so every
+  fixture test fails with `UnsupportedVersion` before it reaches the code under
+  test. A MinGit 2.47.1 binary was fetched and `SRCMGR_TEST_GIT` pointed at it; the
+  product floor was not lowered to get a green run.
+- **Open.** Preview only: no apply, no window surface, no review text and no
+  ticket. C1 stays `[-]` until a `Workspace::key` case drives a reviewed merge end to
+  end.

@@ -1,0 +1,346 @@
+//! Reviewed merge previews (PRD 08 conflict center, PRD 06 references).
+//!
+//! A preview answers one question without changing what the user can see:
+//! what would merging this target into the current branch do right now? It
+//! resolves the target to a commit, compares it with HEAD and asks Git's own
+//! merge machinery which paths would conflict.
+//!
+//! Predicting a conflict with \u0060merge-tree --write-tree\u0060 writes unreferenced
+//! objects into the object database. That is the one side effect a preview has,
+//! so it is stated here and in the preview's own documentation instead of being
+//! hidden: refs, the index and the worktree are untouched, and no merge state
+//! file is created.
+
+use crate::error::GitError;
+use crate::installation::GitInstallation;
+use crate::repository::RepositoryIdentity;
+use crate::runner::{self, Limits};
+
+/// What merging one target into the current branch would do.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MergeOutcome {
+    /// The target is already reachable from HEAD; nothing would move.
+    UpToDate,
+    /// HEAD is an ancestor of the target: the branch moves without a commit.
+    FastForward,
+    /// Both sides advanced and a merge commit would be created.
+    RealMerge,
+    /// Both sides advanced and at least one path would conflict.
+    Conflicts,
+}
+
+/// The reviewed effect of merging a target into the current branch.
+///
+/// The preview never merges, never writes the index and never creates merge
+/// state; \u0060git merge\u0060 runs only after the caller approves these values.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MergePreview {
+    pub outcome: MergeOutcome,
+    /// The branch the merge would move.
+    pub branch: String,
+    /// HEAD as it is now.
+    pub current: String,
+    /// The commit the target resolves to.
+    pub target: String,
+    /// The best common ancestor the two commits share.
+    pub base: String,
+    /// Commits the target adds on top of the base.
+    pub commits: usize,
+    /// Paths Git reports as conflicting; empty unless \u0060outcome\u0060 is \u0060Conflicts\u0060.
+    pub conflicted: Vec<String>,
+    /// Whether the worktree or index already holds changes beside the merge.
+    pub worktree_dirty: bool,
+}
+
+/// Rejects a target that could change what Git runs.
+fn checked_target(target: &str) -> Result<&str, GitError> {
+    if target.is_empty()
+        || target.starts_with('-')
+        || target.chars().any(char::is_control)
+        || target.trim() != target
+    {
+        return Err(GitError::IntegrationTarget(
+            "the merge target is empty, option-like, padded or contains a control character",
+        ));
+    }
+    Ok(target)
+}
+
+fn read_line(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    arguments: &[&str],
+) -> Result<String, GitError> {
+    let output = runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        arguments,
+        None,
+        Limits::METADATA,
+    )?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// Reads the working tree's dirtiness as a yes/no, without reading its content.
+fn worktree_dirty(git: &GitInstallation, repo: &RepositoryIdentity) -> Result<bool, GitError> {
+    let output = runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["status", "--porcelain=v1", "-z"],
+        None,
+        Limits::STATUS,
+    )?;
+    Ok(!output.stdout.is_empty())
+}
+
+/// Splits \u0060merge-tree -z\u0060 output into its tree id and the conflicted paths.
+fn conflicted_paths(stdout: &[u8]) -> Vec<String> {
+    let mut fields: Vec<&[u8]> = stdout.split(|byte| *byte == 0).collect();
+    if fields.first().is_some_and(|field| field.is_empty()) {
+        fields.remove(0);
+    }
+    // The first field is the written tree OID, not a path.
+    fields
+        .into_iter()
+        .skip(1)
+        .filter(|field| !field.is_empty())
+        .map(|field| String::from_utf8_lossy(field).into_owned())
+        .collect()
+}
+
+/// Previews merging \u0060target\u0060 into the current branch.
+///
+/// A detached HEAD is refused because there is no branch for Git to move; the
+/// caller merges only a branch. Unrelated histories are refused by name rather
+/// than reported as Git's exit code.
+pub fn preview_merge(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    target: &str,
+) -> Result<MergePreview, GitError> {
+    let target = checked_target(target)?;
+
+    let branch = read_line(git, repo, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if branch == "HEAD" {
+        return Err(GitError::DetachedHead);
+    }
+    let current = read_line(git, repo, &["rev-parse", "HEAD"])?;
+    let target_oid = read_line(
+        git,
+        repo,
+        &["rev-parse", "--verify", &format!("{target}^{{commit}}")],
+    )?;
+
+    let base = match runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["merge-base", "HEAD", &target_oid],
+        None,
+        Limits::METADATA,
+    ) {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        Err(GitError::Exit { .. }) => {
+            return Err(GitError::IntegrationTarget(
+                "the two histories share no commit, so there is no merge base",
+            ))
+        }
+        Err(other) => return Err(other),
+    };
+
+    let commits = if base == target_oid {
+        0
+    } else {
+        read_line(
+            git,
+            repo,
+            &["rev-list", "--count", &format!("{base}..{target_oid}")],
+        )?
+        .parse::<usize>()
+        .map_err(|_| GitError::MalformedOutput { record: 0 })?
+    };
+
+    let (outcome, conflicted) = if base == target_oid {
+        (MergeOutcome::UpToDate, Vec::new())
+    } else if base == current {
+        (MergeOutcome::FastForward, Vec::new())
+    } else {
+        let output = runner::run_allowing_failure(
+            git.executable(),
+            Some(&repo.worktree_root),
+            &[
+                "merge-tree",
+                "--write-tree",
+                "--name-only",
+                "--no-messages",
+                "-z",
+                "HEAD",
+                &target_oid,
+            ],
+            Limits::STATUS,
+        )?;
+        let paths = conflicted_paths(&output.stdout);
+        if output.code == 0 {
+            (MergeOutcome::RealMerge, Vec::new())
+        } else {
+            (MergeOutcome::Conflicts, paths)
+        }
+    };
+
+    Ok(MergePreview {
+        outcome,
+        branch,
+        current,
+        target: target_oid,
+        base,
+        commits,
+        conflicted,
+        worktree_dirty: worktree_dirty(git, repo)?,
+    })
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    fn git() -> PathBuf {
+        std::env::var_os("SRCMGR_TEST_GIT").map_or_else(|| PathBuf::from("git"), PathBuf::from)
+    }
+
+    fn fixture(name: &str) -> PathBuf {
+        let base = {
+            #[cfg(unix)]
+            {
+                std::fs::canonicalize(std::env::temp_dir()).unwrap()
+            }
+            #[cfg(windows)]
+            {
+                std::env::temp_dir()
+            }
+        };
+        let root = base.join(format!("srcmgr-integrate-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn run(dir: &Path, args: &[&str]) {
+        let output = Command::new(git()).current_dir(dir).args(args).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    fn commit(dir: &Path, message: &str) {
+        run(dir, &["add", "-A"]);
+        run(dir, &["commit", "-q", "-m", message]);
+    }
+
+    /// A repository with one commit on `main` holding `a.txt`.
+    fn base(name: &str) -> (PathBuf, GitInstallation) {
+        let root = fixture(name);
+        run(&root, &["init", "-q", "-b", "main"]);
+        run(&root, &["config", "user.name", "Fixture"]);
+        run(&root, &["config", "user.email", "fixture@example.invalid"]);
+        std::fs::write(root.join("a.txt"), "one\n").unwrap();
+        commit(&root, "one");
+        (root, GitInstallation::probe(git()).unwrap())
+    }
+
+    fn identity(root: &Path, installation: &GitInstallation) -> RepositoryIdentity {
+        crate::repository::locate(installation, root).unwrap()
+    }
+
+    fn head(root: &Path) -> String {
+        let output = Command::new(git()).current_dir(root).args(["rev-parse", "HEAD"]).output().unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    /// A feature branch with one extra commit the base does not have.
+    fn feature(root: &Path) -> GitInstallation {
+        run(root, &["switch", "-q", "-c", "feature"]);
+        std::fs::write(root.join("b.txt"), "two\n").unwrap();
+        commit(root, "two");
+        run(root, &["switch", "-q", "main"]);
+        GitInstallation::probe(git()).unwrap()
+    }
+
+    #[test]
+    fn a_target_already_in_head_moves_nothing() {
+        let (root, installation) = base("uptodate");
+        let repo = identity(&root, &installation);
+        let preview = preview_merge(&installation, &repo, "main").unwrap();
+        assert_eq!(preview.outcome, MergeOutcome::UpToDate);
+        assert_eq!(preview.commits, 0);
+        assert_eq!(preview.current, preview.target);
+        assert!(!preview.worktree_dirty);
+    }
+
+    #[test]
+    fn a_feature_ahead_of_main_is_a_fast_forward_and_head_does_not_move() {
+        let (root, _) = base("ff");
+        let installation = feature(&root);
+        let repo = identity(&root, &installation);
+        let before = head(&root);
+        let preview = preview_merge(&installation, &repo, "feature").unwrap();
+        assert_eq!(preview.outcome, MergeOutcome::FastForward);
+        assert_eq!(preview.branch, "main");
+        assert_eq!(preview.commits, 1);
+        assert!(preview.conflicted.is_empty());
+        assert_eq!(preview.current, before);
+        assert_eq!(head(&root), before, "a preview must not move the branch");
+        assert!(!root.join(".git/MERGE_HEAD").exists(), "a preview must not start a merge");
+    }
+
+    #[test]
+    fn both_sides_moving_on_different_paths_is_a_real_merge() {
+        let (root, _) = base("merge");
+        let installation = feature(&root);
+        std::fs::write(root.join("a.txt"), "one\nmain\n").unwrap();
+        commit(&root, "main edit");
+        let repo = identity(&root, &installation);
+        let before = head(&root);
+        let preview = preview_merge(&installation, &repo, "feature").unwrap();
+        assert_eq!(preview.outcome, MergeOutcome::RealMerge);
+        assert_eq!(preview.commits, 1);
+        assert!(preview.conflicted.is_empty());
+        assert!(!preview.worktree_dirty);
+        assert_eq!(head(&root), before);
+    }
+
+    #[test]
+    fn both_sides_editing_one_path_names_the_path_without_starting_a_merge() {
+        let (root, _) = base("conflict");
+        let installation = feature(&root);
+        std::fs::write(root.join("a.txt"), "one\nmain\n").unwrap();
+        commit(&root, "main edit");
+        run(&root, &["switch", "-q", "feature"]);
+        std::fs::write(root.join("a.txt"), "one\nfeature\n").unwrap();
+        commit(&root, "feature edit");
+        run(&root, &["switch", "-q", "main"]);
+        let repo = identity(&root, &installation);
+        let preview = preview_merge(&installation, &repo, "feature").unwrap();
+        assert_eq!(preview.outcome, MergeOutcome::Conflicts);
+        assert_eq!(preview.conflicted, vec!["a.txt".to_owned()]);
+        assert!(!root.join(".git/MERGE_HEAD").exists());
+        let status = Command::new(git())
+            .current_dir(&root)
+            .args(["status", "--porcelain=v1", "-z"])
+            .output()
+            .unwrap();
+        assert!(status.stdout.is_empty(), "a preview must not dirty the worktree");
+    }
+
+    #[test]
+    fn an_option_like_or_padded_target_is_refused_before_git_runs() {
+        let (root, installation) = base("target");
+        let repo = identity(&root, &installation);
+        for target in ["--force", "", " main", "main\t"] {
+            assert!(
+                matches!(
+                    preview_merge(&installation, &repo, target),
+                    Err(GitError::IntegrationTarget(_))
+                ),
+                "{target:?}"
+            );
+        }
+    }
+}
