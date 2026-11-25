@@ -1718,6 +1718,21 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
         return;
     }
+    if let Some(center) = workspace.conflict_center() {
+        let title = workspace.t(TextKey::PanelConflictsTitle).to_owned();
+        frame(draws, rect, grid, true, &title);
+        let body = locate_info(rect, grid);
+        let mut lines = Vec::new();
+        for (index, row) in center.rows.iter().enumerate() {
+            let marker = if index == center.selected { ">" } else { " " };
+            let kind = if row.binary { " · binary" } else { "" };
+            lines.push(format!("{marker} {}  [{}]{kind}", row.path, row.class));
+        }
+        lines.push(String::new());
+        lines.extend(center.detail.iter().cloned());
+        text_panel(draws, body, grid, true, &title, &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        return;
+    }
     if let Some((_, lines)) = workspace.abort_review() {
         let (apply, cancel) = trust_buttons(rect, grid);
         let body = trust_content(rect, grid).0;
@@ -2243,6 +2258,9 @@ fn hints(workspace: &Workspace) -> String {
     }
     if workspace.checkout_review().is_some() {
         return workspace.t(TextKey::HintCheckoutReview).into();
+    }
+    if workspace.conflict_center().is_some() {
+        return workspace.t(TextKey::HintConflicts).into();
     }
     if workspace.abort_review().is_some() {
         return workspace.t(TextKey::HintAbortReview).into();

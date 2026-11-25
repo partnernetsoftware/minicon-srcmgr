@@ -60,6 +60,33 @@ fn fill(template: &str, pairs: &[(&str, String)]) -> String {
         .fold(template.to_owned(), |text, (name, value)| text.replace(name, value))
 }
 
+/// One conflict side's displayed text, bounded, with the flags it sets.
+fn conflict_side(
+    git: &srcmgr_git::GitInstallation,
+    repo: &srcmgr_git::RepositoryIdentity,
+    side: &Option<srcmgr_git::ConflictSide>,
+    binary: &mut bool,
+    truncated: &mut bool,
+) -> Option<String> {
+    const LIMIT: usize = 4000;
+    let side = side.as_ref()?;
+    match srcmgr_git::side_text(git, repo, &side.oid) {
+        Ok(Some(text)) => {
+            if text.chars().count() > LIMIT {
+                *truncated = true;
+                Some(text.chars().take(LIMIT).collect())
+            } else {
+                Some(text)
+            }
+        }
+        Ok(None) => {
+            *binary = true;
+            None
+        }
+        Err(_) => None,
+    }
+}
+
 /// A short object id for a review line; the full id stays in the preview.
 fn short(oid: &str) -> String {
     oid.chars().take(12).collect()
@@ -570,6 +597,37 @@ impl WindowBackend {
                     ],
                 )];
                 Reply::ContinueApplied { lines, snapshot: self.snapshot()? }
+            }
+            Job::LoadConflicts => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let entries = srcmgr_git::read_conflicts(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())?;
+                let mut rows = Vec::new();
+                for entry in entries {
+                    let class = match entry.class {
+                        srcmgr_git::ConflictClass::Content => "content",
+                        srcmgr_git::ConflictClass::AddAdd => "add/add",
+                        srcmgr_git::ConflictClass::DeleteModify => "delete/modify",
+                        srcmgr_git::ConflictClass::Symlink => "symlink",
+                        srcmgr_git::ConflictClass::Submodule => "submodule",
+                        srcmgr_git::ConflictClass::Unclassified => "unclassified",
+                    };
+                    let mut binary = false;
+                    let mut truncated = false;
+                    let base = conflict_side(&session.installation, &session.identity, &entry.base, &mut binary, &mut truncated);
+                    let current = conflict_side(&session.installation, &session.identity, &entry.current, &mut binary, &mut truncated);
+                    let incoming = conflict_side(&session.installation, &session.identity, &entry.incoming, &mut binary, &mut truncated);
+                    rows.push(srcmgr_ui::ConflictRow {
+                        path: entry.path,
+                        class: class.to_owned(),
+                        base,
+                        current,
+                        incoming,
+                        binary,
+                        truncated,
+                    });
+                }
+                Reply::Conflicts(rows)
             }
             Job::PreviewRemoteEdit(edit) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
@@ -2408,5 +2466,49 @@ pub(crate) mod tests {
         assert!(!repo.join(".git/MERGE_HEAD").exists(), "the abort restores the pre-merge state");
         assert_eq!(git_text(&repo, &["rev-parse", "HEAD"]), before);
         assert_eq!(workspace.snapshot().operation, None);
+    }
+
+    #[test]
+    fn the_window_keys_open_the_conflict_center_on_a_real_conflict() {
+        let root = Scratch::new("conflict-keys");
+        let repo = repository(&root.0, "repo");
+        fixture_git(&repo, &["switch", "-q", "-c", "feature"]);
+        fs::write(repo.join("a.txt"), "one\nfeature\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "feature edit"]);
+        fixture_git(&repo, &["switch", "-q", "main"]);
+        fs::write(repo.join("a.txt"), "one\nmain\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "main edit"]);
+        let mut active = backend(&root.0, &repo, true);
+        let Reply::RepositoryOpened(opened) = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(repo.as_os_str()))) else {
+            panic!("open must succeed on a trusted repository");
+        };
+        let mut workspace = srcmgr_ui::Workspace::new(opened);
+
+        let _ = workspace.key(srcmgr_ui::Key::Char('m'));
+        for character in "feature".chars() {
+            let _ = workspace.key(srcmgr_ui::Key::Char(character));
+        }
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Enter) else { panic!("preview") };
+        let _ = workspace.reply(active.run(job));
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('y')) else { panic!("apply") };
+        let _ = workspace.reply(active.run(job));
+        assert!(repo.join(".git/MERGE_HEAD").exists());
+
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('C')) else {
+            panic!("C must load the unmerged entries");
+        };
+        assert!(matches!(job, Job::LoadConflicts));
+        let _ = workspace.reply(active.run(job));
+        let center = workspace.conflict_center().expect("the center must show the conflict");
+        assert_eq!(center.rows.len(), 1);
+        assert_eq!(center.rows[0].path, "a.txt");
+        assert_eq!(center.rows[0].class, "content");
+        assert!(center.rows[0].current.as_deref().is_some_and(|text| text.contains("main")), "{:?}", center.rows[0].current);
+        assert!(center.rows[0].incoming.as_deref().is_some_and(|text| text.contains("feature")), "{:?}", center.rows[0].incoming);
+        assert!(center.detail.iter().any(|line| line.contains("Incoming (stage 3)")), "{:?}", center.detail);
+        assert!(std::fs::read_to_string(repo.join("a.txt")).unwrap().contains("<<<<<<<"));
+        fixture_git(&repo, &["merge", "--abort"]);
     }
 }

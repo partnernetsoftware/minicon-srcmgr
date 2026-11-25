@@ -281,6 +281,22 @@ pub enum MainRequest {
     Commit { id: String },
 }
 
+/// One unmerged path as the conflict center draws it. Side text is already
+/// bounded by the backend, so the interface never holds an unbounded document.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConflictRow {
+    pub path: String,
+    /// The class name Git's own records imply, in Latin letters.
+    pub class: String,
+    pub base: Option<String>,
+    pub current: Option<String>,
+    pub incoming: Option<String>,
+    /// True when at least one side held binary bytes.
+    pub binary: bool,
+    /// True when any side text was cut at the display bound.
+    pub truncated: bool,
+}
+
 /// A unit of Git work requested by the window. Jobs run in order on one
 /// backend thread, so a slow Git call never blocks the window.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -335,6 +351,8 @@ pub enum Job {
     ApplyAbort(String),
     /// Continues the unfinished operation; Git refuses while paths are unmerged.
     ContinueIntegration,
+    /// Reads the unmerged index entries and their side content.
+    LoadConflicts,
     /// Validates one remote edit and returns the exact local effect. Nothing is
     /// written and no server is contacted.
     PreviewRemoteEdit(RemoteEdit),
@@ -496,6 +514,8 @@ pub enum Reply {
         lines: Vec<String>,
         snapshot: Snapshot,
     },
+    /// The unmerged entries, already bounded and classified by the backend.
+    Conflicts(Vec<ConflictRow>),
     RemoteReview {
         ticket: String,
         lines: Vec<String>,

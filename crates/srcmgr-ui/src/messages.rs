@@ -243,6 +243,15 @@ catalog! {
     NoteNoOperation => "Git reports no unfinished operation to continue or abort.", "Git 未报告可继续或中止的未完成操作。";
     HintAbortReview => "y aborts and restores the pre-operation commit · n or Esc keeps the operation", "y 中止并恢复到操作前的提交 · n 或 Esc 保留该操作";
     HintOperation => "{operation} in progress · N continues when resolved · A reviews an abort", "{operation} 进行中 · 解决后 N 继续 · A 复核中止";
+    PanelConflictsTitle => "Conflicts", "冲突";
+    ConflictBaseLabel => "Base (stage 1)", "基线（阶段 1）";
+    ConflictCurrentLabel => "Current (stage 2)", "当前（阶段 2）";
+    ConflictIncomingLabel => "Incoming (stage 3)", "传入（阶段 3）";
+    ConflictBinary => "binary — shown by class only", "二进制——仅按类别说明";
+    ConflictTruncated => "… truncated at the display bound", "…… 已在显示上限处截断";
+    ConflictMissingSide => "(this side has no entry)", "（该侧没有条目）";
+    NoteNoConflicts => "No unmerged path to show.", "没有可显示的未合并路径。";
+    HintConflicts => "C closes · j/k moves · each row names its class and every side the index holds", "C 关闭 · j/k 移动 · 每行给出类别与索引中存在的各侧";
     CloneFailedTitle => "Clone failed", "克隆失败";
     CloneTargetLine => "Target: {destination}", "目标：{destination}";
     NoteCheckoutExpired => "The checkout review expired or was already used; review it again.", "检出复核已过期或已被使用；请重新复核。";

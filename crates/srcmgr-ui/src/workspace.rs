@@ -65,6 +65,62 @@ pub enum Key {
     Text(String),
 }
 
+/// The unmerged paths and the side text of the selected one.
+pub struct ConflictCenter {
+    pub rows: Vec<crate::ConflictRow>,
+    pub selected: usize,
+    /// The lines the panel shows for the selected row, composed here so the
+    /// renderer holds no knowledge of stages.
+    pub detail: Vec<String>,
+    /// The locale the detail labels were composed in.
+    locale: crate::Locale,
+}
+
+impl ConflictCenter {
+    fn new(rows: Vec<crate::ConflictRow>, locale: crate::Locale) -> Self {
+        let mut center = Self { rows, selected: 0, detail: Vec::new(), locale };
+        center.relabel();
+        center
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let last = self.rows.len().saturating_sub(1);
+        let next = (self.selected as isize + delta).clamp(0, last as isize) as usize;
+        if next != self.selected {
+            self.selected = next;
+            self.relabel();
+        }
+    }
+
+    /// Rebuilds the detail lines for the selected row.
+    fn relabel(&mut self) {
+        let Some(row) = self.rows.get(self.selected) else {
+            self.detail.clear();
+            return;
+        };
+        let mut lines = vec![format!("{}  [{}]", row.path, row.class)];
+        for (label, side) in [
+            (crate::messages::Key::ConflictBaseLabel, &row.base),
+            (crate::messages::Key::ConflictCurrentLabel, &row.current),
+            (crate::messages::Key::ConflictIncomingLabel, &row.incoming),
+        ] {
+            lines.push(String::new());
+            lines.push(format!("== {} ==", crate::messages::text(label, self.locale)));
+            match side {
+                Some(text) if row.binary => lines.push(crate::messages::text(crate::messages::Key::ConflictBinary, self.locale).to_owned()),
+                Some(text) => {
+                    lines.push(text.clone());
+                    if row.truncated {
+                        lines.push(crate::messages::text(crate::messages::Key::ConflictTruncated, self.locale).to_owned());
+                    }
+                }
+                None => lines.push(crate::messages::text(crate::messages::Key::ConflictMissingSide, self.locale).to_owned()),
+            }
+        }
+        self.detail = lines;
+    }
+}
+
 /// What the window must do after a key or reply.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Effect {
@@ -257,6 +313,8 @@ pub struct Workspace {
     merge: Option<crate::MergeForm>,
     /// A reviewed abort waiting for approval: ticket and lines.
     abort: Option<(String, Vec<String>)>,
+    /// The conflict center, open while it has rows to show.
+    conflicts: Option<ConflictCenter>,
     tools: Option<crate::ToolForm>,
     navigation_issue: Option<crate::NavigationIssue>,
     filters: [crate::filter::FilterIndex; 3],
@@ -322,6 +380,7 @@ impl Workspace {
             clone: None,
             merge: None,
             abort: None,
+            conflicts: None,
             remotes: None,
             checkout: None,
             tools: None,
@@ -600,6 +659,51 @@ impl Workspace {
             },
             Key::Char('n') | Key::Escape | Key::CtrlC => {
                 self.abort = None;
+                Effect::Nothing
+            }
+            _ => Effect::Nothing,
+        }
+    }
+
+    /// The conflict center, when it is open.
+    pub fn conflict_center(&self) -> Option<&ConflictCenter> {
+        self.conflicts.as_ref()
+    }
+
+    /// Asks the backend for the unmerged entries. Nothing is written.
+    pub fn request_conflicts(&mut self) -> Effect {
+        if self.snapshot.repository.is_none() || self.modal() {
+            return Effect::Nothing;
+        }
+        if self.snapshot.operation.is_none() {
+            self.notice = Some(crate::messages::text(crate::messages::Key::NoteNoConflicts, self.locale()).to_owned());
+            return Effect::Nothing;
+        }
+        Effect::Send(Job::LoadConflicts)
+    }
+
+    /// The center owns the keys while it is open: j/k move, C or Escape closes.
+    pub fn conflict_key(&mut self, key: Key) -> Effect {
+        let Some(center) = self.conflicts.as_mut() else { return Effect::Nothing };
+        match key {
+            Key::Char('C') | Key::Escape | Key::CtrlC => {
+                self.conflicts = None;
+                Effect::Nothing
+            }
+            Key::Down | Key::Char('j') => {
+                center.move_selection(1);
+                Effect::Nothing
+            }
+            Key::Up | Key::Char('k') => {
+                center.move_selection(-1);
+                Effect::Nothing
+            }
+            Key::PageDown | Key::Char('J') => {
+                self.scroll_trust(PAGE_LINES as isize);
+                Effect::Nothing
+            }
+            Key::PageUp | Key::Char('K') => {
+                self.scroll_trust(-(PAGE_LINES as isize));
                 Effect::Nothing
             }
             _ => Effect::Nothing,
@@ -1746,6 +1850,7 @@ impl Workspace {
         if self.clone.is_some() { return self.clone_key(key); }
         if self.merge.is_some() { return self.merge_key(key); }
         if self.abort.is_some() { return self.abort_key(key); }
+        if self.conflicts.is_some() { return self.conflict_key(key); }
         if let Some(form) = self.locate.as_mut() {
             if !form.editor.preedit.is_empty() { return form.edit(key); }
             if key == Key::Escape { return self.cancel_locate(); }
@@ -1947,6 +2052,9 @@ impl Workspace {
             Key::Char('f') if !self.modal() => self.fetch_remote(),
             Key::Char('R') => self.request_remotes(),
             Key::Char('m') if !self.modal() => self.request_merge(),
+            Key::Char('C') if !self.modal() && self.snapshot.operation.is_some() => {
+                self.request_conflicts()
+            }
             Key::Char('A') if !self.modal() && self.snapshot.operation.is_some() => {
                 Effect::Send(Job::PreviewAbort)
             }
@@ -1975,6 +2083,16 @@ impl Workspace {
                 let effect = self.reply(Reply::Full(snapshot));
                 self.notice = Some(crate::messages::text(crate::messages::Key::NoteCheckoutDone, self.locale()).to_owned());
                 effect
+            }
+            Reply::Conflicts(rows) => {
+                self.trust_scroll = 0;
+                self.conflicts = if rows.is_empty() {
+                    self.notice = Some(crate::messages::text(crate::messages::Key::NoteNoConflicts, self.locale()).to_owned());
+                    None
+                } else {
+                    Some(ConflictCenter::new(rows, self.locale()))
+                };
+                Effect::Nothing
             }
             Reply::AbortReview { ticket, lines } => {
                 self.abort = Some((ticket, lines));
@@ -3365,6 +3483,29 @@ mod tests {
         );
         workspace.reply(Reply::RebaseReview { ticket: "r1".into(), lines: vec!["Rebase".into()] });
         assert_eq!(workspace.key(Key::Char('y')), Effect::Send(Job::ApplyRebase("r1".into())));
+    }
+
+    #[test]
+    fn c_opens_the_conflict_center_and_moves_without_writing() {
+        let mut blocked = snapshot(None);
+        blocked.operation = Some("merge".into());
+        blocked.unmerged = vec!["a.txt".into()];
+        let mut workspace = Workspace::new(blocked);
+        assert_eq!(workspace.key(Key::Char('C')), Effect::Send(Job::LoadConflicts));
+        workspace.reply(Reply::Conflicts(vec![
+            crate::ConflictRow { path: "a.txt".into(), class: "content".into(), base: Some("one".into()), current: Some("one\nmain".into()), incoming: Some("one\nfeature".into()), binary: false, truncated: false },
+            crate::ConflictRow { path: "b.bin".into(), class: "add/add".into(), base: None, current: None, incoming: None, binary: true, truncated: false },
+        ]));
+        let center = workspace.conflict_center().expect("the center must open");
+        assert_eq!(center.selected, 0);
+        assert!(center.detail.iter().any(|line| line.contains("Current (stage 2)")), "{:?}", center.detail);
+        assert!(center.detail.iter().any(|line| line.contains("one\nmain") || line.contains("main")));
+        let _ = workspace.key(Key::Char('j'));
+        assert_eq!(workspace.conflict_center().unwrap().selected, 1);
+        let _ = workspace.key(Key::Char('j'));
+        assert_eq!(workspace.conflict_center().unwrap().selected, 1, "the selection clamps");
+        assert_eq!(workspace.key(Key::Char('C')), Effect::Nothing);
+        assert!(workspace.conflict_center().is_none());
     }
 
     #[test]

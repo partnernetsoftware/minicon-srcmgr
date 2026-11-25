@@ -157,7 +157,7 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 | C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[v]` `m` opens the form, Enter asks for the preview, the review names the outcome, the branch, the short OIDs, the commit count or the conflicting paths, and the worktree, index and refs are untouched; five Git-layer tests and one `Workspace::key` path prove it |
 | C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[v]` the ticket is one-use and bound to the preview, `y` merges exactly it, a wrong ticket is refused without consuming the review, and a conflict stop reports the paths with HEAD unmoved; three Git-layer tests plus one end-to-end case from keys through the backend |
 | C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[v]` preview and ticket as before; a conflict stop is followed by `A`, whose review names the operation and `ORIG_HEAD`, and `y` restores the branch and HEAD with the sequencer gone; four Git-layer tests plus the key path |
-| C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[-]` `read_conflicts` reads the index stages and classifies content, add/add, delete/modify, symlink and submodule entries, and `side_text` returns a side's text or refuses binary bytes; six fixture tests. No window surface yet |
+| C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[-]` the center lists every row, names its class and composes base/current/incoming with the role named; binary sides say so instead of showing bytes. Refusing an unsupported class needs the resolution action, which is C5 |
 | C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[_]` |
 | C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[-]` continue and abort are delivered for merge and rebase, with Git's own refusal while a path is unmerged; skip and a restart proof are missing |
 | C7 · qualification | Keyboard-only conflicted merge in both locales; clean-image and five-participant courts run or named | `[_]` |
@@ -393,3 +393,27 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
 - **Open.** Nothing draws this yet. C4 needs the surface: rows, the three panes
   with the stage role named, and the refusal of a class this version cannot
   settle. That surface is also where skip (C6) will live.
+
+### 2026-11-25 · the conflict center, read-only
+
+- **Built.** `C` asks for the unmerged entries; the backend classifies each one,
+  bounds every side to 4000 characters, and returns rows the interface can draw
+  without holding a document. The center lists every path with its class, and
+  the selected row's detail names base, current and incoming by stage role. A
+  binary side says it is binary; a missing side says the index has no entry; a
+  cut side says it was cut.
+- **Locale.** The detail labels are composed in the active language, so a
+  Chinese frame shows 当前（阶段 2）rather than an English label inside a Chinese
+  panel. The first version hard-coded English and was corrected before the
+  commit.
+- **Two defects the compiler caught.** The new structs were inserted above the
+  `#[derive]` line of `Job` and above `Effect`, so each enum lost its derives and
+  the test module stopped compiling. Both were moved; the lesson is that an
+  attribute belongs to the item immediately below it.
+- **Evidence.** One `Workspace::key` case (C loads, rows appear, j clamps at the
+  last row, C closes) and one end-to-end case on a real conflicted merge (`C`
+  returns `a.txt` as `content` with `main` as current and `feature` as incoming,
+  and the worktree still holds the markers because nothing was resolved).
+  Full suite passes and clippy reports no warning.
+- **Open.** No resolution, no mark-resolved, no skip. Reading a conflict is not
+  finishing one, and the ledger says so.

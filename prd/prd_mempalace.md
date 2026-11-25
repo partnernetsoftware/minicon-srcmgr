@@ -153,6 +153,9 @@ enforced in code or a fixture today.
 - **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
   taken.** Show it, or say the time is unavailable; never present ahead/behind as
   live server truth.
+- **An attribute belongs to the item directly below it.** Inserting a struct
+  between `#[derive(...)]` and its enum silently strips the enum's derives and
+  breaks every test that formats it. Insert above the attribute, never between.
 - **A conflict is what the index says, never what the file looks like.** Stage 1
   is the base, 2 current, 3 incoming; `ls-files -u` is the record, and a
   marker-like line may be the user's own text. Classify from the recorded modes
