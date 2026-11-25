@@ -247,6 +247,10 @@ catalog! {
     NoteSkipStill => "Skipped {oid}; the rebase is still running the remaining commits.", "已跳过 {oid}；变基仍在重放其余提交。";
     NoteSkipExpired => "The skip review expired or was already used; review the step again.", "跳过复核已过期或已被使用；请重新复核该步骤。";
     HintSkipReview => "y skips this step · n or Esc keeps it", "y 跳过该步骤 · n 或 Esc 保留";
+    NotePendingJob => "A {action} started earlier and never reported its end. Git may hold a half-applied state: inspect the repository, then press X to accept what is there.", "先前启动的 {action} 没有报告结束。Git 可能处于半完成状态：请检查仓库，然后按 X 接受当前状态。";
+    NoteJournalAcknowledged => "Accepted the current state after {action}.", "已接受 {action} 之后的状态。";
+    NoteNoPendingJob => "No unfinished job record to acknowledge.", "没有可确认的未完成作业记录。";
+    HintPendingJob => "{action} did not finish · X accepts the current state after you inspect it", "{action} 未完成 · 检查后按 X 接受当前状态";
     HintRebaseStopped => "rebase stopped · S reviews a skip · N continues when resolved · A reviews an abort", "变基已停止 · S 复核跳过 · 解决后 N 继续 · A 复核中止";
     HintOperation => "{operation} in progress · N continues when resolved · A reviews an abort", "{operation} 进行中 · 解决后 N 继续 · A 复核中止";
     PanelConflictsTitle => "Conflicts", "冲突";

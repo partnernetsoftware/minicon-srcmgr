@@ -284,6 +284,7 @@ pub fn apply_resolution(
     if chosen.oid != preview.oid {
         return Err(GitError::StaleOperationPreview);
     }
+    crate::journal::begin(git, repo, "resolve")?;
     runner::run(
         git.executable(),
         Some(&repo.worktree_root),
@@ -302,6 +303,7 @@ pub fn apply_resolution(
         None,
         Limits::MUTATION,
     )?;
+    crate::journal::finish(git, repo)?;
     let remaining = read_conflicts(git, repo)?;
     if remaining.iter().any(|entry| entry.path == preview.path) {
         return Err(GitError::ConflictResolution(

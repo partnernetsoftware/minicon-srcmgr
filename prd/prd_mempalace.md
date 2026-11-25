@@ -153,6 +153,10 @@ enforced in code or a fixture today.
 - **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
   taken.** Show it, or say the time is unavailable; never present ahead/behind as
   live server truth.
+- **A job record is written before the command, never after.** If the record
+  cannot be written, the mutation must not run: the window would otherwise make
+  a change it cannot later account for. Clear it on every returning path; leave
+  it only when the command itself failed, which is the case worth inspecting.
 - **`repository()` leaves the fixture dirty on purpose, and tests must absorb it.**
   It ends with a modified `a.txt` and an untracked `u.txt`; a test that branches
   without committing them puts someone else's dirt in its own commit and can

@@ -2288,6 +2288,9 @@ fn hints(workspace: &Workspace) -> String {
     if workspace.abort_review().is_some() {
         return workspace.t(TextKey::HintAbortReview).into();
     }
+    if let Some(action) = workspace.snapshot().pending_job.as_ref() {
+        return workspace.t(TextKey::HintPendingJob).replace("{action}", action);
+    }
     if let Some(operation) = workspace.snapshot().operation.as_ref()
         && workspace.snapshot().unmerged.is_empty()
     {
@@ -2767,6 +2770,7 @@ mod tests {
             ahead: 0,
             behind: 0,
             operation: None,
+            pending_job: None,
             unmerged: Vec::new(),
             divergence: None,
             fetched_at: None,

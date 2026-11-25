@@ -159,7 +159,7 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 | C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[v]` preview and ticket as before; a conflict stop is followed by `A`, whose review names the operation and `ORIG_HEAD`, and `y` restores the branch and HEAD with the sequencer gone; four Git-layer tests plus the key path |
 | C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[v]` the center lists every row with its class and composes base/current/incoming by role; a resolution request for delete/modify, symlink, submodule or unclassified is refused with a named reason before anything is written |
 | C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[-]` whole-side resolution is previewed, ticketed and applied by exact object id, staging only that path; the external merge tool is not built |
-| C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[-]` continue, skip and abort are delivered for merge and rebase, each through Git's own state, and a fresh window reads a running operation from Git; an action interrupted mid-flight is not yet reported as needs-reconciliation, because no job journal exists |
+| C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[v]` continue, skip and abort are delivered; a fresh window reads a running operation from Git; every mutation writes a one-line job record first and clears it only when the command returns, so a record found at open is reported as needs-reconciliation until the user acknowledges it with `X` |
 | C7 · qualification | Keyboard-only conflicted merge in both locales; clean-image and five-participant courts run or named | `[_]` |
 
 ## Selected verification and stopping
@@ -464,3 +464,29 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
 - **Open.** Skip exists; an interrupted action still has no needs-reconciliation
   report, because nothing journals a job that dies mid-flight. That is the last
   clause of C6, and it needs a durable job record rather than another key.
+
+### 2026-11-25 · a record of the job that never came back
+
+- **Built.** `crates/srcmgr-git/src/journal.rs` writes a one-line record beside
+  the repository's common directory before a mutation and removes it when the
+  command returns. `begin` refuses an action name that is not a short lowercase
+  label, and its failure is a refusal to act: nothing is written without a
+  record, so a crash cannot leave an unexplained change.
+- **Where it is wired.** Merge, rebase, abort, continue, skip and conflict
+  resolution each begin a record, finish it on every path that returns, and
+  leave it only when the command itself failed — which is exactly the state that
+  deserves a second look. A conflict stop counts as finished: Git's own state
+  explains it.
+- **In the window.** The snapshot carries the leftover action; the footer names
+  it and says what to do, and `X` acknowledges it after inspection, clearing the
+  record and reloading the snapshot. Acknowledging nothing is refused with its
+  own message instead of being shown as a recovery.
+- **Evidence.** Three Git-layer tests (a pending record reported and
+  acknowledged, a finished job leaving nothing, an unusable action name refused
+  before any file exists) and one end-to-end case that plants the exact record a
+  dead process would leave, opens the repository, sees `merge`, presses `X` and
+  finds the file gone and the snapshot clean. Full suite passes; clippy reports
+  no warning.
+- **What this is not.** The record answers "did a job finish?" It does not
+  snapshot the worktree or promise an undo, and a killed process can still leave
+  Git's own half-applied state. The window says so rather than repairing it.

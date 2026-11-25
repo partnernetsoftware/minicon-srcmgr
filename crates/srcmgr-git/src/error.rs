@@ -38,6 +38,8 @@ pub enum GitError {
     NoOperationInProgress,
     /// A conflict path cannot be resolved by the requested side.
     ConflictResolution(&'static str),
+    /// The durable job record could not be written, read or cleared.
+    Journal(&'static str),
     /// The operation changed after its abort or continue was reviewed.
     StaleOperationPreview,
     /// The clone destination or option is not acceptable.
@@ -114,6 +116,7 @@ impl fmt::Display for GitError {
             Self::OperationInProgress => formatter.write_str("Git already has an unfinished operation; finish or abort it before merging"),
             Self::NoOperationInProgress => formatter.write_str("Git reports no unfinished operation to continue or abort"),
             Self::ConflictResolution(reason) => formatter.write_str(reason),
+            Self::Journal(reason) => formatter.write_str(reason),
             Self::StaleOperationPreview => formatter.write_str("the unfinished operation changed since it was reviewed; review it again"),
             Self::NoUpstream => formatter.write_str("the current branch has no upstream; set one before pulling or pushing"),
             Self::DetachedHead => formatter.write_str("HEAD is detached; switch to a branch before pulling or pushing"),

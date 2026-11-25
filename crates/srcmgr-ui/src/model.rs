@@ -125,6 +125,8 @@ pub struct Snapshot {
     pub behind: u32,
     /// The integration Git is in the middle of, named as Git names it.
     pub operation: Option<String>,
+    /// The action of a job record found at open, if one was left behind.
+    pub pending_job: Option<String>,
     /// Paths the index reports as unmerged.
     pub unmerged: Vec<String>,
     /// The local and fetched tips when both sides advanced, each as
@@ -189,6 +191,7 @@ impl Snapshot {
             ahead: 0,
             behind: 0,
             operation: None,
+            pending_job: None,
             unmerged: Vec::new(),
             divergence: None,
             fetched_at: None,
@@ -208,7 +211,7 @@ impl Snapshot {
             files: Vec::new(), branches: Vec::new(), commits: Vec::new(),
             draft: None, stage_result: None, stashes: Vec::new(),
             upstream: None, ahead: 0, behind: 0,
-            operation: None, unmerged: Vec::new(), divergence: None, fetched_at: None, pending_checkout: None, remotes: Vec::new(),
+            operation: None, pending_job: None, unmerged: Vec::new(), divergence: None, fetched_at: None, pending_checkout: None, remotes: Vec::new(),
         }
     }
 }
@@ -364,6 +367,8 @@ pub enum Job {
     PreviewSkip,
     /// Skips the reviewed step.
     ApplySkip(String),
+    /// Accepts the current repository state after an unfinished job record.
+    AcknowledgeJournal,
     /// Reads the unmerged index entries and their side content.
     LoadConflicts,
     /// Describes taking one side of one unmerged path.
@@ -542,6 +547,11 @@ pub enum Reply {
     /// The skip ran.
     SkipApplied {
         lines: Vec<String>,
+        snapshot: Snapshot,
+    },
+    /// The unfinished job record was acknowledged and cleared.
+    JournalAcknowledged {
+        detail: String,
         snapshot: Snapshot,
     },
     /// The unmerged entries, already bounded and classified by the backend.

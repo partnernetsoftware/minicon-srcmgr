@@ -2106,6 +2106,9 @@ impl Workspace {
             }
             Key::Char('b') if !self.modal() => self.request_rebase(),
             Key::Char('o') if !self.modal() && self.snapshot.pending_checkout.is_some() => Effect::Send(Job::PreviewCheckout),
+            Key::Char('X') if !self.modal() && self.snapshot.pending_job.is_some() => {
+                Effect::Send(Job::AcknowledgeJournal)
+            }
             Key::Char('t') if !self.modal() => self.request_terminal(),
             Key::Char('r') => Effect::Send(Job::Reload),
             _ => Effect::Nothing,
@@ -2151,6 +2154,11 @@ impl Workspace {
                     Some(ConflictCenter::new(rows, self.locale()))
                 };
                 Effect::Nothing
+            }
+            Reply::JournalAcknowledged { detail, snapshot } => {
+                let effect = self.reply(Reply::Full(snapshot));
+                self.notice = Some(detail);
+                effect
             }
             Reply::SkipReview { ticket, lines } => {
                 self.skip = Some((ticket, lines));
@@ -3673,6 +3681,7 @@ mod tests {
             ahead: 0,
             behind: 0,
             operation: None,
+            pending_job: None,
             unmerged: Vec::new(),
             divergence: None,
             fetched_at: None,

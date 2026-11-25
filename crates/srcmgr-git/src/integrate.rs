@@ -242,6 +242,7 @@ pub fn apply_merge(
         return Err(GitError::StaleMergePreview);
     }
 
+    crate::journal::begin(git, repo, "merge")?;
     let output = runner::run_allowing_failure(
         git.executable(),
         Some(&repo.worktree_root),
@@ -251,6 +252,7 @@ pub fn apply_merge(
 
     if output.code == 0 {
         let after = read_line(git, repo, &["rev-parse", "HEAD"])?;
+        crate::journal::finish(git, repo)?;
         return Ok(MergeReport {
             moved: after != preview.current,
             before: preview.current.clone(),
@@ -261,6 +263,7 @@ pub fn apply_merge(
 
     let after = crate::operation_state::detect(git, repo)?;
     if after.operation.is_some() || !after.unmerged.is_empty() {
+        crate::journal::finish(git, repo)?;
         return Ok(MergeReport {
             before: preview.current.clone(),
             after: current,
@@ -268,6 +271,7 @@ pub fn apply_merge(
             moved: false,
         });
     }
+    let _ = crate::journal::finish(git, repo);
     Err(GitError::Exit { code: output.code, detail: output.detail })
 }
 
@@ -381,6 +385,7 @@ pub fn apply_rebase(
         return Err(GitError::StaleMergePreview);
     }
 
+    crate::journal::begin(git, repo, "rebase")?;
     let output = runner::run_allowing_failure(
         git.executable(),
         Some(&repo.worktree_root),
@@ -392,6 +397,7 @@ pub fn apply_rebase(
     let stopped = after_state.operation.is_some() || !after_state.unmerged.is_empty();
     if output.code == 0 && !stopped {
         let after = read_line(git, repo, &["rev-parse", "HEAD"])?;
+        crate::journal::finish(git, repo)?;
         return Ok(RebaseReport {
             moved: after != preview.current,
             before: preview.current.clone(),
@@ -400,6 +406,7 @@ pub fn apply_rebase(
         });
     }
     if stopped {
+        crate::journal::finish(git, repo)?;
         return Ok(RebaseReport {
             before: preview.current.clone(),
             after: read_line(git, repo, &["rev-parse", "HEAD"])?,
@@ -493,6 +500,7 @@ pub fn apply_abort(
     }
     let verb = operation_verb(preview.operation)?;
     let before = read_line(git, repo, &["rev-parse", "HEAD"])?;
+    crate::journal::begin(git, repo, "abort")?;
     runner::run_allowing_failure(
         git.executable(),
         Some(&repo.worktree_root),
@@ -500,6 +508,7 @@ pub fn apply_abort(
         Limits::MUTATION,
     )?;
     let after_state = crate::operation_state::detect(git, repo)?;
+    crate::journal::finish(git, repo)?;
     Ok(AbortReport {
         operation: preview.operation,
         before: before.clone(),
@@ -522,6 +531,7 @@ pub fn continue_operation(
     };
     let verb = operation_verb(operation)?;
     let before = read_line(git, repo, &["rev-parse", "HEAD"])?;
+    crate::journal::begin(git, repo, "continue")?;
     let output = runner::run_allowing_failure(
         git.executable(),
         Some(&repo.worktree_root),
@@ -531,6 +541,7 @@ pub fn continue_operation(
     if output.code != 0 {
         return Err(GitError::Exit { code: output.code, detail: output.detail });
     }
+    crate::journal::finish(git, repo)?;
     Ok(ContinueReport {
         operation,
         before,
@@ -594,6 +605,7 @@ pub fn apply_skip(
     if current.omitting != preview.omitting {
         return Err(GitError::StaleOperationPreview);
     }
+    crate::journal::begin(git, repo, "skip")?;
     let output = runner::run_allowing_failure(
         git.executable(),
         Some(&repo.worktree_root),
@@ -604,6 +616,7 @@ pub fn apply_skip(
         return Err(GitError::Exit { code: output.code, detail: output.detail });
     }
     let after_state = crate::operation_state::detect(git, repo)?;
+    crate::journal::finish(git, repo)?;
     Ok(SkipReport {
         omitting: preview.omitting.clone(),
         after: read_line(git, repo, &["rev-parse", "HEAD"])?,

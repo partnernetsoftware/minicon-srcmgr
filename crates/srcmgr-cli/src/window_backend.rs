@@ -368,6 +368,7 @@ impl WindowBackend {
         // A worktree with no files and a HEAD is a clone that never checked out.
         // The read is metadata-only and short-circuits on a non-empty worktree.
         snapshot.pending_checkout = srcmgr_git::pending_checkout(installation, identity).ok().flatten();
+        snapshot.pending_job = srcmgr_git::pending_job(installation, identity).ok().flatten().map(|job| job.action);
         if let (Some(local), Some(upstream)) = (tracking.local_tip, tracking.upstream_tip) {
             snapshot.divergence = Some((local, upstream));
         }
@@ -757,6 +758,24 @@ impl WindowBackend {
                     ],
                 )];
                 Reply::SkipApplied { lines, snapshot: self.snapshot()? }
+            }
+            Job::AcknowledgeJournal => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let pending = srcmgr_git::pending_job(&session.installation, &session.identity)
+                    .ok()
+                    .flatten();
+                let existed = srcmgr_git::acknowledge_journal(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())?;
+                let detail = if existed {
+                    let action = pending.map_or_else(|| "a job".to_owned(), |job| job.action);
+                    fill(
+                        &self.say(srcmgr_ui::TextKey::NoteJournalAcknowledged),
+                        &[("{action}", action)],
+                    )
+                } else {
+                    self.say(srcmgr_ui::TextKey::NoteNoPendingJob)
+                };
+                Reply::JournalAcknowledged { detail, snapshot: self.snapshot()? }
             }
             Job::PreviewRemoteEdit(edit) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
@@ -2765,5 +2784,27 @@ pub(crate) mod tests {
         assert_eq!(snapshot.operation.as_deref(), Some("merge"));
         assert!(!snapshot.unmerged.is_empty());
         fixture_git(&repo, &["merge", "--abort"]);
+    }
+
+    #[test]
+    fn a_record_from_a_dead_process_is_reported_and_acknowledged() {
+        let root = Scratch::new("journal-window");
+        let repo = repository(&root.0, "repo");
+        // The record is exactly what begin_journal writes before a mutation.
+        fs::write(repo.join(".git").join("srcmgr-job"), "merge 1700000000\n").unwrap();
+        let mut active = backend(&root.0, &repo, true);
+        let Reply::RepositoryOpened(opened) = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(repo.as_os_str()))) else {
+            panic!("open must succeed on a trusted repository");
+        };
+        assert_eq!(opened.pending_job.as_deref(), Some("merge"));
+        let mut workspace = srcmgr_ui::Workspace::new(opened);
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('X')) else {
+            panic!("X must acknowledge the record");
+        };
+        assert!(matches!(job, Job::AcknowledgeJournal));
+        let _ = workspace.reply(active.run(job));
+        assert_eq!(workspace.snapshot().pending_job, None);
+        assert!(workspace.notice().is_some_and(|text| text.contains("merge")), "{:?}", workspace.notice());
+        assert!(!repo.join(".git").join("srcmgr-job").exists());
     }
 }
