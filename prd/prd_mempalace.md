@@ -153,6 +153,14 @@ enforced in code or a fixture today.
 - **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
   taken.** Show it, or say the time is unavailable; never present ahead/behind as
   live server truth.
+- **An abort restores from `ORIG_HEAD`, and only Git can say it worked.** Read
+  `ORIG_HEAD` before offering the review, refuse when it is absent, and after
+  `--abort` re-read the operation state: restored means no sequencer remains, not a
+  zero exit.
+- **A new footer hint must not preempt a stronger one.** The blocked-repository
+  line carries the terminal handoff; an operation hint inserted above it hid the
+  handoff and failed its test. Narrow the new condition instead of reordering by
+  taste.
 - **A letter bound as a cancel key eats the same letter in a field.** `n` closed
   the merge form whenever it was idle, so a target containing `n` could not be
   typed; the test that typed `feature` missed it. Cancel keys are scoped to the

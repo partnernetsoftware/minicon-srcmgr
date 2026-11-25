@@ -235,6 +235,14 @@ catalog! {
     NoteRebaseStopped => "The rebase stopped on {count} conflicted path(s); the branch is mid-replay. Resolve them, then continue or abort.", "变基停在 {count} 个冲突路径上；分支处于重放中。请解决后继续或中止。";
     HintRebaseForm => "b rebase · type the new base · Enter reviews · Esc leaves", "b 变基 · 输入新基点 · Enter 复核 · Esc 离开";
     HintRebaseReview => "y replays exactly this branch · n or Esc cancels · nothing has moved", "y 按此重放分支 · n 或 Esc 取消 · 尚未移动";
+    AbortReviewTitle => "Review abort", "复核中止";
+    AbortReviewLine => "Abort the unfinished {operation}: {branch} returns to {restore}, and Git discards the unmerged result. Edits made by external tools are not restored by Git.", "中止未完成的 {operation}：{branch} 回到 {restore}，Git 丢弃未合并的结果。外部工具做出的修改不会由 Git 恢复。";
+    NoteAbortDone => "Aborted {operation}; {branch} is back at {after}.", "已中止 {operation}；{branch} 回到 {after}。";
+    NoteAbortIncomplete => "Git still reports {operation} in progress after the abort; inspect the repository before another action.", "中止后 Git 仍报告 {operation} 进行中；再次操作前请检查仓库。";
+    NoteContinueDone => "Continued {operation}; HEAD is now {after}.", "已继续 {operation}；HEAD 现为 {after}。";
+    NoteNoOperation => "Git reports no unfinished operation to continue or abort.", "Git 未报告可继续或中止的未完成操作。";
+    HintAbortReview => "y aborts and restores the pre-operation commit · n or Esc keeps the operation", "y 中止并恢复到操作前的提交 · n 或 Esc 保留该操作";
+    HintOperation => "{operation} in progress · N continues when resolved · A reviews an abort", "{operation} 进行中 · 解决后 N 继续 · A 复核中止";
     CloneFailedTitle => "Clone failed", "克隆失败";
     CloneTargetLine => "Target: {destination}", "目标：{destination}";
     NoteCheckoutExpired => "The checkout review expired or was already used; review it again.", "检出复核已过期或已被使用；请重新复核。";

@@ -156,10 +156,10 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 |---|---|---|
 | C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[v]` `m` opens the form, Enter asks for the preview, the review names the outcome, the branch, the short OIDs, the commit count or the conflicting paths, and the worktree, index and refs are untouched; five Git-layer tests and one `Workspace::key` path prove it |
 | C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[v]` the ticket is one-use and bound to the preview, `y` merges exactly it, a wrong ticket is refused without consuming the review, and a conflict stop reports the paths with HEAD unmoved; three Git-layer tests plus one end-to-end case from keys through the backend |
-| C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[-]` preview names the branch, the base and the replay count; `b` runs it under a one-use ticket; a conflict stops the replay with the paths named and the sequencer left for continuation. Abort belongs to C6 and is not built |
+| C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[v]` preview and ticket as before; a conflict stop is followed by `A`, whose review names the operation and `ORIG_HEAD`, and `y` restores the branch and HEAD with the sequencer gone; four Git-layer tests plus the key path |
 | C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[_]` |
 | C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[_]` |
-| C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[_]` |
+| C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[-]` continue and abort are delivered for merge and rebase, with Git's own refusal while a path is unmerged; skip and a restart proof are missing |
 | C7 · qualification | Keyboard-only conflicted merge in both locales; clean-image and five-participant courts run or named | `[_]` |
 
 ## Selected verification and stopping
@@ -348,3 +348,29 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
   `cargo test` for ui, cli and git passes and clippy reports no warning.
 - **Open.** Abort and continue are C6; the conflict center is C4/C5. Rebase cannot
   yet be undone from the window, which is why C3 stays `[-]`.
+
+### 2026-11-25 · continue and abort
+
+- **Built.** `preview_abort` reads the unfinished operation, the branch, HEAD and
+  `ORIG_HEAD`, and refuses when Git records no operation or no `ORIG_HEAD`.
+  `apply_abort` re-checks that the same operation is still in progress, runs Git's own
+  `--abort` and reports `restored` only when no sequencer remains afterwards.
+  `continue_operation` runs `--continue` with a no-op editor and returns Git's own
+  refusal while a path is unmerged.
+- **In the window.** `A` asks for the abort review when the snapshot reports an
+  operation, `y` aborts exactly the reviewed one, `N` continues. The review is drawn
+  as its own panel and the footer names both keys; the blocked-repository hint keeps
+  priority while paths are unmerged, so the terminal handoff never disappears.
+- **A priority defect the suite caught.** The first version put the new operation
+  hint first, which silently replaced the existing "Writes are blocked ... t
+  Terminal here" line and failed its test. The new hint now applies only when no
+  path is unmerged, so the stronger message keeps the screen.
+- **Evidence.** Four Git-layer tests: a merge abort restoring the pre-merge HEAD,
+  a rebase abort restoring the original branch with no sequencer, a continue
+  refused with Git's own line while a path is unmerged, and an abort refused on a
+  clean repository. One end-to-end case drives `m` → `y` (conflict) → `A` → `y` and
+  checks `MERGE_HEAD`, HEAD and the snapshot. The full suite passes and clippy
+  reports no warning.
+- **Open.** Skip is not built, and no test yet proves that a restart re-reads an
+  operation started in the window. C6 stays `[-]` until both exist; the conflict
+  center (C4/C5) is the surface that will host skip.

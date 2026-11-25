@@ -34,6 +34,10 @@ pub enum GitError {
     StaleMergePreview,
     /// Git already has an unfinished operation that a merge would disturb.
     OperationInProgress,
+    /// No merge, rebase or other sequencer operation is in progress.
+    NoOperationInProgress,
+    /// The operation changed after its abort or continue was reviewed.
+    StaleOperationPreview,
     /// The clone destination or option is not acceptable.
     CloneTarget(&'static str),
     /// The current branch has no configured upstream.
@@ -106,6 +110,8 @@ impl fmt::Display for GitError {
             Self::IntegrationTarget(reason) => formatter.write_str(reason),
             Self::StaleMergePreview => formatter.write_str("the repository moved after the merge was reviewed; review it again"),
             Self::OperationInProgress => formatter.write_str("Git already has an unfinished operation; finish or abort it before merging"),
+            Self::NoOperationInProgress => formatter.write_str("Git reports no unfinished operation to continue or abort"),
+            Self::StaleOperationPreview => formatter.write_str("the unfinished operation changed since it was reviewed; review it again"),
             Self::NoUpstream => formatter.write_str("the current branch has no upstream; set one before pulling or pushing"),
             Self::DetachedHead => formatter.write_str("HEAD is detached; switch to a branch before pulling or pushing"),
             Self::OutputLimit => formatter.write_str("Git produced more output than allowed; it was terminated"),

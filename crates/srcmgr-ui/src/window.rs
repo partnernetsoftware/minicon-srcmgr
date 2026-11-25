@@ -1718,6 +1718,14 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
         return;
     }
+    if let Some((_, lines)) = workspace.abort_review() {
+        let (apply, cancel) = trust_buttons(rect, grid);
+        let body = trust_content(rect, grid).0;
+        text_panel(draws, body, grid, true, workspace.t(TextKey::AbortReviewTitle), &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        button_draw(draws, apply, grid, workspace.t(TextKey::PanelReview), BORDER);
+        button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
+        return;
+    }
     if let Some(form) = workspace.merge_form() {
         if let Some((_, lines)) = &form.review {
             let (apply, cancel) = trust_buttons(rect, grid);
@@ -2235,6 +2243,14 @@ fn hints(workspace: &Workspace) -> String {
     }
     if workspace.checkout_review().is_some() {
         return workspace.t(TextKey::HintCheckoutReview).into();
+    }
+    if workspace.abort_review().is_some() {
+        return workspace.t(TextKey::HintAbortReview).into();
+    }
+    if let Some(operation) = workspace.snapshot().operation.as_ref()
+        && workspace.snapshot().unmerged.is_empty()
+    {
+        return workspace.t(TextKey::HintOperation).replace("{operation}", operation);
     }
     if let Some(form) = workspace.merge_form() {
         return if form.working {

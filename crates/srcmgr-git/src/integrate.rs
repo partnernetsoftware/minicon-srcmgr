@@ -410,6 +410,134 @@ pub fn apply_rebase(
     Err(GitError::Exit { code: output.code, detail: output.detail })
 }
 
+/// What an abort would restore, read before anything is undone.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AbortPreview {
+    /// The operation Git reports, which is the one an abort would undo.
+    pub operation: crate::operation_state::Operation,
+    /// The branch the repository is on, when it has one.
+    pub branch: String,
+    /// HEAD while the operation is unfinished.
+    pub head: String,
+    /// The commit the branch is restored to; \u0060ORIG_HEAD\u0060 for both operations.
+    pub restore_to: String,
+    /// Paths still unmerged.
+    pub unmerged: Vec<String>,
+}
+
+/// The actual result of an abort.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AbortReport {
+    pub operation: crate::operation_state::Operation,
+    pub before: String,
+    pub after: String,
+    /// True only when Git no longer reports an unfinished operation afterwards.
+    pub restored: bool,
+}
+
+/// The result of continuing an operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContinueReport {
+    pub operation: crate::operation_state::Operation,
+    pub before: String,
+    pub after: String,
+}
+
+fn operation_verb(operation: crate::operation_state::Operation) -> Result<&'static str, GitError> {
+    match operation {
+        crate::operation_state::Operation::Merge => Ok("merge"),
+        crate::operation_state::Operation::Rebase => Ok("rebase"),
+        _ => Err(GitError::IntegrationTarget(
+            "only a merge or a rebase can be continued or aborted from the window",
+        )),
+    }
+}
+
+/// Describes what aborting the unfinished operation would restore.
+pub fn preview_abort(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+) -> Result<AbortPreview, GitError> {
+    let state = crate::operation_state::detect(git, repo)?;
+    let Some(operation) = state.operation else {
+        return Err(GitError::NoOperationInProgress);
+    };
+    operation_verb(operation)?;
+    let branch = read_line(git, repo, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let head = read_line(git, repo, &["rev-parse", "HEAD"])?;
+    let restore_to = read_line(git, repo, &["rev-parse", "ORIG_HEAD"]).map_err(|_| {
+        GitError::IntegrationTarget("Git recorded no ORIG_HEAD, so the pre-operation commit is unknown")
+    })?;
+    Ok(AbortPreview {
+        operation,
+        branch,
+        head,
+        restore_to,
+        unmerged: state.unmerged,
+    })
+}
+
+/// Aborts the reviewed operation and re-reads the state afterwards.
+///
+/// A failed abort is reported as not restored; it is never called a rollback.
+pub fn apply_abort(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    preview: &AbortPreview,
+) -> Result<AbortReport, GitError> {
+    let state = crate::operation_state::detect(git, repo)?;
+    match state.operation {
+        None => return Err(GitError::NoOperationInProgress),
+        Some(operation) if operation == preview.operation => {}
+        Some(_) => return Err(GitError::StaleOperationPreview),
+    }
+    let verb = operation_verb(preview.operation)?;
+    let before = read_line(git, repo, &["rev-parse", "HEAD"])?;
+    runner::run_allowing_failure(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &[verb, "--abort"],
+        Limits::MUTATION,
+    )?;
+    let after_state = crate::operation_state::detect(git, repo)?;
+    Ok(AbortReport {
+        operation: preview.operation,
+        before: before.clone(),
+        after: read_line(git, repo, &["rev-parse", "HEAD"])?,
+        restored: !after_state.blocks_writes(),
+    })
+}
+
+/// Continues the unfinished operation after its conflicts were resolved.
+///
+/// Git refuses while an unmerged entry remains, and that refusal is returned as
+/// Git's own first error line rather than replaced with a summary.
+pub fn continue_operation(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+) -> Result<ContinueReport, GitError> {
+    let state = crate::operation_state::detect(git, repo)?;
+    let Some(operation) = state.operation else {
+        return Err(GitError::NoOperationInProgress);
+    };
+    let verb = operation_verb(operation)?;
+    let before = read_line(git, repo, &["rev-parse", "HEAD"])?;
+    let output = runner::run_allowing_failure(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["-c", "core.editor=true", verb, "--continue"],
+        Limits::MUTATION,
+    )?;
+    if output.code != 0 {
+        return Err(GitError::Exit { code: output.code, detail: output.detail });
+    }
+    Ok(ContinueReport {
+        operation,
+        before,
+        after: read_line(git, repo, &["rev-parse", "HEAD"])?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -681,6 +809,84 @@ mod tests {
         assert!(matches!(
             apply_rebase(&installation, &repo, &preview),
             Err(GitError::StaleMergePreview)
+        ));
+    }
+
+    /// A repository stopped in a conflicted merge, with its pre-merge HEAD.
+    fn stopped_merge(name: &str) -> (PathBuf, GitInstallation, String) {
+        let (root, _) = base(name);
+        let installation = feature(&root);
+        std::fs::write(root.join("a.txt"), "one\nmain\n").unwrap();
+        commit(&root, "main edit");
+        run(&root, &["switch", "-q", "feature"]);
+        std::fs::write(root.join("a.txt"), "one\nfeature\n").unwrap();
+        commit(&root, "feature edit");
+        run(&root, &["switch", "-q", "main"]);
+        let repo = identity(&root, &installation);
+        let preview = preview_merge(&installation, &repo, "feature").unwrap();
+        let before = head(&root);
+        let report = apply_merge(&installation, &repo, &preview).unwrap();
+        assert_eq!(report.conflicted, vec!["a.txt".to_owned()]);
+        (root, installation, before)
+    }
+
+    #[test]
+    fn aborting_a_reviewed_merge_restores_the_pre_merge_head() {
+        let (root, installation, before) = stopped_merge("abort-merge");
+        let repo = identity(&root, &installation);
+        let preview = preview_abort(&installation, &repo).unwrap();
+        assert_eq!(preview.operation, crate::operation_state::Operation::Merge);
+        assert_eq!(preview.restore_to, before);
+        assert_eq!(preview.unmerged, vec!["a.txt".to_owned()]);
+        let report = apply_abort(&installation, &repo, &preview).unwrap();
+        assert!(report.restored);
+        assert_eq!(report.after, before);
+        assert_eq!(head(&root), before);
+        assert!(!root.join(".git/MERGE_HEAD").exists());
+    }
+
+    #[test]
+    fn aborting_a_stopped_rebase_restores_the_original_branch() {
+        let (root, _) = base("abort-rebase");
+        let _ = feature(&root);
+        std::fs::write(root.join("a.txt"), "one\nmain\n").unwrap();
+        commit(&root, "main edit");
+        run(&root, &["switch", "-q", "feature"]);
+        std::fs::write(root.join("a.txt"), "one\nfeature\n").unwrap();
+        commit(&root, "feature edit");
+        let installation = GitInstallation::probe(git()).unwrap();
+        let repo = identity(&root, &installation);
+        let preview = preview_rebase(&installation, &repo, "main").unwrap();
+        let before = head(&root);
+        let report = apply_rebase(&installation, &repo, &preview).unwrap();
+        assert!(!report.moved);
+
+        let abort = preview_abort(&installation, &repo).unwrap();
+        assert_eq!(abort.operation, crate::operation_state::Operation::Rebase);
+        let done = apply_abort(&installation, &repo, &abort).unwrap();
+        assert!(done.restored);
+        assert_eq!(head(&root), before, "the branch is back where it started");
+        assert!(!root.join(".git/rebase-merge").exists());
+        assert!(!root.join(".git/rebase-apply").exists());
+    }
+
+    #[test]
+    fn continuing_while_a_path_is_unmerged_is_refused_with_gits_own_line() {
+        let (root, installation, before) = stopped_merge("continue-refused");
+        let repo = identity(&root, &installation);
+        let error = continue_operation(&installation, &repo).expect_err("unmerged paths must refuse");
+        assert!(matches!(error, GitError::Exit { .. }), "{error}");
+        assert_eq!(head(&root), before);
+        assert!(root.join(".git/MERGE_HEAD").exists());
+    }
+
+    #[test]
+    fn abort_without_an_unfinished_operation_is_refused() {
+        let (root, installation) = base("abort-clean");
+        let repo = identity(&root, &installation);
+        assert!(matches!(
+            preview_abort(&installation, &repo),
+            Err(GitError::NoOperationInProgress)
         ));
     }
 }

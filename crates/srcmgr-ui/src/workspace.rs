@@ -255,6 +255,8 @@ pub struct Workspace {
     clone: Option<crate::CloneForm>,
     /// The merge form, open only while a repository is loaded.
     merge: Option<crate::MergeForm>,
+    /// A reviewed abort waiting for approval: ticket and lines.
+    abort: Option<(String, Vec<String>)>,
     tools: Option<crate::ToolForm>,
     navigation_issue: Option<crate::NavigationIssue>,
     filters: [crate::filter::FilterIndex; 3],
@@ -319,6 +321,7 @@ impl Workspace {
             locate: None,
             clone: None,
             merge: None,
+            abort: None,
             remotes: None,
             checkout: None,
             tools: None,
@@ -581,6 +584,26 @@ impl Workspace {
         self.merge = Some(crate::MergeForm::new_rebase());
         self.trust_scroll = 0;
         Effect::Nothing
+    }
+
+    /// The reviewed abort, when one is showing. The ticket is one-use.
+    pub fn abort_review(&self) -> Option<&(String, Vec<String>)> {
+        self.abort.as_ref()
+    }
+
+    /// y aborts exactly the reviewed operation; n keeps it.
+    pub fn abort_key(&mut self, key: Key) -> Effect {
+        match key {
+            Key::Char('y') => match self.abort.take() {
+                Some((ticket, _)) => Effect::Send(Job::ApplyAbort(ticket)),
+                None => Effect::Nothing,
+            },
+            Key::Char('n') | Key::Escape | Key::CtrlC => {
+                self.abort = None;
+                Effect::Nothing
+            }
+            _ => Effect::Nothing,
+        }
     }
 
     pub fn merge_form(&self) -> Option<&crate::MergeForm> {
@@ -1722,6 +1745,7 @@ impl Workspace {
         // state. Without this the fields could be drawn but never edited.
         if self.clone.is_some() { return self.clone_key(key); }
         if self.merge.is_some() { return self.merge_key(key); }
+        if self.abort.is_some() { return self.abort_key(key); }
         if let Some(form) = self.locate.as_mut() {
             if !form.editor.preedit.is_empty() { return form.edit(key); }
             if key == Key::Escape { return self.cancel_locate(); }
@@ -1923,6 +1947,12 @@ impl Workspace {
             Key::Char('f') if !self.modal() => self.fetch_remote(),
             Key::Char('R') => self.request_remotes(),
             Key::Char('m') if !self.modal() => self.request_merge(),
+            Key::Char('A') if !self.modal() && self.snapshot.operation.is_some() => {
+                Effect::Send(Job::PreviewAbort)
+            }
+            Key::Char('N') if !self.modal() && self.snapshot.operation.is_some() => {
+                Effect::Send(Job::ContinueIntegration)
+            }
             Key::Char('b') if !self.modal() => self.request_rebase(),
             Key::Char('o') if !self.modal() && self.snapshot.pending_checkout.is_some() => Effect::Send(Job::PreviewCheckout),
             Key::Char('t') if !self.modal() => self.request_terminal(),
@@ -1944,6 +1974,22 @@ impl Workspace {
                 self.checkout = None;
                 let effect = self.reply(Reply::Full(snapshot));
                 self.notice = Some(crate::messages::text(crate::messages::Key::NoteCheckoutDone, self.locale()).to_owned());
+                effect
+            }
+            Reply::AbortReview { ticket, lines } => {
+                self.abort = Some((ticket, lines));
+                self.trust_scroll = 0;
+                Effect::Nothing
+            }
+            Reply::AbortApplied { lines, snapshot } => {
+                self.abort = None;
+                let effect = self.reply(Reply::Full(snapshot));
+                self.notice = Some(lines.join(" "));
+                effect
+            }
+            Reply::ContinueApplied { lines, snapshot } => {
+                let effect = self.reply(Reply::Full(snapshot));
+                self.notice = Some(lines.join(" "));
                 effect
             }
             Reply::MergeReview { ticket, lines } => {

@@ -329,6 +329,12 @@ pub enum Job {
     PreviewRebase(String),
     /// Replays the reviewed branch. The ticket is one-use.
     ApplyRebase(String),
+    /// Describes what aborting the unfinished operation would restore.
+    PreviewAbort,
+    /// Aborts the reviewed operation. The ticket is one-use.
+    ApplyAbort(String),
+    /// Continues the unfinished operation; Git refuses while paths are unmerged.
+    ContinueIntegration,
     /// Validates one remote edit and returns the exact local effect. Nothing is
     /// written and no server is contacted.
     PreviewRemoteEdit(RemoteEdit),
@@ -472,6 +478,21 @@ pub enum Reply {
     },
     /// The rebase ran. `lines` says whether the branch was rewritten or stopped.
     RebaseApplied {
+        lines: Vec<String>,
+        snapshot: Snapshot,
+    },
+    /// An abort waiting for approval, with what it would restore.
+    AbortReview {
+        ticket: String,
+        lines: Vec<String>,
+    },
+    /// The abort ran; `lines` says whether Git still reports the operation.
+    AbortApplied {
+        lines: Vec<String>,
+        snapshot: Snapshot,
+    },
+    /// The continuation ran.
+    ContinueApplied {
         lines: Vec<String>,
         snapshot: Snapshot,
     },

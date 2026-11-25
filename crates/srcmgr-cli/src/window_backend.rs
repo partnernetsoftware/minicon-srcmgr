@@ -27,6 +27,15 @@ pub struct WindowBackend {
     merge: Option<MergePending>,
     /// A reviewed rebase waiting for approval, with the exact preview it showed.
     rebase: Option<RebasePending>,
+    /// A reviewed abort waiting for approval, with the operation it undoes.
+    abort: Option<AbortPending>,
+}
+
+/// An abort whose effect was shown but not approved.
+struct AbortPending {
+    ticket: String,
+    preview: srcmgr_git::AbortPreview,
+    expires: std::time::Instant,
 }
 
 /// A rebase whose effect was shown but not approved.
@@ -247,7 +256,7 @@ impl WindowBackend {
         let worktree = crate::canonical_worktree(path)?;
         let mut selected = options.clone();
         if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
-        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None, merge: None, rebase: None };
+        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None, merge: None, rebase: None, abort: None };
         let mut snapshot = candidate.snapshot()?;
         snapshot.navigation = open_profile_store(options)?.navigation(&NativePath::new(candidate.worktree.as_os_str())).map_err(|e| e.to_string())?
             .map(|record| srcmgr_ui::Navigation::decode(&record)).transpose().map_err(str::to_owned)?;
@@ -497,6 +506,70 @@ impl WindowBackend {
                     )]
                 };
                 Reply::RebaseApplied { lines, snapshot: self.snapshot()? }
+            }
+            Job::PreviewAbort => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let preview = srcmgr_git::preview_abort(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())?;
+                let lines = vec![fill(
+                    &self.say(srcmgr_ui::TextKey::AbortReviewLine),
+                    &[
+                        ("{operation}", preview.operation.name().to_owned()),
+                        ("{branch}", preview.branch.clone()),
+                        ("{restore}", short(&preview.restore_to)),
+                    ],
+                )];
+                let ticket = crate::confirmation::ticket()?;
+                self.abort = Some(AbortPending {
+                    ticket: ticket.clone(),
+                    preview,
+                    expires: std::time::Instant::now() + std::time::Duration::from_secs(300),
+                });
+                Reply::AbortReview { ticket, lines }
+            }
+            Job::ApplyAbort(ticket) => {
+                let refused = match self.abort.as_ref() {
+                    None => true,
+                    Some(pending) => pending.ticket != ticket || std::time::Instant::now() > pending.expires,
+                };
+                if refused {
+                    return Err(self.say(srcmgr_ui::TextKey::NoteAbortIncomplete).replace("{operation}", "the operation"));
+                }
+                let Some(pending) = self.abort.take() else {
+                    return Err(self.say(srcmgr_ui::TextKey::NoteNoOperation));
+                };
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let report = srcmgr_git::apply_abort(&session.installation, &session.identity, &pending.preview)
+                    .map_err(|error| error.to_string())?;
+                let lines = vec![if report.restored {
+                    fill(
+                        &self.say(srcmgr_ui::TextKey::NoteAbortDone),
+                        &[
+                            ("{operation}", report.operation.name().to_owned()),
+                            ("{branch}", pending.preview.branch.clone()),
+                            ("{after}", short(&report.after)),
+                        ],
+                    )
+                } else {
+                    fill(
+                        &self.say(srcmgr_ui::TextKey::NoteAbortIncomplete),
+                        &[("{operation}", report.operation.name().to_owned())],
+                    )
+                }];
+                Reply::AbortApplied { lines, snapshot: self.snapshot()? }
+            }
+            Job::ContinueIntegration => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let report = srcmgr_git::continue_operation(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())?;
+                let lines = vec![fill(
+                    &self.say(srcmgr_ui::TextKey::NoteContinueDone),
+                    &[
+                        ("{operation}", report.operation.name().to_owned()),
+                        ("{after}", short(&report.after)),
+                    ],
+                )];
+                Reply::ContinueApplied { lines, snapshot: self.snapshot()? }
             }
             Job::PreviewRemoteEdit(edit) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
@@ -1007,6 +1080,7 @@ pub(crate) mod tests {
             checkout: None,
             merge: None,
             rebase: None,
+            abort: None,
         }
     }
 
@@ -2285,5 +2359,54 @@ pub(crate) mod tests {
         assert_ne!(git_text(&repo, &["rev-parse", "HEAD"]), before, "the replay rewrites the branch");
         assert_eq!(std::fs::read_to_string(repo.join("c.txt")).unwrap(), "three\n");
         assert!(!repo.join(".git/rebase-merge").exists() && !repo.join(".git/rebase-apply").exists());
+    }
+
+    #[test]
+    fn the_window_keys_review_and_abort_a_conflicted_merge() {
+        let root = Scratch::new("abort-keys");
+        let repo = repository(&root.0, "repo");
+        fixture_git(&repo, &["switch", "-q", "-c", "feature"]);
+        fs::write(repo.join("a.txt"), "one\nfeature\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "feature edit"]);
+        fixture_git(&repo, &["switch", "-q", "main"]);
+        fs::write(repo.join("a.txt"), "one\nmain\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "main edit"]);
+        let mut active = backend(&root.0, &repo, true);
+        let Reply::RepositoryOpened(opened) = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(repo.as_os_str()))) else {
+            panic!("open must succeed on a trusted repository");
+        };
+        let before = git_text(&repo, &["rev-parse", "HEAD"]);
+        let mut workspace = srcmgr_ui::Workspace::new(opened);
+
+        let _ = workspace.key(srcmgr_ui::Key::Char('m'));
+        for character in "feature".chars() {
+            let _ = workspace.key(srcmgr_ui::Key::Char(character));
+        }
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Enter) else { panic!("preview") };
+        let _ = workspace.reply(active.run(job));
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('y')) else { panic!("apply") };
+        let _ = workspace.reply(active.run(job));
+        assert!(repo.join(".git/MERGE_HEAD").exists(), "the merge must stop on the conflict");
+        assert_eq!(workspace.snapshot().operation.as_deref(), Some("merge"));
+
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('A')) else {
+            panic!("A must ask for an abort review");
+        };
+        assert!(matches!(job, Job::PreviewAbort));
+        let _ = workspace.reply(active.run(job));
+        let review = workspace.abort_review().cloned().expect("an abort review must be showing");
+        assert!(review.1.join(" ").contains("merge"), "{:?}", review.1);
+        assert!(repo.join(".git/MERGE_HEAD").exists(), "a review must not abort");
+
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('y')) else {
+            panic!("y must abort the reviewed operation");
+        };
+        assert!(matches!(job, Job::ApplyAbort(_)));
+        let _ = workspace.reply(active.run(job));
+        assert!(!repo.join(".git/MERGE_HEAD").exists(), "the abort restores the pre-merge state");
+        assert_eq!(git_text(&repo, &["rev-parse", "HEAD"]), before);
+        assert_eq!(workspace.snapshot().operation, None);
     }
 }
