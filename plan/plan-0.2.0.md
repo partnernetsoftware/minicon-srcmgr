@@ -1,6 +1,6 @@
 # 0.2.0 integration inside the window
 
-Status: `[_]` planned, not started. Workspace version stays **0.1.3** (published as
+Status: `[-]` release candidate at version **0.2.0**. C1–C6 are `[v]` with named evidence; C7 is `NOT-RUN` with a fixed runbook, so this version publishes only as a pre-release under exit path 2, with the court named in its notes. It starts the first capability class the 0.1.x series never admitted: writing an integration.
 `v0.1.3-beta` on 2026-11-14). This plan starts the first capability class the
 0.1.x series never admitted: authoring an integration. Product admission is owned
 by [01](../prd/PRD_01_product.md#first-user-admission-matrix), the mutation gate
@@ -160,7 +160,7 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 | C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[v]` the center lists every row with its class and composes base/current/incoming by role; a resolution request for delete/modify, symlink, submodule or unclassified is refused with a named reason before anything is written |
 | C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[v]` whole-side writes the reviewed object; `e` hands the path to the configured trusted editor; Space stages the edited copy and reports marker-like lines as a warning while Git decides whether the path is still unmerged. A dedicated three-way merge tool is not a product setting, and the notes say so |
 | C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[v]` continue, skip and abort are delivered; a fresh window reads a running operation from Git; every mutation writes a one-line job record first and clears it only when the command returns, so a record found at open is reported as needs-reconciliation until the user acknowledges it with `X` |
-| C7 · qualification | Keyboard-only conflicted merge in both locales; clean-image and five-participant courts run or named | `[_]` |
+| C7 · qualification | Keyboard-only conflicted merge in both locales; clean-image and five-participant courts run or named | `NOT-RUN` the runbooks are [clean-image.md](../docs/qualification/clean-image.md) and [five-users.md](../docs/qualification/five-users.md); this repository has neither a clean image nor participants, so the notes name the gap |
 
 ## Selected verification and stopping
 
@@ -219,6 +219,24 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
 0.2.0 note may describe the conflict center as complete without it.
 
 ## Execution record
+
+### 2026-11-25 · release candidate at 0.2.0
+
+- **Version.** Workspace, lockfile and `release-policy.json` are 0.2.0. Nothing else
+  about the build changes: same six cells, same signing mode, same checks.
+- **Notes.** `releases/0.2.0.md` names what is new and, in its own section, what
+  this release does not prove: C6 and C7 unrun, no dedicated merge tool, no
+  in-app result editor until 0.2.1, no GUI journey qualification on any cell for
+  this version, macOS unsigned. The download table is stated as filled from the
+  assembled bytes rather than typed from a log, and will carry the six rows and
+  digests before publication.
+- **Why a pre-release.** C7 needs five people; no participant has been recruited.
+  The plan's exit path 2 applies exactly as it did for 0.1.3.
+- **What is not done here.** No tag, no artifacts, no publication. The six-cell
+  build and the signing run happen on a pushed tag, and publication is a shared
+  action that follows the same order as 0.1.3: assemble, re-hash, inspect the
+  signature, then publish and re-download.
+
 
 ### 2026-11-25 · merge preview at the Git layer
 

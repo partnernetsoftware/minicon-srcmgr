@@ -107,6 +107,10 @@ Status: published 2026-11-09 as [v0.1.2](https://github.com/partnernetsoftware/m
 
 Per cell, an archive contains the executable, a README, a checksum list and a receipt naming the source SHA and the asset digests. A cell whose runtime court did not pass is never packaged, and a partial matrix is never a release candidate. [The 0.1.2 plan](../plan/plan-0.1.2.md) owns the evidence.
 
+## 0.2.0 delivery target
+
+Status: release candidate at version **0.2.0**, publishing as a pre-release under the second exit path of [the 0.2.0 plan](../plan/plan-0.2.0.md#qualification-path-and-exit-criteria): the integration, conflict and continuation cases are delivered with named evidence, and the five-participant court is `NOT-RUN` because this repository cannot supply participants. The same six cells, signing mode and pre-publication checks apply; the release notes name every limit, including that no dedicated three-way merge tool is configured and that the in-app result editor is 0.2.1.
+
 ## 0.1.3 delivery target
 
 Status: **published** as a pre-release, `v0.1.3-beta`, on 2026-11-14 (https://github.com/partnernetsoftware/minicon-srcmgr/releases/tag/v0.1.3-beta), because two courts are NOT-RUN with a fixed path; the published Windows x86_64 archive was re-downloaded, re-hashed, started and its signature inspected `Valid` before this line was written. 0.1.3 closes the gaps the 0.1.0 release notes named, without widening reach: in-window Clone and Remotes surfaces bound to the existing preview/apply contracts, zh-CN primary strings with a persistent locale choice, reviewed divergence with conflict detection and terminal handoff, and the qualification courts that 0.1.0 could not run — clean-image launch, accessibility and CJK/clipboard checks, a long-session resource read and the five-participant study.
