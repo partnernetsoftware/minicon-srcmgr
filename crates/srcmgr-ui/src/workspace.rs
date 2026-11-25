@@ -321,6 +321,8 @@ pub struct Workspace {
     merge: Option<crate::MergeForm>,
     /// A reviewed abort waiting for approval: ticket and lines.
     abort: Option<(String, Vec<String>)>,
+    /// A reviewed skip waiting for approval: ticket and lines.
+    skip: Option<(String, Vec<String>)>,
     /// The conflict center, open while it has rows to show.
     conflicts: Option<ConflictCenter>,
     tools: Option<crate::ToolForm>,
@@ -388,6 +390,7 @@ impl Workspace {
             clone: None,
             merge: None,
             abort: None,
+            skip: None,
             conflicts: None,
             remotes: None,
             checkout: None,
@@ -651,6 +654,24 @@ impl Workspace {
         self.merge = Some(crate::MergeForm::new_rebase());
         self.trust_scroll = 0;
         Effect::Nothing
+    }
+
+    pub fn skip_review(&self) -> Option<&(String, Vec<String>)> {
+        self.skip.as_ref()
+    }
+
+    pub fn skip_key(&mut self, key: Key) -> Effect {
+        match key {
+            Key::Char('y') => match self.skip.take() {
+                Some((ticket, _)) => Effect::Send(Job::ApplySkip(ticket)),
+                None => Effect::Nothing,
+            },
+            Key::Char('n') | Key::Escape | Key::CtrlC => {
+                self.skip = None;
+                Effect::Nothing
+            }
+            _ => Effect::Nothing,
+        }
     }
 
     /// The reviewed abort, when one is showing. The ticket is one-use.
@@ -1868,6 +1889,7 @@ impl Workspace {
         if self.clone.is_some() { return self.clone_key(key); }
         if self.merge.is_some() { return self.merge_key(key); }
         if self.abort.is_some() { return self.abort_key(key); }
+        if self.skip.is_some() { return self.skip_key(key); }
         if self.conflicts.is_some() { return self.conflict_key(key); }
         if let Some(form) = self.locate.as_mut() {
             if !form.editor.preedit.is_empty() { return form.edit(key); }
@@ -2061,6 +2083,9 @@ impl Workspace {
             Key::Char('i') if self.focus == Pane::Files => self.change(ChangesAction::Ignore),
             Key::Char('d') if self.focus == Pane::Main => self.change(ChangesAction::DiscardHunk),
             Key::Char('s') if self.focus == Pane::Files => self.stash(),
+            Key::Char('S') if !self.modal() && self.snapshot.operation.as_deref() == Some("rebase") => {
+                Effect::Send(Job::PreviewSkip)
+            }
             Key::Char('S') if self.focus == Pane::Files => {
                 self.focus_list(Pane::Stashes)
             }
@@ -2126,6 +2151,17 @@ impl Workspace {
                     Some(ConflictCenter::new(rows, self.locale()))
                 };
                 Effect::Nothing
+            }
+            Reply::SkipReview { ticket, lines } => {
+                self.skip = Some((ticket, lines));
+                self.trust_scroll = 0;
+                Effect::Nothing
+            }
+            Reply::SkipApplied { lines, snapshot } => {
+                self.skip = None;
+                let effect = self.reply(Reply::Full(snapshot));
+                self.notice = Some(lines.join(" "));
+                effect
             }
             Reply::AbortReview { ticket, lines } => {
                 self.abort = Some((ticket, lines));
@@ -3566,6 +3602,21 @@ mod tests {
         assert_eq!(workspace.key(Key::Char('u')), Effect::Nothing, "a review blocks another side");
         assert_eq!(workspace.key(Key::Char('y')), Effect::Send(Job::ApplyResolution("s1".into())));
         assert_eq!(workspace.key(Key::Char('w')), Effect::Send(Job::PreviewResolution { path: "a.txt".into(), side: crate::ResolutionChoice::Incoming }));
+    }
+
+    #[test]
+    fn s_reviews_a_skip_only_while_a_rebase_is_stopped() {
+        let mut stopped = snapshot(None);
+        stopped.operation = Some("rebase".into());
+        let mut workspace = Workspace::new(stopped);
+        assert_eq!(workspace.key(Key::Char('S')), Effect::Send(Job::PreviewSkip));
+        workspace.reply(Reply::SkipReview { ticket: "k1".into(), lines: vec!["Skip".into()] });
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Send(Job::ApplySkip("k1".into())));
+
+        let mut merging = snapshot(None);
+        merging.operation = Some("merge".into());
+        let mut workspace = Workspace::new(merging);
+        assert_ne!(workspace.key(Key::Char('S')), Effect::Send(Job::PreviewSkip));
     }
 
     #[test]

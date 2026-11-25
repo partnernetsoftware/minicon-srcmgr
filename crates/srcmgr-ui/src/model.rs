@@ -360,6 +360,10 @@ pub enum Job {
     ApplyAbort(String),
     /// Continues the unfinished operation; Git refuses while paths are unmerged.
     ContinueIntegration,
+    /// Describes the commit a skip would discard during a rebase.
+    PreviewSkip,
+    /// Skips the reviewed step.
+    ApplySkip(String),
     /// Reads the unmerged index entries and their side content.
     LoadConflicts,
     /// Describes taking one side of one unmerged path.
@@ -527,6 +531,16 @@ pub enum Reply {
     },
     /// The continuation ran.
     ContinueApplied {
+        lines: Vec<String>,
+        snapshot: Snapshot,
+    },
+    /// A skip waiting for approval, naming the commit it discards.
+    SkipReview {
+        ticket: String,
+        lines: Vec<String>,
+    },
+    /// The skip ran.
+    SkipApplied {
         lines: Vec<String>,
         snapshot: Snapshot,
     },

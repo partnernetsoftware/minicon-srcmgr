@@ -159,7 +159,7 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 | C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[v]` preview and ticket as before; a conflict stop is followed by `A`, whose review names the operation and `ORIG_HEAD`, and `y` restores the branch and HEAD with the sequencer gone; four Git-layer tests plus the key path |
 | C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[v]` the center lists every row with its class and composes base/current/incoming by role; a resolution request for delete/modify, symlink, submodule or unclassified is refused with a named reason before anything is written |
 | C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[-]` whole-side resolution is previewed, ticketed and applied by exact object id, staging only that path; the external merge tool is not built |
-| C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[-]` continue and abort are delivered for merge and rebase, with Git's own refusal while a path is unmerged; skip and a restart proof are missing |
+| C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[-]` continue, skip and abort are delivered for merge and rebase, each through Git's own state, and a fresh window reads a running operation from Git; an action interrupted mid-flight is not yet reported as needs-reconciliation, because no job journal exists |
 | C7 · qualification | Keyboard-only conflicted merge in both locales; clean-image and five-participant courts run or named | `[_]` |
 
 ## Selected verification and stopping
@@ -439,3 +439,28 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
   merge state remains. Full suite passes; clippy reports no warning.
 - **Open.** The external merge tool (C5) and skip (C6) are not built, and the
   in-app result editor remains 0.2.1 by design.
+
+### 2026-11-25 · skip, and a window that remembers nothing
+
+- **Built.** `preview_skip` names the commit the sequencer is stopped on
+  (`REBASE_HEAD`) and its subject; `apply_skip` re-reads that commit, runs
+  `rebase --skip` with a no-op editor, and reports whether Git still has a
+  sequencer afterwards. A merge has no step to skip and says so by name.
+- **In the window.** `S` reviews a skip only while the snapshot reports a rebase;
+  `y` applies it. The review names the commit and states that its changes are
+  dropped from this rebase while the commit stays reachable by its original id.
+- **The restart proof.** A second `WindowBackend` over the same repository — the
+  shape of a restart — opens and reports `operation = merge` with the unmerged
+  paths, because the state is read from Git rather than remembered.
+- **A fixture that was lying.** The shared `repository()` helper leaves a
+  modified `a.txt` and an untracked `u.txt` behind; the first skip test therefore
+  committed that dirt into its own branch and stopped the rebase on the wrong
+  commit. The test now commits the fixture state first, and the failure is
+  recorded because the same dirt can hide in any future case.
+- **Evidence.** Two Git-layer tests (a one-step skip finishing the rebase with
+  the skipped commit gone, and a merge refused), one `Workspace::key` case, one
+  end-to-end case from `b` through `S` and `y` on a real repository, and the
+  restart case above. Full suite passes and clippy reports no warning.
+- **Open.** Skip exists; an interrupted action still has no needs-reconciliation
+  report, because nothing journals a job that dies mid-flight. That is the last
+  clause of C6, and it needs a durable job record rather than another key.

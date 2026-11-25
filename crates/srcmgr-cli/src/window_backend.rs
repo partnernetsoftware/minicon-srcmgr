@@ -31,6 +31,15 @@ pub struct WindowBackend {
     abort: Option<AbortPending>,
     /// A reviewed conflict resolution waiting for approval.
     resolution: Option<ResolutionPending>,
+    /// A reviewed skip waiting for approval.
+    skip: Option<SkipPending>,
+}
+
+/// A skip whose effect was shown but not approved.
+struct SkipPending {
+    ticket: String,
+    preview: srcmgr_git::SkipPreview,
+    expires: std::time::Instant,
 }
 
 /// A resolution whose effect was shown but not approved.
@@ -292,7 +301,7 @@ impl WindowBackend {
         let worktree = crate::canonical_worktree(path)?;
         let mut selected = options.clone();
         if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
-        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None, merge: None, rebase: None, abort: None, resolution: None };
+        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None, merge: None, rebase: None, abort: None, resolution: None, skip: None };
         let mut snapshot = candidate.snapshot()?;
         snapshot.navigation = open_profile_store(options)?.navigation(&NativePath::new(candidate.worktree.as_os_str())).map_err(|e| e.to_string())?
             .map(|record| srcmgr_ui::Navigation::decode(&record)).transpose().map_err(str::to_owned)?;
@@ -701,6 +710,53 @@ impl WindowBackend {
                         ],
                     )],
                 }
+            }
+            Job::PreviewSkip => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let preview = srcmgr_git::preview_skip(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())?;
+                let lines = vec![fill(
+                    &self.say(srcmgr_ui::TextKey::SkipReviewLine),
+                    &[
+                        ("{oid}", short(&preview.omitting)),
+                        ("{subject}", preview.subject.clone()),
+                    ],
+                )];
+                let ticket = crate::confirmation::ticket()?;
+                self.skip = Some(SkipPending {
+                    ticket: ticket.clone(),
+                    preview,
+                    expires: std::time::Instant::now() + std::time::Duration::from_secs(300),
+                });
+                Reply::SkipReview { ticket, lines }
+            }
+            Job::ApplySkip(ticket) => {
+                let refused = match self.skip.as_ref() {
+                    None => true,
+                    Some(pending) => pending.ticket != ticket || std::time::Instant::now() > pending.expires,
+                };
+                if refused {
+                    return Err(self.say(srcmgr_ui::TextKey::NoteSkipExpired));
+                }
+                let Some(pending) = self.skip.take() else {
+                    return Err(self.say(srcmgr_ui::TextKey::NoteSkipExpired));
+                };
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let report = srcmgr_git::apply_skip(&session.installation, &session.identity, &pending.preview)
+                    .map_err(|error| error.to_string())?;
+                let key = if report.still_in_progress {
+                    srcmgr_ui::TextKey::NoteSkipStill
+                } else {
+                    srcmgr_ui::TextKey::NoteSkipDone
+                };
+                let lines = vec![fill(
+                    &self.say(key),
+                    &[
+                        ("{oid}", short(&report.omitting)),
+                        ("{after}", short(&report.after)),
+                    ],
+                )];
+                Reply::SkipApplied { lines, snapshot: self.snapshot()? }
             }
             Job::PreviewRemoteEdit(edit) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
@@ -1213,6 +1269,7 @@ pub(crate) mod tests {
             rebase: None,
             abort: None,
             resolution: None,
+            skip: None,
         }
     }
 
@@ -2631,5 +2688,82 @@ pub(crate) mod tests {
         let _ = workspace.reply(active.run(Job::ContinueIntegration));
         assert!(!repo.join(".git/MERGE_HEAD").exists(), "the merge continues after resolution");
         assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "one\nmain\n");
+    }
+
+    #[test]
+    fn the_window_keys_skip_a_stopped_rebase_step() {
+        let root = Scratch::new("skip-keys");
+        let repo = repository(&root.0, "repo");
+        // The fixture leaves a modified a.txt and an untracked file; commit them
+        // so the branches below are the only history this test creates.
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "fixture state"]);
+        fixture_git(&repo, &["switch", "-q", "-c", "feature"]);
+        fs::write(repo.join("b.txt"), "two\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "two"]);
+        fs::write(repo.join("a.txt"), "one\nfeature\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "feature edit"]);
+        fixture_git(&repo, &["switch", "-q", "main"]);
+        fs::write(repo.join("a.txt"), "one\nmain\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "main edit"]);
+        fixture_git(&repo, &["switch", "-q", "feature"]);
+        let mut active = backend(&root.0, &repo, true);
+        let Reply::RepositoryOpened(opened) = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(repo.as_os_str()))) else {
+            panic!("open must succeed on a trusted repository");
+        };
+        let mut workspace = srcmgr_ui::Workspace::new(opened);
+
+        let _ = workspace.key(srcmgr_ui::Key::Char('b'));
+        for character in "main".chars() {
+            let _ = workspace.key(srcmgr_ui::Key::Char(character));
+        }
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Enter) else { panic!("preview") };
+        let _ = workspace.reply(active.run(job));
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('y')) else { panic!("apply") };
+        let _ = workspace.reply(active.run(job));
+        assert!(repo.join(".git/rebase-merge").exists() || repo.join(".git/rebase-apply").exists());
+
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('S')) else { panic!("skip review") };
+        assert!(matches!(job, Job::PreviewSkip));
+        let _ = workspace.reply(active.run(job));
+        let review = workspace.skip_review().cloned().expect("a skip review");
+        assert!(review.1.join(" ").contains("feature edit"), "{:?}", review.1);
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('y')) else { panic!("skip") };
+        let _ = workspace.reply(active.run(job));
+        assert!(!repo.join(".git/rebase-merge").exists(), "the one conflict was skipped");
+        assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "one\nmain\n");
+        assert_eq!(std::fs::read_to_string(repo.join("b.txt")).unwrap(), "two\n");
+    }
+
+    #[test]
+    fn a_fresh_window_reads_a_running_operation_from_git() {
+        let root = Scratch::new("restart-proof");
+        let repo = repository(&root.0, "repo");
+        fixture_git(&repo, &["switch", "-q", "-c", "feature"]);
+        fs::write(repo.join("a.txt"), "one\nfeature\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "feature edit"]);
+        fixture_git(&repo, &["switch", "-q", "main"]);
+        fs::write(repo.join("a.txt"), "one\nmain\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "main edit"]);
+        let outcome = std::process::Command::new(git_executable())
+            .current_dir(&repo)
+            .args(["merge", "feature"])
+            .status()
+            .expect("run the fixture merge");
+        assert!(!outcome.success(), "the fixture must conflict");
+
+        // A second backend over the same repository, as after a restart.
+        let mut restarted = backend(&root.0, &repo, true);
+        let Reply::RepositoryOpened(snapshot) = restarted.run(Job::OpenRepository(srcmgr_domain::NativePath::new(repo.as_os_str()))) else {
+            panic!("open must succeed");
+        };
+        assert_eq!(snapshot.operation.as_deref(), Some("merge"));
+        assert!(!snapshot.unmerged.is_empty());
+        fixture_git(&repo, &["merge", "--abort"]);
     }
 }

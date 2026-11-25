@@ -538,6 +538,79 @@ pub fn continue_operation(
     })
 }
 
+/// What skipping the current step would omit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SkipPreview {
+    pub operation: crate::operation_state::Operation,
+    /// The commit the sequencer is stopped on, which the skip discards.
+    pub omitting: String,
+    /// Its subject, when Git can read it.
+    pub subject: String,
+}
+
+/// The result of skipping one step.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SkipReport {
+    pub omitting: String,
+    pub after: String,
+    /// True when Git still has a sequencer afterwards (more commits to replay).
+    pub still_in_progress: bool,
+}
+
+/// Describes the step a skip would discard. Nothing is skipped.
+pub fn preview_skip(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+) -> Result<SkipPreview, GitError> {
+    let state = crate::operation_state::detect(git, repo)?;
+    match state.operation {
+        Some(crate::operation_state::Operation::Rebase) => {}
+        Some(_) => {
+            return Err(GitError::ConflictResolution(
+                "only a rebase has a step to skip; a merge is continued or aborted",
+            ))
+        }
+        None => return Err(GitError::NoOperationInProgress),
+    }
+    // REBASE_HEAD is the commit the sequencer stopped on.
+    let omitting = read_line(git, repo, &["rev-parse", "REBASE_HEAD"]).map_err(|_| {
+        GitError::ConflictResolution("Git does not report the commit this step is applying")
+    })?;
+    let subject = read_line(git, repo, &["log", "-1", "--format=%s", &omitting]).unwrap_or_default();
+    Ok(SkipPreview {
+        operation: crate::operation_state::Operation::Rebase,
+        omitting,
+        subject,
+    })
+}
+
+/// Skips the reviewed step and re-reads the sequencer afterwards.
+pub fn apply_skip(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    preview: &SkipPreview,
+) -> Result<SkipReport, GitError> {
+    let current = preview_skip(git, repo)?;
+    if current.omitting != preview.omitting {
+        return Err(GitError::StaleOperationPreview);
+    }
+    let output = runner::run_allowing_failure(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["-c", "core.editor=true", "rebase", "--skip"],
+        Limits::MUTATION,
+    )?;
+    if output.code != 0 {
+        return Err(GitError::Exit { code: output.code, detail: output.detail });
+    }
+    let after_state = crate::operation_state::detect(git, repo)?;
+    Ok(SkipReport {
+        omitting: preview.omitting.clone(),
+        after: read_line(git, repo, &["rev-parse", "HEAD"])?,
+        still_in_progress: after_state.operation.is_some(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -888,5 +961,41 @@ mod tests {
             preview_abort(&installation, &repo),
             Err(GitError::NoOperationInProgress)
         ));
+    }
+
+    #[test]
+    fn skipping_the_reviewed_step_ends_a_one_commit_rebase() {
+        let (root, _) = base("skip-rebase");
+        let _ = feature(&root);
+        std::fs::write(root.join("a.txt"), "one\nmain\n").unwrap();
+        commit(&root, "main edit");
+        run(&root, &["switch", "-q", "feature"]);
+        std::fs::write(root.join("a.txt"), "one\nfeature\n").unwrap();
+        commit(&root, "feature edit");
+        let installation = GitInstallation::probe(git()).unwrap();
+        let repo = identity(&root, &installation);
+        let preview = preview_rebase(&installation, &repo, "main").unwrap();
+        let stopped = apply_rebase(&installation, &repo, &preview).unwrap();
+        assert!(!stopped.moved);
+
+        let skip = preview_skip(&installation, &repo).unwrap();
+        assert_eq!(skip.operation, crate::operation_state::Operation::Rebase);
+        assert_eq!(skip.subject, "feature edit");
+        let report = apply_skip(&installation, &repo, &skip).unwrap();
+        assert!(!report.still_in_progress);
+        assert_eq!(report.omitting, skip.omitting);
+        let top = read_line(&installation, &repo, &["log", "-1", "--format=%s", "HEAD"]).unwrap();
+        assert_eq!(top, "two", "the skipped commit is gone and the earlier one stays");
+        assert!(!root.join(".git/rebase-merge").exists() && !root.join(".git/rebase-apply").exists());
+        assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "one\nmain\n");
+    }
+
+    #[test]
+    fn a_merge_has_no_step_to_skip() {
+        let (root, installation, _before) = stopped_merge("skip-merge");
+        let repo = identity(&root, &installation);
+        let error = preview_skip(&installation, &repo).expect_err("a merge is not skipped");
+        assert!(matches!(error, GitError::ConflictResolution(_)), "{error}");
+        run(&root, &["merge", "--abort"]);
     }
 }

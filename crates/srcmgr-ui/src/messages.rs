@@ -242,6 +242,12 @@ catalog! {
     NoteContinueDone => "Continued {operation}; HEAD is now {after}.", "已继续 {operation}；HEAD 现为 {after}。";
     NoteNoOperation => "Git reports no unfinished operation to continue or abort.", "Git 未报告可继续或中止的未完成操作。";
     HintAbortReview => "y aborts and restores the pre-operation commit · n or Esc keeps the operation", "y 中止并恢复到操作前的提交 · n 或 Esc 保留该操作";
+    SkipReviewLine => "Skip the commit being replayed: {oid} {subject}. Its changes are discarded from this rebase; the commit stays reachable by its original id.", "跳过正在重放的提交：{oid} {subject}。其更改不会进入本次变基；该提交仍可按原 ID 访问。";
+    NoteSkipDone => "Skipped {oid}; the rebase now points at {after}.", "已跳过 {oid}；变基现指向 {after}。";
+    NoteSkipStill => "Skipped {oid}; the rebase is still running the remaining commits.", "已跳过 {oid}；变基仍在重放其余提交。";
+    NoteSkipExpired => "The skip review expired or was already used; review the step again.", "跳过复核已过期或已被使用；请重新复核该步骤。";
+    HintSkipReview => "y skips this step · n or Esc keeps it", "y 跳过该步骤 · n 或 Esc 保留";
+    HintRebaseStopped => "rebase stopped · S reviews a skip · N continues when resolved · A reviews an abort", "变基已停止 · S 复核跳过 · 解决后 N 继续 · A 复核中止";
     HintOperation => "{operation} in progress · N continues when resolved · A reviews an abort", "{operation} 进行中 · 解决后 N 继续 · A 复核中止";
     PanelConflictsTitle => "Conflicts", "冲突";
     ConflictBaseLabel => "Base (stage 1)", "基线（阶段 1）";

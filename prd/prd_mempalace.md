@@ -153,6 +153,10 @@ enforced in code or a fixture today.
 - **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
   taken.** Show it, or say the time is unavailable; never present ahead/behind as
   live server truth.
+- **`repository()` leaves the fixture dirty on purpose, and tests must absorb it.**
+  It ends with a modified `a.txt` and an untracked `u.txt`; a test that branches
+  without committing them puts someone else's dirt in its own commit and can
+  stop a rebase on the wrong commit.
 - **Resolve by stage and object id, not by `--ours`/`--theirs`.** The two names swap
   meaning during a rebase, so a whole-side choice written with them can take the
   wrong side without any error. `update-index --cacheinfo mode,oid,path` plus

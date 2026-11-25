@@ -1741,6 +1741,14 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         text_panel(draws, body, grid, true, &title, &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
         return;
     }
+    if let Some((_, lines)) = workspace.skip_review() {
+        let (apply, cancel) = trust_buttons(rect, grid);
+        let body = trust_content(rect, grid).0;
+        text_panel(draws, body, grid, true, workspace.t(TextKey::PanelReview), &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        button_draw(draws, apply, grid, workspace.t(TextKey::PanelReview), BORDER);
+        button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
+        return;
+    }
     if let Some((_, lines)) = workspace.abort_review() {
         let (apply, cancel) = trust_buttons(rect, grid);
         let body = trust_content(rect, grid).0;
@@ -2274,13 +2282,20 @@ fn hints(workspace: &Workspace) -> String {
             workspace.t(TextKey::HintConflicts).into()
         };
     }
+    if workspace.skip_review().is_some() {
+        return workspace.t(TextKey::HintSkipReview).into();
+    }
     if workspace.abort_review().is_some() {
         return workspace.t(TextKey::HintAbortReview).into();
     }
     if let Some(operation) = workspace.snapshot().operation.as_ref()
         && workspace.snapshot().unmerged.is_empty()
     {
-        return workspace.t(TextKey::HintOperation).replace("{operation}", operation);
+        return if operation == "rebase" {
+            workspace.t(TextKey::HintRebaseStopped).into()
+        } else {
+            workspace.t(TextKey::HintOperation).replace("{operation}", operation)
+        };
     }
     if let Some(form) = workspace.merge_form() {
         return if form.working {
