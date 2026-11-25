@@ -118,6 +118,7 @@ Use the linked record as truth; this table only tells you where to look.
 | 0.1.2 | Published 2026-11-09: all six cells build/run/package; both Windows cells Authenticode-signed, `release_eligible=true`; macOS and Linux unsigned | [notes](../releases/0.1.2.md), [PRD 12](PRD_12_platform_delivery.md#support-matrix) |
 | 0.1.3 | Published 2026-11-14 as `0.1.3-beta` (pre-release, `releases/tag/v0.1.3-beta`): Clone, Remotes, language, divergence and conflict handoff are `[v]`; the clean-image and five-participant courts are `NOT-RUN`; it closed under exit path 2 with both courts named in the notes | [notes](../releases/0.1.3.md), [plan](../plan/plan-0.1.3.md#qualification-path-and-exit-criteria) |
 | 0.2.0 | Release candidate at 0.2.0 (pre-release under exit path 2): reviewed merge and rebase, conflict center with stages, whole-side and external-tool resolution, continue/skip/abort, restart truth. C7 is NOT-RUN with its runbook; the in-app result editor is 0.2.1, and no note may call the center complete without it | [plan](../plan/plan-0.2.0.md) |
+| 0.2.1 | Planned, not started: the in-app result editor (four panes, search, IME, encoding and newline preservation), reusing the 0.2.0 stage check | [plan](../plan/plan-0.2.1.md) |
 
 Two items are **BLOCKED by missing external conditions**, not by code: the
 clean-image court needs a machine that never had the product or the Rust

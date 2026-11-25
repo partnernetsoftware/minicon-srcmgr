@@ -232,7 +232,10 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
   digests before publication.
 - **Why a pre-release.** C7 needs five people; no participant has been recruited.
   The plan's exit path 2 applies exactly as it did for 0.1.3.
-- **What is not done here.** No tag, no artifacts, no publication. The six-cell
+- **Tagged.** \`v0.2.0-beta\` points at \`8e8f7ff\` and is pushed, so the six-cell
+  build and the signing run are executing on exactly that source. Nothing is
+  published; the assemble, re-hash, inspect and re-download steps follow.
+- **What is not done here.** No artifacts, no publication. The six-cell
   build and the signing run happen on a pushed tag, and publication is a shared
   action that follows the same order as 0.1.3: assemble, re-hash, inspect the
   signature, then publish and re-download.
