@@ -1,0 +1,303 @@
+//! Unmerged index entries with their stages and side content (PRD 08).
+//!
+//! Git records a conflict as up to three index entries per path: stage 1 is the
+//! base, stage 2 the current side, stage 3 the incoming side. This module reads
+//! exactly those entries and never infers a conflict from a filename or from
+//! conflict markers in the worktree, because a marker-like line is text the user
+//! may have written deliberately.
+
+use crate::error::GitError;
+use crate::installation::GitInstallation;
+use crate::repository::RepositoryIdentity;
+use crate::runner::{self, Limits};
+
+/// What kind of conflict the index records for one path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConflictClass {
+    /// Base, current and incoming all exist: both sides edited one file.
+    Content,
+    /// No base entry: both sides added the same path.
+    AddAdd,
+    /// One side deleted the path while the other kept or changed it.
+    DeleteModify,
+    /// The path is a symbolic link.
+    Symlink,
+    /// The path is a submodule entry.
+    Submodule,
+    /// The stages do not match a class this slice can name.
+    Unclassified,
+}
+
+/// One index entry: the mode and object id Git recorded at one stage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConflictSide {
+    pub mode: u32,
+    pub oid: String,
+}
+
+/// One unmerged path with whatever stages the index holds for it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConflictEntry {
+    pub path: String,
+    pub base: Option<ConflictSide>,
+    pub current: Option<ConflictSide>,
+    pub incoming: Option<ConflictSide>,
+    pub class: ConflictClass,
+}
+
+/// Reads the unmerged entries of the index.
+///
+/// \u0060ls-files -u\u0060 lists exactly the conflicted stages; a path with no entry is
+/// not conflicted, and a conflict is never guessed from the worktree.
+pub fn read_conflicts(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+) -> Result<Vec<ConflictEntry>, GitError> {
+    let output = runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["ls-files", "-u", "-z"],
+        None,
+        Limits::STATUS,
+    )?;
+    let mut entries: Vec<ConflictEntry> = Vec::new();
+    let mut index: Vec<(String, u8, ConflictSide)> = Vec::new();
+
+    for record in output.stdout.split(|byte| *byte == 0) {
+        if record.is_empty() {
+            continue;
+        }
+        // "<mode> <oid> <stage>\t<path>"
+        let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
+            return Err(GitError::MalformedOutput { record: index.len() });
+        };
+        let header = String::from_utf8_lossy(&record[..tab]);
+        let mut fields = header.split(' ');
+        let (Some(mode), Some(oid), Some(stage)) = (fields.next(), fields.next(), fields.next()) else {
+            return Err(GitError::MalformedOutput { record: index.len() });
+        };
+        let mode = u32::from_str_radix(mode, 8).map_err(|_| GitError::MalformedOutput { record: index.len() })?;
+        let stage = stage.parse::<u8>().map_err(|_| GitError::MalformedOutput { record: index.len() })?;
+        let path = std::str::from_utf8(&record[tab + 1..])
+            .map_err(|_| GitError::UnrepresentableName)?
+            .to_owned();
+        index.push((path, stage, ConflictSide { mode, oid: oid.to_owned() }));
+    }
+
+    for (path, stage, side) in index {
+        let is_new = entries.last().is_none_or(|entry| entry.path != path);
+        if is_new {
+            entries.push(ConflictEntry {
+                path,
+                base: None,
+                current: None,
+                incoming: None,
+                class: ConflictClass::Unclassified,
+            });
+        }
+        let entry = entries.last_mut().expect("pushed above");
+        match stage {
+            1 => entry.base = Some(side),
+            2 => entry.current = Some(side),
+            3 => entry.incoming = Some(side),
+            _ => return Err(GitError::MalformedOutput { record: 0 }),
+        }
+    }
+
+    for entry in &mut entries {
+        entry.class = classify(entry);
+    }
+    Ok(entries)
+}
+
+fn classify(entry: &ConflictEntry) -> ConflictClass {
+    let modes = [
+        entry.base.as_ref().map(|side| side.mode),
+        entry.current.as_ref().map(|side| side.mode),
+        entry.incoming.as_ref().map(|side| side.mode),
+    ];
+    if modes.iter().flatten().any(|mode| mode & 0o170000 == 0o160000) {
+        return ConflictClass::Submodule;
+    }
+    if modes.iter().flatten().any(|mode| mode & 0o170000 == 0o120000) {
+        return ConflictClass::Symlink;
+    }
+    match (entry.base.is_some(), entry.current.is_some(), entry.incoming.is_some()) {
+        (true, true, true) => ConflictClass::Content,
+        (false, true, true) => ConflictClass::AddAdd,
+        (true, false, _) | (true, _, false) => ConflictClass::DeleteModify,
+        _ => ConflictClass::Unclassified,
+    }
+}
+
+/// One side's text, when it is text this slice can show.
+///
+/// The bytes are read from the object database, bounded, and treated as binary
+/// when a NUL appears early; a binary or oversized side returns \u0060None\u0060 rather
+/// than a truncated string that would look like the whole file.
+pub fn side_text(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    oid: &str,
+) -> Result<Option<String>, GitError> {
+    if oid.len() != 40 || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(GitError::InvalidRevision);
+    }
+    let output = runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["cat-file", "blob", oid],
+        None,
+        Limits::STATUS,
+    )?;
+    let bytes = output.stdout;
+    if bytes.iter().take(8000).any(|byte| *byte == 0) {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repository::locate;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    fn git() -> PathBuf {
+        std::env::var_os("SRCMGR_TEST_GIT").map_or_else(|| PathBuf::from("git"), PathBuf::from)
+    }
+
+    fn fixture(name: &str) -> PathBuf {
+        let base = {
+            #[cfg(unix)]
+            {
+                std::fs::canonicalize(std::env::temp_dir()).unwrap()
+            }
+            #[cfg(windows)]
+            {
+                std::env::temp_dir()
+            }
+        };
+        let root = base.join(format!("srcmgr-conflicts-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn run(dir: &Path, args: &[&str]) {
+        let output = Command::new(git()).current_dir(dir).args(args).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    fn commit(dir: &Path, message: &str) {
+        run(dir, &["add", "-A"]);
+        run(dir, &["commit", "-q", "-m", message]);
+    }
+
+    fn start(name: &str) -> (PathBuf, GitInstallation, RepositoryIdentity) {
+        let root = fixture(name);
+        run(&root, &["init", "-q", "-b", "main"]);
+        run(&root, &["config", "user.name", "Fixture"]);
+        run(&root, &["config", "user.email", "fixture@example.invalid"]);
+        std::fs::write(root.join("a.txt"), "one\n").unwrap();
+        commit(&root, "one");
+        let installation = GitInstallation::probe(git()).unwrap();
+        let identity = locate(&installation, &root).unwrap();
+        (root, installation, identity)
+    }
+
+    /// Leaves the repository stopped in a merge conflict.
+    fn stopped(root: &Path, ours: &[u8], theirs: &[u8]) {
+        run(root, &["switch", "-q", "-c", "feature"]);
+        std::fs::write(root.join("a.txt"), theirs).unwrap();
+        commit(root, "feature edit");
+        run(root, &["switch", "-q", "main"]);
+        std::fs::write(root.join("a.txt"), ours).unwrap();
+        commit(root, "main edit");
+        let output = Command::new(git()).current_dir(root).args(["merge", "feature"]).output().unwrap();
+        assert!(!output.status.success(), "the fixture must conflict");
+    }
+
+    #[test]
+    fn a_clean_index_has_no_conflicts() {
+        let (root, installation, identity) = start("clean");
+        assert!(read_conflicts(&installation, &identity).unwrap().is_empty());
+        assert!(!root.join(".git/MERGE_HEAD").exists());
+    }
+
+    #[test]
+    fn a_content_conflict_carries_three_stages_and_readable_sides() {
+        let (root, installation, identity) = start("content");
+        stopped(&root, b"one\nmain\n", b"one\nfeature\n");
+        let entries = read_conflicts(&installation, &identity).unwrap();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.path, "a.txt");
+        assert_eq!(entry.class, ConflictClass::Content);
+        assert!(entry.base.is_some() && entry.current.is_some() && entry.incoming.is_some());
+        let current = side_text(&installation, &identity, &entry.current.as_ref().unwrap().oid).unwrap();
+        assert_eq!(current.as_deref(), Some("one\nmain\n"));
+        let incoming = side_text(&installation, &identity, &entry.incoming.as_ref().unwrap().oid).unwrap();
+        assert_eq!(incoming.as_deref(), Some("one\nfeature\n"));
+        run(&root, &["merge", "--abort"]);
+    }
+
+    #[test]
+    fn both_sides_adding_one_path_is_add_add_without_a_base() {
+        let (root, installation, identity) = start("addadd");
+        run(&root, &["switch", "-q", "-c", "feature"]);
+        std::fs::write(root.join("b.txt"), "feature\n").unwrap();
+        commit(&root, "feature adds b");
+        run(&root, &["switch", "-q", "main"]);
+        std::fs::write(root.join("b.txt"), "main\n").unwrap();
+        commit(&root, "main adds b");
+        let output = Command::new(git()).current_dir(&root).args(["merge", "feature"]).output().unwrap();
+        assert!(!output.status.success());
+        let entries = read_conflicts(&installation, &identity).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "b.txt");
+        assert_eq!(entries[0].class, ConflictClass::AddAdd);
+        assert!(entries[0].base.is_none());
+        run(&root, &["merge", "--abort"]);
+    }
+
+    #[test]
+    fn one_side_deleting_a_path_is_delete_modify() {
+        let (root, installation, identity) = start("deletemodify");
+        run(&root, &["switch", "-q", "-c", "feature"]);
+        run(&root, &["rm", "-q", "a.txt"]);
+        commit(&root, "feature deletes a");
+        run(&root, &["switch", "-q", "main"]);
+        std::fs::write(root.join("a.txt"), "one\nmain\n").unwrap();
+        commit(&root, "main edits a");
+        let output = Command::new(git()).current_dir(&root).args(["merge", "feature"]).output().unwrap();
+        assert!(!output.status.success());
+        let entries = read_conflicts(&installation, &identity).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].class, ConflictClass::DeleteModify);
+        assert!(entries[0].current.is_none() || entries[0].incoming.is_none());
+        run(&root, &["merge", "--abort"]);
+    }
+
+    #[test]
+    fn a_binary_side_is_reported_as_unreadable_text() {
+        let (root, installation, identity) = start("binary");
+        stopped(&root, b"one\n\x00main\n", b"one\n\x00feature\n");
+        let entries = read_conflicts(&installation, &identity).unwrap();
+        let oid = entries[0].current.as_ref().unwrap().oid.clone();
+        assert_eq!(side_text(&installation, &identity, &oid).unwrap(), None);
+        run(&root, &["merge", "--abort"]);
+    }
+
+    #[test]
+    fn a_side_text_call_refuses_a_non_object_id() {
+        let (_root, installation, identity) = start("badoid");
+        for oid in ["", "HEAD", "zzzz"] {
+            assert!(matches!(
+                side_text(&installation, &identity, oid),
+                Err(GitError::InvalidRevision)
+            ));
+        }
+    }
+}

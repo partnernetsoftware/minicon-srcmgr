@@ -157,7 +157,7 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 | C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[v]` `m` opens the form, Enter asks for the preview, the review names the outcome, the branch, the short OIDs, the commit count or the conflicting paths, and the worktree, index and refs are untouched; five Git-layer tests and one `Workspace::key` path prove it |
 | C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[v]` the ticket is one-use and bound to the preview, `y` merges exactly it, a wrong ticket is refused without consuming the review, and a conflict stop reports the paths with HEAD unmoved; three Git-layer tests plus one end-to-end case from keys through the backend |
 | C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[v]` preview and ticket as before; a conflict stop is followed by `A`, whose review names the operation and `ORIG_HEAD`, and `y` restores the branch and HEAD with the sequencer gone; four Git-layer tests plus the key path |
-| C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[_]` |
+| C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[-]` `read_conflicts` reads the index stages and classifies content, add/add, delete/modify, symlink and submodule entries, and `side_text` returns a side's text or refuses binary bytes; six fixture tests. No window surface yet |
 | C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[_]` |
 | C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[-]` continue and abort are delivered for merge and rebase, with Git's own refusal while a path is unmerged; skip and a restart proof are missing |
 | C7 · qualification | Keyboard-only conflicted merge in both locales; clean-image and five-participant courts run or named | `[_]` |
@@ -374,3 +374,22 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
 - **Open.** Skip is not built, and no test yet proves that a restart re-reads an
   operation started in the window. C6 stays `[-]` until both exist; the conflict
   center (C4/C5) is the surface that will host skip.
+
+### 2026-11-25 · reading the conflict, not its markers
+
+- **Built.** `crates/srcmgr-git/src/conflicts.rs`: `read_conflicts` parses
+  `ls-files -u -z` into one `ConflictEntry` per path with whatever of the three
+  stages exist, and classifies content, add/add, delete/modify, symlink and
+  submodule entries from the recorded modes. `side_text` reads a stage's blob,
+  bounded, and returns `None` when a NUL appears early rather than a truncated
+  string that would look complete.
+- **Why stages and not markers.** A marker-like line is text the user may have
+  written; the index is the only record of what Git actually considers unmerged.
+  The module never scans the worktree for `<<<<<<<`.
+- **Evidence.** Six fixture tests: a clean index has none, a content conflict
+  carries three stages with both sides readable, add/add has no base, a
+  delete/modify leaves one side missing, a binary side reads as `None`, and a
+  non-object id is refused. The full suite passes and clippy reports no warning.
+- **Open.** Nothing draws this yet. C4 needs the surface: rows, the three panes
+  with the stage role named, and the refusal of a class this version cannot
+  settle. That surface is also where skip (C6) will live.

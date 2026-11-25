@@ -153,6 +153,10 @@ enforced in code or a fixture today.
 - **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
   taken.** Show it, or say the time is unavailable; never present ahead/behind as
   live server truth.
+- **A conflict is what the index says, never what the file looks like.** Stage 1
+  is the base, 2 current, 3 incoming; `ls-files -u` is the record, and a
+  marker-like line may be the user's own text. Classify from the recorded modes
+  (160000 submodule, 120000 symlink) and refuse classes the version cannot settle.
 - **An abort restores from `ORIG_HEAD`, and only Git can say it worked.** Read
   `ORIG_HEAD` before offering the review, refuse when it is absent, and after
   `--abort` re-read the operation state: restored means no sequencer remains, not a
