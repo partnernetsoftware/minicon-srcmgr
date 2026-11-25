@@ -205,6 +205,10 @@ enforced in code or a fixture today.
   --name-only` it still appends its informational records to the same
   NUL-separated stream; `--no-messages` is what makes the output parsable, and the
   first field is the written tree OID, not a path.
+- **A non-zero merge is not always a conflict.** `git merge` exits 1 both when it
+  stops on conflicts and when it refuses; the only reliable difference is whether
+  Git left merge state (`MERGE_HEAD` or unmerged entries). Read the state after
+  the exit, never the code alone.
 - **A non-zero exit can be data.** `runner::run` turns any non-zero code into an
   error and drops stdout, so a preview that reads Git's own verdict (`merge-tree`
   exits 1 when paths conflict) needs `run_allowing_failure`; do not widen `run`.

@@ -197,6 +197,80 @@ pub fn preview_merge(
         worktree_dirty: worktree_dirty(git, repo)?,
     })
 }
+/// The actual result of an approved merge.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MergeReport {
+    /// HEAD before the merge.
+    pub before: String,
+    /// HEAD after the merge; equal to \`before\` when the merge stopped.
+    pub after: String,
+    /// Paths Git left unmerged; empty unless the merge stopped on conflicts.
+    pub conflicted: Vec<String>,
+    /// True when the branch moved. A conflict stop leaves it where it was.
+    pub moved: bool,
+}
+
+/// Merges the previewed target into the current branch.
+///
+/// The preview is the permission: the caller approves its values and this
+/// function revalidates them immediately before writing. A moved HEAD, a target
+/// that no longer resolves to the reviewed commit, or an operation Git already
+/// has unfinished refuses instead of merging something the user did not see.
+///
+/// A non-zero exit from \`git merge\` is a conflict stop only when Git left merge
+/// state behind; anything else is reported with Git's own first error line.
+pub fn apply_merge(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    preview: &MergePreview,
+) -> Result<MergeReport, GitError> {
+    let state = crate::operation_state::detect(git, repo)?;
+    if state.blocks_writes() {
+        return Err(GitError::OperationInProgress);
+    }
+
+    let current = read_line(git, repo, &["rev-parse", "HEAD"])?;
+    if current != preview.current {
+        return Err(GitError::StaleMergePreview);
+    }
+    let target = read_line(
+        git,
+        repo,
+        &["rev-parse", "--verify", &format!("{}^{{commit}}", preview.target)],
+    )?;
+    if target != preview.target {
+        return Err(GitError::StaleMergePreview);
+    }
+
+    let output = runner::run_allowing_failure(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["merge", "--no-edit", &preview.target],
+        Limits::MUTATION,
+    )?;
+
+    if output.code == 0 {
+        let after = read_line(git, repo, &["rev-parse", "HEAD"])?;
+        return Ok(MergeReport {
+            moved: after != preview.current,
+            before: preview.current.clone(),
+            after,
+            conflicted: Vec::new(),
+        });
+    }
+
+    let after = crate::operation_state::detect(git, repo)?;
+    if after.operation.is_some() || !after.unmerged.is_empty() {
+        return Ok(MergeReport {
+            before: preview.current.clone(),
+            after: current,
+            conflicted: after.unmerged,
+            moved: false,
+        });
+    }
+    Err(GitError::Exit { code: output.code, detail: output.detail })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,5 +416,59 @@ mod tests {
                 "{target:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_approved_fast_forward_moves_the_branch_to_the_reviewed_commit() {
+        let (root, _) = base("apply-ff");
+        let installation = feature(&root);
+        let repo = identity(&root, &installation);
+        let preview = preview_merge(&installation, &repo, "feature").unwrap();
+        let report = apply_merge(&installation, &repo, &preview).unwrap();
+        assert!(report.moved);
+        assert_eq!(report.before, preview.current);
+        assert_eq!(report.after, preview.target);
+        assert_eq!(head(&root), preview.target);
+        assert!(report.conflicted.is_empty());
+    }
+
+    #[test]
+    fn a_conflicted_merge_stops_with_the_paths_and_moves_nothing() {
+        let (root, _) = base("apply-conflict");
+        let installation = feature(&root);
+        std::fs::write(root.join("a.txt"), "one\nmain\n").unwrap();
+        commit(&root, "main edit");
+        run(&root, &["switch", "-q", "feature"]);
+        std::fs::write(root.join("a.txt"), "one\nfeature\n").unwrap();
+        commit(&root, "feature edit");
+        run(&root, &["switch", "-q", "main"]);
+        let repo = identity(&root, &installation);
+        let preview = preview_merge(&installation, &repo, "feature").unwrap();
+        let before = head(&root);
+        let report = apply_merge(&installation, &repo, &preview).unwrap();
+        assert!(!report.moved);
+        assert_eq!(report.after, before);
+        assert_eq!(report.conflicted, vec!["a.txt".to_owned()]);
+        assert!(root.join(".git/MERGE_HEAD").exists(), "a conflict stop leaves merge state");
+        assert_eq!(head(&root), before);
+        assert!(matches!(
+            apply_merge(&installation, &repo, &preview),
+            Err(GitError::OperationInProgress)
+        ));
+    }
+
+    #[test]
+    fn a_repository_that_moved_after_the_preview_is_not_merged() {
+        let (root, _) = base("stale");
+        let installation = feature(&root);
+        let repo = identity(&root, &installation);
+        let preview = preview_merge(&installation, &repo, "feature").unwrap();
+        std::fs::write(root.join("c.txt"), "three\n").unwrap();
+        commit(&root, "moved on");
+        assert!(matches!(
+            apply_merge(&installation, &repo, &preview),
+            Err(GitError::StaleMergePreview)
+        ));
+        assert_ne!(head(&root), preview.target);
     }
 }

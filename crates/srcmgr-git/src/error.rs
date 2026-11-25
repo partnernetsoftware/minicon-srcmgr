@@ -30,6 +30,10 @@ pub enum GitError {
     CheckoutTarget(&'static str),
     /// A merge target or merge base cannot be used as reviewed.
     IntegrationTarget(&'static str),
+    /// The repository moved after the merge was reviewed.
+    StaleMergePreview,
+    /// Git already has an unfinished operation that a merge would disturb.
+    OperationInProgress,
     /// The clone destination or option is not acceptable.
     CloneTarget(&'static str),
     /// The current branch has no configured upstream.
@@ -100,6 +104,8 @@ impl fmt::Display for GitError {
             Self::CloneTarget(reason) => formatter.write_str(reason),
             Self::CheckoutTarget(reason) => formatter.write_str(reason),
             Self::IntegrationTarget(reason) => formatter.write_str(reason),
+            Self::StaleMergePreview => formatter.write_str("the repository moved after the merge was reviewed; review it again"),
+            Self::OperationInProgress => formatter.write_str("Git already has an unfinished operation; finish or abort it before merging"),
             Self::NoUpstream => formatter.write_str("the current branch has no upstream; set one before pulling or pushing"),
             Self::DetachedHead => formatter.write_str("HEAD is detached; switch to a branch before pulling or pushing"),
             Self::OutputLimit => formatter.write_str("Git produced more output than allowed; it was terminated"),

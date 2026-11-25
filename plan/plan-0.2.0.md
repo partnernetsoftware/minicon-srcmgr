@@ -155,7 +155,7 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 | Case | Required outcome | State |
 |---|---|---|
 | C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[-]` preview answers all four outcomes from Git in `srcmgr-git::integrate`, with five fixture tests; the window entry, the review text and the apply ticket are not built |
-| C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[_]` |
+| C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[-]` `apply_merge` revalidates HEAD and the target, runs one `git merge --no-edit`, and reports a conflict stop from Git's own state; three fixture tests cover fast-forward, conflict stop and a stale preview. No ticket or window action yet |
 | C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[_]` |
 | C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[_]` |
 | C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[_]` |
@@ -254,3 +254,27 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
 - **Open.** Preview only: no apply, no window surface, no review text and no
   ticket. C1 stays `[-]` until a `Workspace::key` case drives a reviewed merge end to
   end.
+
+### 2026-11-25 · merge apply behind a revalidated preview
+
+- **Built.** `apply_merge` consumes a `MergePreview` the caller approved and
+  revalidates it immediately before writing: an unfinished operation, a HEAD
+  that moved, or a target that no longer resolves to the reviewed commit is
+  refused rather than merged. It runs one `git merge --no-edit <oid>` and reports
+  `MergeReport { before, after, conflicted, moved }`.
+- **A non-zero merge is not always an error.** `git merge` exits 1 when it stops
+  on conflicts and also when it refuses for another reason; the difference is
+  whether Git left merge state. The function re-reads `operation_state` and only
+  reports a conflict stop when a marker or an unmerged path exists, otherwise it
+  returns Git's own first error line.
+- **Runner detail.** `Output` now carries `detail`, the same sanitised first error
+  line `run` already reported, so a tolerated non-zero exit can still show what
+  Git said.
+- **Evidence.** Three fixture tests: an approved fast-forward moves the branch to
+  the reviewed OID, a conflicted merge reports exactly `a.txt` with HEAD unmoved
+  and `MERGE_HEAD` present, a second approval while that merge is unfinished is
+  refused with `OperationInProgress`, and a commit made after the preview is
+  refused with `StaleMergePreview`. `cargo test -p srcmgr-git` passes (48 library
+  tests plus the integration targets) and clippy is clean.
+- **Open.** Still the Git layer: no ticket, no window action and no review text.
+  C2 stays `[-]` until `Workspace::key` drives an approved merge end to end.

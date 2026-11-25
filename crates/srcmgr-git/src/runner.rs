@@ -111,6 +111,9 @@ pub struct Output {
     /// The exit code Git reported. Zero for every ordinary call; a preview that
     /// reads a non-zero exit as data asks for it explicitly.
     pub code: i32,
+    /// Git's first error line, sanitised like every other reported detail.
+    /// Empty on success and on a tolerated non-zero exit that printed none.
+    pub detail: String,
 }
 
 /// Runs `executable` with `arguments` and returns its stdout on exit code 0.
@@ -272,10 +275,10 @@ fn run_input<S: AsRef<OsStr>>(
         return Err(GitError::OutputLimit);
     }
     match exit {
-        Some(ProcessExit::Code(0)) => {if let Some(result)=input_result {result.map_err(GitError::Io)?;}Ok(Output { stdout, code: 0 })},
+        Some(ProcessExit::Code(0)) => {if let Some(result)=input_result {result.map_err(GitError::Io)?;}Ok(Output { stdout, code: 0, detail: String::new() })},
         Some(ProcessExit::Code(code)) if options.accept_failure => {
             if let Some(result) = input_result { result.map_err(GitError::Io)?; }
-            Ok(Output { stdout, code })
+            Ok(Output { stdout, code, detail: first_error_line(&stderr) })
         }
         Some(ProcessExit::Code(code)) => Err(GitError::Exit { code, detail: first_error_line(&stderr) }),
         _ => Err(GitError::Terminated),
