@@ -267,8 +267,10 @@ catalog! {
     ResolutionIncoming => "incoming (stage 3)", "传入侧（阶段 3）";
     NoteResolutionDone => "Resolved {path} with the {side} side; {count} path(s) remain unmerged.", "已用{side}解决 {path}；仍有 {count} 个路径未合并。";
     NoteResolutionExpired => "The resolution review expired or was already used; choose the side again.", "解决复核已过期或已被使用；请重新选择该侧。";
+    NoteStagedResolved => "Staged the edited copy of {path}; {count} path(s) remain unmerged.", "已暂存 {path} 的编辑结果；仍有 {count} 个路径未合并。";
+    NoteStagedMarkers => "Warning: the staged file still contains conflict-marker-like lines. Git accepted it, so check that the markers are what you meant to keep.", "警告：暂存的文件中仍有类似冲突标记的行。Git 已接受，请确认这些标记确实是你要保留的内容。";
     HintResolutionReview => "y applies this side · n or Esc keeps the conflict", "y 应用该侧 · n 或 Esc 保留冲突";
-    HintConflicts => "C closes · j/k moves · u takes current · w takes incoming · each row names its class", "C 关闭 · j/k 移动 · u 取当前侧 · w 取传入侧 · 每行给出类别";
+    HintConflicts => "C closes · j/k moves · u current · w incoming · e editor · Space stages the edited file", "C 关闭 · j/k 移动 · u 当前侧 · w 传入侧 · e 编辑器 · Space 暂存已编辑文件";
     CloneFailedTitle => "Clone failed", "克隆失败";
     CloneTargetLine => "Target: {destination}", "目标：{destination}";
     NoteCheckoutExpired => "The checkout review expired or was already used; review it again.", "检出复核已过期或已被使用；请重新复核。";

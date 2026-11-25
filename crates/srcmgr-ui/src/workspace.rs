@@ -727,6 +727,17 @@ impl Workspace {
                 center.review = None;
                 Effect::Nothing
             }
+            Key::Space if center.review.is_none() => {
+                let Some(row) = center.rows.get(center.selected) else { return Effect::Nothing };
+                Effect::Send(Job::StageResolution(row.path.clone()))
+            }
+            Key::Char('e') if center.review.is_none() => {
+                let Some(row) = center.rows.get(center.selected) else { return Effect::Nothing };
+                Effect::Send(Job::PrepareTool {
+                    kind: srcmgr_domain::ToolKind::Editor,
+                    file: Some(srcmgr_domain::NativePath::new(row.path.as_str())),
+                })
+            }
             Key::Char('u') if center.review.is_none() => center.preview(crate::ResolutionChoice::Current),
             Key::Char('w') if center.review.is_none() => center.preview(crate::ResolutionChoice::Incoming),
             Key::Down | Key::Char('j') => {
@@ -2135,6 +2146,13 @@ impl Workspace {
                     center.review = Some((ticket, lines));
                 }
                 Effect::Nothing
+            }
+            Reply::ResolutionStaged { lines } => {
+                if let Some(center) = self.conflicts.as_mut() {
+                    center.review = None;
+                }
+                self.notice = Some(lines.join(" "));
+                Effect::Send(Job::LoadConflicts)
             }
             Reply::ResolutionApplied { lines } => {
                 if let Some(center) = self.conflicts.as_mut() {
@@ -3625,6 +3643,29 @@ mod tests {
         merging.operation = Some("merge".into());
         let mut workspace = Workspace::new(merging);
         assert_ne!(workspace.key(Key::Char('S')), Effect::Send(Job::PreviewSkip));
+    }
+
+    #[test]
+    fn space_stages_the_edited_copy_and_e_asks_for_the_editor() {
+        let mut blocked = snapshot(None);
+        blocked.operation = Some("merge".into());
+        blocked.unmerged = vec!["a.txt".into()];
+        let mut workspace = Workspace::new(blocked);
+        let _ = workspace.key(Key::Char('C'));
+        workspace.reply(Reply::Conflicts(vec![crate::ConflictRow {
+            path: "a.txt".into(),
+            class: "content".into(),
+            base: Some("one".into()),
+            current: Some("main".into()),
+            incoming: Some("feature".into()),
+            binary: false,
+            truncated: false,
+        }]));
+        assert_eq!(workspace.key(Key::Space), Effect::Send(Job::StageResolution("a.txt".into())));
+        assert!(matches!(
+            workspace.key(Key::Char('e')),
+            Effect::Send(Job::PrepareTool { kind: srcmgr_domain::ToolKind::Editor, .. })
+        ));
     }
 
     #[test]

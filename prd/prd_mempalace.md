@@ -153,6 +153,10 @@ enforced in code or a fixture today.
 - **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
   taken.** Show it, or say the time is unavailable; never present ahead/behind as
   live server truth.
+- **An editor resolution is staged, not assumed.** After the tool returns, the
+  window stages the worktree copy and asks Git whether the path is still
+  unmerged. Marker-like lines are reported as a warning because the user may
+  have kept them on purpose; a zero exit from the tool proves nothing.
 - **A job record is written before the command, never after.** If the record
   cannot be written, the mutation must not run: the window would otherwise make
   a change it cannot later account for. Clear it on every returning path; leave

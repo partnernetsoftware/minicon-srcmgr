@@ -47,7 +47,7 @@ pub use index_summary::{IndexSummary, index_summary};
 pub use clone::{ClonePreview, CloneRequest, clone as clone_repository, preview as preview_clone};
 pub use checkout::{CheckoutPreview, apply as checkout_worktree, pending_checkout, preview as preview_checkout};
 pub use journal::{PendingJob, acknowledge as acknowledge_journal, begin as begin_journal, finish as finish_journal, pending as pending_job};
-pub use conflicts::{ConflictClass, ConflictEntry, ConflictSide, ResolutionPreview, ResolutionSide, apply_resolution, preview_resolution, read_conflicts, side_text};
+pub use conflicts::{ConflictClass, ConflictEntry, ConflictSide, ResolutionPreview, ResolutionSide, StagedResolution, apply_resolution, preview_resolution, read_conflicts, side_text, stage_resolution};
 pub use integrate::{AbortPreview, AbortReport, ContinueReport, SkipPreview, SkipReport, apply_skip, preview_skip, MergeOutcome, MergePreview, MergeReport, RebasePreview, RebaseReport, apply_abort, apply_merge, apply_rebase, continue_operation, preview_abort, preview_merge, preview_rebase};
 pub use remote_edit::{RemoteChange, RemotePreview, apply as apply_remote_change, preview as preview_remote_change, target as remote_change_target};
 pub use remotes::{FetchReport, FetchUpdate, RemoteSummary, TrackingState, fetch, list as list_remotes, progress_line, redact_url, tracking};

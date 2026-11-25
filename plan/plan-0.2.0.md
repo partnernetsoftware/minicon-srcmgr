@@ -158,7 +158,7 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 | C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[v]` the ticket is one-use and bound to the preview, `y` merges exactly it, a wrong ticket is refused without consuming the review, and a conflict stop reports the paths with HEAD unmoved; three Git-layer tests plus one end-to-end case from keys through the backend |
 | C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[v]` preview and ticket as before; a conflict stop is followed by `A`, whose review names the operation and `ORIG_HEAD`, and `y` restores the branch and HEAD with the sequencer gone; four Git-layer tests plus the key path |
 | C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[v]` the center lists every row with its class and composes base/current/incoming by role; a resolution request for delete/modify, symlink, submodule or unclassified is refused with a named reason before anything is written |
-| C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[-]` whole-side resolution is previewed, ticketed and applied by exact object id, staging only that path; the external merge tool is not built |
+| C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[v]` whole-side writes the reviewed object; `e` hands the path to the configured trusted editor; Space stages the edited copy and reports marker-like lines as a warning while Git decides whether the path is still unmerged. A dedicated three-way merge tool is not a product setting, and the notes say so |
 | C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[v]` continue, skip and abort are delivered; a fresh window reads a running operation from Git; every mutation writes a one-line job record first and clears it only when the command returns, so a record found at open is reported as needs-reconciliation until the user acknowledges it with `X` |
 | C7 · qualification | Keyboard-only conflicted merge in both locales; clean-image and five-participant courts run or named | `[_]` |
 
@@ -490,3 +490,27 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
 - **What this is not.** The record answers "did a job finish?" It does not
   snapshot the worktree or promise an undo, and a killed process can still leave
   Git's own half-applied state. The window says so rather than repairing it.
+
+### 2026-11-25 · resolving in an editor, staging the result
+
+- **Built.** `stage_resolution` refuses a path the index does not list as
+  unmerged, runs `git add -- <path>` under a job record, re-reads the index and
+  fails if the path is still unmerged, then reports whether the staged file
+  still holds marker-like lines.
+- **In the window.** `e` hands the selected path to the configured trusted
+  editor through the existing tool contract; Space stages whatever the worktree
+  now holds. Markers are a warning, never a refusal: the user may have kept them
+  deliberately, and Git's index is the authority on whether the path is resolved.
+- **Why not a merge-tool setting.** The product configures an editor and a
+  terminal, not a three-way merge program. Adding a third tool kind would mean a
+  new setting, a new trust review and a new argument contract for one key; the
+  editor path uses what is already reviewed, and the release notes state the
+  limit instead of implying a tool the product does not configure.
+- **Evidence.** Three Git-layer tests (staging an untouched copy resolves the
+  path and warns about markers, staging a cleanly edited copy does not warn, and
+  a path that is not unmerged is refused), one `Workspace::key` case (Space sends
+  the stage job and `e` sends the editor handoff), and one end-to-end case that
+  merges, conflicts, edits the file, presses Space, resolves, continues, and
+  checks the resulting merge commit has two parents.
+- **Open.** C7: the clean-image and five-participant courts still need a
+  machine and people.

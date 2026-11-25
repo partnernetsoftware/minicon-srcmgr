@@ -378,6 +378,8 @@ pub enum Job {
     },
     /// Writes the reviewed side.
     ApplyResolution(String),
+    /// Stages whatever the worktree now holds for one unmerged path.
+    StageResolution(String),
     /// Validates one remote edit and returns the exact local effect. Nothing is
     /// written and no server is contacted.
     PreviewRemoteEdit(RemoteEdit),
@@ -563,6 +565,10 @@ pub enum Reply {
     },
     /// The resolution wrote; its lines say how many paths are still unmerged.
     ResolutionApplied {
+        lines: Vec<String>,
+    },
+    /// The edited copy was staged; its lines carry any marker warning.
+    ResolutionStaged {
         lines: Vec<String>,
     },
     RemoteReview {

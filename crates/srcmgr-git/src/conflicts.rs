@@ -313,6 +313,62 @@ pub fn apply_resolution(
     Ok(())
 }
 
+/// What staging the worktree copy of a conflicted path found.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StagedResolution {
+    /// True when the staged file still holds conflict-marker-like lines.
+    pub markers: bool,
+}
+
+/// Stages whatever the worktree now holds for an unmerged path.
+///
+/// This is the editor path: the user resolved the file in a trusted editor and
+/// the window stages the result. Marker-like lines are reported, not refused,
+/// because the user may have written them deliberately; Git's index decides
+/// whether the path is still unmerged afterwards, and that decision is checked.
+pub fn stage_resolution(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    path: &str,
+) -> Result<StagedResolution, GitError> {
+    let entries = read_conflicts(git, repo)?;
+    if !entries.iter().any(|entry| entry.path == path) {
+        return Err(GitError::ConflictResolution(
+            "the path is not unmerged any more; refresh the conflict center",
+        ));
+    }
+    crate::journal::begin(git, repo, "stage-resolution")?;
+    runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["add", "--", path],
+        None,
+        Limits::MUTATION,
+    )?;
+    crate::journal::finish(git, repo)?;
+    let remaining = read_conflicts(git, repo)?;
+    if remaining.iter().any(|entry| entry.path == path) {
+        return Err(GitError::ConflictResolution(
+            "the index still reports this path as unmerged after staging it",
+        ));
+    }
+    let markers = conflict_markers(&repo.worktree_root.join(path));
+    Ok(StagedResolution { markers })
+}
+
+/// Reads the staged file for marker-like lines. Absence of the file is a
+/// deletion, not an error.
+fn conflict_markers(path: &std::path::Path) -> bool {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    text.lines().any(|line| {
+        line.starts_with("<<<<<<< ") || line.starts_with(">>>>>>> ") || line == "======="
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,5 +560,32 @@ mod tests {
         let error = preview_resolution(&installation, &identity, "a.txt", ResolutionSide::Current).expect_err("clean index");
         assert!(matches!(error, GitError::ConflictResolution(_)), "{error}");
         assert!(root.join("a.txt").exists());
+    }
+
+    #[test]
+    fn staging_the_edited_copy_clears_the_path_and_reports_kept_markers() {
+        let (root, installation, identity) = start("stage-markers");
+        stopped(&root, b"one\nmain\n", b"one\nfeature\n");
+        let staged = stage_resolution(&installation, &identity, "a.txt").unwrap();
+        assert!(staged.markers, "the untouched file still holds markers");
+        assert!(read_conflicts(&installation, &identity).unwrap().is_empty());
+    }
+
+    #[test]
+    fn staging_a_cleanly_edited_copy_reports_no_markers() {
+        let (root, installation, identity) = start("stage-clean");
+        stopped(&root, b"one\nmain\n", b"one\nfeature\n");
+        std::fs::write(root.join("a.txt"), "one\nmain and feature\n").unwrap();
+        let staged = stage_resolution(&installation, &identity, "a.txt").unwrap();
+        assert!(!staged.markers);
+        assert!(read_conflicts(&installation, &identity).unwrap().is_empty());
+        assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "one\nmain and feature\n");
+    }
+
+    #[test]
+    fn staging_a_path_that_is_not_unmerged_is_refused() {
+        let (_root, installation, identity) = start("stage-clean-index");
+        let error = stage_resolution(&installation, &identity, "a.txt").expect_err("refused");
+        assert!(matches!(error, GitError::ConflictResolution(_)), "{error}");
     }
 }
