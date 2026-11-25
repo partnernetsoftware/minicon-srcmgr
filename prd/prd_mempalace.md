@@ -117,6 +117,7 @@ Use the linked record as truth; this table only tells you where to look.
 | 0.1.0 | Published 2026-11-07: signed, runnable Windows x86_64 beta; its notes name six gaps | [notes](../releases/0.1.0.md) |
 | 0.1.2 | Published 2026-11-09: all six cells build/run/package; both Windows cells Authenticode-signed, `release_eligible=true`; macOS and Linux unsigned | [notes](../releases/0.1.2.md), [PRD 12](PRD_12_platform_delivery.md#support-matrix) |
 | 0.1.3 | Published 2026-11-14 as `0.1.3-beta` (pre-release, `releases/tag/v0.1.3-beta`): Clone, Remotes, language, divergence and conflict handoff are `[v]`; the clean-image and five-participant courts are `NOT-RUN`; it closed under exit path 2 with both courts named in the notes | [notes](../releases/0.1.3.md), [plan](../plan/plan-0.1.3.md#qualification-path-and-exit-criteria) |
+| 0.2.0 | Planned, not started: reviewed merge and rebase, conflict center with stages, whole-side and external-tool resolution, continue/skip/abort, restart truth. The in-app result editor is 0.2.1, and no note may call the center complete without it | [plan](../plan/plan-0.2.0.md) |
 
 Two items are **BLOCKED by missing external conditions**, not by code: the
 clean-image court needs a machine that never had the product or the Rust
@@ -200,6 +201,7 @@ enforced in code or a fixture today.
 - **Run identifiers exceed Int32.** Anything converting `GITHUB_RUN_ID` must read
   it as Int64 or it throws before the first file is signed.
 
+- **A new capability class moves the minor number.** 0.1.1-0.1.3 closed promised gaps and kept the minor; merge and rebase write an integration commit the product never wrote before, so they opened 0.2.0. Gap closure and new reach are different claims and get different numbers.
 - **A beta is declared, not inferred.** The tag and the release page say
   `0.1.3-beta` and name the unrun courts; a green suite cannot promote a build to
   a normal release. Precedent: 0.1.0 shipped as a beta naming six gaps rather than
