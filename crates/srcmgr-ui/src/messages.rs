@@ -251,7 +251,14 @@ catalog! {
     ConflictTruncated => "… truncated at the display bound", "…… 已在显示上限处截断";
     ConflictMissingSide => "(this side has no entry)", "（该侧没有条目）";
     NoteNoConflicts => "No unmerged path to show.", "没有可显示的未合并路径。";
-    HintConflicts => "C closes · j/k moves · each row names its class and every side the index holds", "C 关闭 · j/k 移动 · 每行给出类别与索引中存在的各侧";
+    ResolutionReviewLine => "Resolve {path} with the {side} side: the index entry and the worktree file become object {oid} ({bytes} bytes). Nothing else is staged.", "用{side}解决 {path}：索引条目与工作树文件都变为对象 {oid}（{bytes} 字节）。不会暂存其他内容。";
+    ResolutionBinaryNote => "This side is binary; the review shows its object id instead of its content.", "该侧为二进制；复核仅给出对象 ID，不显示内容。";
+    ResolutionCurrent => "current (stage 2)", "当前侧（阶段 2）";
+    ResolutionIncoming => "incoming (stage 3)", "传入侧（阶段 3）";
+    NoteResolutionDone => "Resolved {path} with the {side} side; {count} path(s) remain unmerged.", "已用{side}解决 {path}；仍有 {count} 个路径未合并。";
+    NoteResolutionExpired => "The resolution review expired or was already used; choose the side again.", "解决复核已过期或已被使用；请重新选择该侧。";
+    HintResolutionReview => "y applies this side · n or Esc keeps the conflict", "y 应用该侧 · n 或 Esc 保留冲突";
+    HintConflicts => "C closes · j/k moves · u takes current · w takes incoming · each row names its class", "C 关闭 · j/k 移动 · u 取当前侧 · w 取传入侧 · 每行给出类别";
     CloneFailedTitle => "Clone failed", "克隆失败";
     CloneTargetLine => "Target: {destination}", "目标：{destination}";
     NoteCheckoutExpired => "The checkout review expired or was already used; review it again.", "检出复核已过期或已被使用；请重新复核。";

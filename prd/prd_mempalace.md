@@ -153,6 +153,10 @@ enforced in code or a fixture today.
 - **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
   taken.** Show it, or say the time is unavailable; never present ahead/behind as
   live server truth.
+- **Resolve by stage and object id, not by `--ours`/`--theirs`.** The two names swap
+  meaning during a rebase, so a whole-side choice written with them can take the
+  wrong side without any error. `update-index --cacheinfo mode,oid,path` plus
+  `checkout-index -f` writes exactly the object the review named.
 - **An attribute belongs to the item directly below it.** Inserting a struct
   between `#[derive(...)]` and its enum silently strips the enum's derives and
   breaks every test that formats it. Insert above the attribute, never between.

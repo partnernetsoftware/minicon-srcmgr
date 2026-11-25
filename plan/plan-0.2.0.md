@@ -157,8 +157,8 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 | C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[v]` `m` opens the form, Enter asks for the preview, the review names the outcome, the branch, the short OIDs, the commit count or the conflicting paths, and the worktree, index and refs are untouched; five Git-layer tests and one `Workspace::key` path prove it |
 | C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[v]` the ticket is one-use and bound to the preview, `y` merges exactly it, a wrong ticket is refused without consuming the review, and a conflict stop reports the paths with HEAD unmoved; three Git-layer tests plus one end-to-end case from keys through the backend |
 | C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[v]` preview and ticket as before; a conflict stop is followed by `A`, whose review names the operation and `ORIG_HEAD`, and `y` restores the branch and HEAD with the sequencer gone; four Git-layer tests plus the key path |
-| C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[-]` the center lists every row, names its class and composes base/current/incoming with the role named; binary sides say so instead of showing bytes. Refusing an unsupported class needs the resolution action, which is C5 |
-| C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[_]` |
+| C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[v]` the center lists every row with its class and composes base/current/incoming by role; a resolution request for delete/modify, symlink, submodule or unclassified is refused with a named reason before anything is written |
+| C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[-]` whole-side resolution is previewed, ticketed and applied by exact object id, staging only that path; the external merge tool is not built |
 | C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[-]` continue and abort are delivered for merge and rebase, with Git's own refusal while a path is unmerged; skip and a restart proof are missing |
 | C7 · qualification | Keyboard-only conflicted merge in both locales; clean-image and five-participant courts run or named | `[_]` |
 
@@ -417,3 +417,25 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
   Full suite passes and clippy reports no warning.
 - **Open.** No resolution, no mark-resolved, no skip. Reading a conflict is not
   finishing one, and the ledger says so.
+
+### 2026-11-25 · taking one side, by object id
+
+- **Built.** `preview_resolution` names the path, the side, the exact object, its
+  mode and size, and the text when it is text. `apply_resolution` re-reads the
+  entry, refuses when the recorded object moved, replaces the index entry with
+  `update-index --cacheinfo` and fills the worktree with `checkout-index -f`, then
+  re-reads the index and fails if the path is still unmerged.
+- **Why not `--ours`/`--theirs`.** Their meaning swaps during a rebase; a stage number
+  and an object id do not. The review shows a stage role and the resolution
+  writes that object, so a rebase conflict cannot quietly take the wrong side.
+- **Refusals are named.** delete/modify is refused because choosing a side there
+  also decides whether the file exists; symlink, submodule and unclassified
+  conflicts point at the terminal. Nothing is written before the refusal.
+- **Evidence.** Ten conflict fixtures now cover the read model and four new ones
+  cover resolution: current side, incoming side, delete/modify refused, and a
+  path that is no longer unmerged refused. One `Workspace::key` case shows u/w are
+  blocked while a review is showing. One end-to-end case runs merge → conflict →
+  `C` → `u` → `y` → reload → `N` and asserts the file holds the chosen side and no
+  merge state remains. Full suite passes; clippy reports no warning.
+- **Open.** The external merge tool (C5) and skip (C6) are not built, and the
+  in-app result editor remains 0.2.1 by design.

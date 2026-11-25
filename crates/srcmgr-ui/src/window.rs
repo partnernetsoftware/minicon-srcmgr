@@ -1719,6 +1719,14 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         return;
     }
     if let Some(center) = workspace.conflict_center() {
+        if let Some((_, lines)) = &center.review {
+            let (apply, cancel) = trust_buttons(rect, grid);
+            let body = trust_content(rect, grid).0;
+            text_panel(draws, body, grid, true, workspace.t(TextKey::PanelReview), &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+            button_draw(draws, apply, grid, workspace.t(TextKey::PanelReview), BORDER);
+            button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
+            return;
+        }
         let title = workspace.t(TextKey::PanelConflictsTitle).to_owned();
         frame(draws, rect, grid, true, &title);
         let body = locate_info(rect, grid);
@@ -2259,8 +2267,12 @@ fn hints(workspace: &Workspace) -> String {
     if workspace.checkout_review().is_some() {
         return workspace.t(TextKey::HintCheckoutReview).into();
     }
-    if workspace.conflict_center().is_some() {
-        return workspace.t(TextKey::HintConflicts).into();
+    if let Some(center) = workspace.conflict_center() {
+        return if center.review.is_some() {
+            workspace.t(TextKey::HintResolutionReview).into()
+        } else {
+            workspace.t(TextKey::HintConflicts).into()
+        };
     }
     if workspace.abort_review().is_some() {
         return workspace.t(TextKey::HintAbortReview).into();

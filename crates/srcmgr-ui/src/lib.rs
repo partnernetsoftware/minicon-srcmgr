@@ -33,6 +33,7 @@ pub use window::{show, show_entry, show_with_timing};
 pub use model::StashRow;
 pub use model::{CommittedFile, CommittedFiles};
 pub use model::ConflictRow;
+pub use model::ResolutionChoice;
 pub use model::PromptAction;
 pub use model::{RecentRow, TrustReview};
 pub use model::{CommitReview, StagedRow};

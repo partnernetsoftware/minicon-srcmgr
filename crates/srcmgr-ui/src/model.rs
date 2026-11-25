@@ -281,6 +281,15 @@ pub enum MainRequest {
     Commit { id: String },
 }
 
+/// Which recorded side a resolution takes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResolutionChoice {
+    /// Stage 2.
+    Current,
+    /// Stage 3.
+    Incoming,
+}
+
 /// One unmerged path as the conflict center draws it. Side text is already
 /// bounded by the backend, so the interface never holds an unbounded document.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -353,6 +362,13 @@ pub enum Job {
     ContinueIntegration,
     /// Reads the unmerged index entries and their side content.
     LoadConflicts,
+    /// Describes taking one side of one unmerged path.
+    PreviewResolution {
+        path: String,
+        side: ResolutionChoice,
+    },
+    /// Writes the reviewed side.
+    ApplyResolution(String),
     /// Validates one remote edit and returns the exact local effect. Nothing is
     /// written and no server is contacted.
     PreviewRemoteEdit(RemoteEdit),
@@ -516,6 +532,15 @@ pub enum Reply {
     },
     /// The unmerged entries, already bounded and classified by the backend.
     Conflicts(Vec<ConflictRow>),
+    /// A reviewed resolution, waiting for approval.
+    ResolutionReview {
+        ticket: String,
+        lines: Vec<String>,
+    },
+    /// The resolution wrote; its lines say how many paths are still unmerged.
+    ResolutionApplied {
+        lines: Vec<String>,
+    },
     RemoteReview {
         ticket: String,
         lines: Vec<String>,

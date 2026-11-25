@@ -72,15 +72,23 @@ pub struct ConflictCenter {
     /// The lines the panel shows for the selected row, composed here so the
     /// renderer holds no knowledge of stages.
     pub detail: Vec<String>,
+    /// Ticket and lines of a reviewed resolution.
+    pub review: Option<(String, Vec<String>)>,
     /// The locale the detail labels were composed in.
     locale: crate::Locale,
 }
 
 impl ConflictCenter {
     fn new(rows: Vec<crate::ConflictRow>, locale: crate::Locale) -> Self {
-        let mut center = Self { rows, selected: 0, detail: Vec::new(), locale };
+        let mut center = Self { rows, selected: 0, detail: Vec::new(), review: None, locale };
         center.relabel();
         center
+    }
+
+    /// Asks the backend what taking one side would write.
+    fn preview(&mut self, side: crate::ResolutionChoice) -> Effect {
+        let Some(row) = self.rows.get(self.selected) else { return Effect::Nothing };
+        Effect::Send(Job::PreviewResolution { path: row.path.clone(), side })
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -690,6 +698,16 @@ impl Workspace {
                 self.conflicts = None;
                 Effect::Nothing
             }
+            Key::Char('y') if center.review.is_some() => {
+                let (ticket, _) = center.review.take().expect("checked above");
+                Effect::Send(Job::ApplyResolution(ticket))
+            }
+            Key::Char('n') if center.review.is_some() => {
+                center.review = None;
+                Effect::Nothing
+            }
+            Key::Char('u') if center.review.is_none() => center.preview(crate::ResolutionChoice::Current),
+            Key::Char('w') if center.review.is_none() => center.preview(crate::ResolutionChoice::Incoming),
             Key::Down | Key::Char('j') => {
                 center.move_selection(1);
                 Effect::Nothing
@@ -2083,6 +2101,21 @@ impl Workspace {
                 let effect = self.reply(Reply::Full(snapshot));
                 self.notice = Some(crate::messages::text(crate::messages::Key::NoteCheckoutDone, self.locale()).to_owned());
                 effect
+            }
+            Reply::ResolutionReview { ticket, lines } => {
+                if let Some(center) = self.conflicts.as_mut() {
+                    center.review = Some((ticket, lines));
+                }
+                Effect::Nothing
+            }
+            Reply::ResolutionApplied { lines } => {
+                if let Some(center) = self.conflicts.as_mut() {
+                    center.review = None;
+                }
+                self.notice = Some(lines.join(" "));
+                // The rows changed; the center reloads rather than guessing
+                // which path is gone.
+                Effect::Send(Job::LoadConflicts)
             }
             Reply::Conflicts(rows) => {
                 self.trust_scroll = 0;
@@ -3506,6 +3539,33 @@ mod tests {
         assert_eq!(workspace.conflict_center().unwrap().selected, 1, "the selection clamps");
         assert_eq!(workspace.key(Key::Char('C')), Effect::Nothing);
         assert!(workspace.conflict_center().is_none());
+    }
+
+    #[test]
+    fn u_and_w_ask_for_a_side_and_only_y_writes_it() {
+        let mut blocked = snapshot(None);
+        blocked.operation = Some("merge".into());
+        blocked.unmerged = vec!["a.txt".into()];
+        let mut workspace = Workspace::new(blocked);
+        let _ = workspace.key(Key::Char('C'));
+        workspace.reply(Reply::Conflicts(vec![crate::ConflictRow {
+            path: "a.txt".into(),
+            class: "content".into(),
+            base: Some("one".into()),
+            current: Some("main".into()),
+            incoming: Some("feature".into()),
+            binary: false,
+            truncated: false,
+        }]));
+        assert_eq!(
+            workspace.key(Key::Char('u')),
+            Effect::Send(Job::PreviewResolution { path: "a.txt".into(), side: crate::ResolutionChoice::Current })
+        );
+        workspace.reply(Reply::ResolutionReview { ticket: "s1".into(), lines: vec!["Resolve".into()] });
+        assert!(workspace.conflict_center().and_then(|center| center.review.as_ref()).is_some());
+        assert_eq!(workspace.key(Key::Char('u')), Effect::Nothing, "a review blocks another side");
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Send(Job::ApplyResolution("s1".into())));
+        assert_eq!(workspace.key(Key::Char('w')), Effect::Send(Job::PreviewResolution { path: "a.txt".into(), side: crate::ResolutionChoice::Incoming }));
     }
 
     #[test]

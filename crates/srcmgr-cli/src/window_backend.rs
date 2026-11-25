@@ -29,6 +29,15 @@ pub struct WindowBackend {
     rebase: Option<RebasePending>,
     /// A reviewed abort waiting for approval, with the operation it undoes.
     abort: Option<AbortPending>,
+    /// A reviewed conflict resolution waiting for approval.
+    resolution: Option<ResolutionPending>,
+}
+
+/// A resolution whose effect was shown but not approved.
+struct ResolutionPending {
+    ticket: String,
+    preview: srcmgr_git::ResolutionPreview,
+    expires: std::time::Instant,
 }
 
 /// An abort whose effect was shown but not approved.
@@ -283,7 +292,7 @@ impl WindowBackend {
         let worktree = crate::canonical_worktree(path)?;
         let mut selected = options.clone();
         if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
-        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None, merge: None, rebase: None, abort: None };
+        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None, merge: None, rebase: None, abort: None, resolution: None };
         let mut snapshot = candidate.snapshot()?;
         snapshot.navigation = open_profile_store(options)?.navigation(&NativePath::new(candidate.worktree.as_os_str())).map_err(|e| e.to_string())?
             .map(|record| srcmgr_ui::Navigation::decode(&record)).transpose().map_err(str::to_owned)?;
@@ -628,6 +637,70 @@ impl WindowBackend {
                     });
                 }
                 Reply::Conflicts(rows)
+            }
+            Job::PreviewResolution { path, side } => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let side = match side {
+                    srcmgr_ui::ResolutionChoice::Current => srcmgr_git::ResolutionSide::Current,
+                    srcmgr_ui::ResolutionChoice::Incoming => srcmgr_git::ResolutionSide::Incoming,
+                };
+                let preview = srcmgr_git::preview_resolution(&session.installation, &session.identity, &path, side)
+                    .map_err(|error| error.to_string())?;
+                let label = match side {
+                    srcmgr_git::ResolutionSide::Current => self.say(srcmgr_ui::TextKey::ResolutionCurrent),
+                    srcmgr_git::ResolutionSide::Incoming => self.say(srcmgr_ui::TextKey::ResolutionIncoming),
+                };
+                let mut lines = vec![fill(
+                    &self.say(srcmgr_ui::TextKey::ResolutionReviewLine),
+                    &[
+                        ("{path}", preview.path.clone()),
+                        ("{side}", label),
+                        ("{oid}", short(&preview.oid)),
+                        ("{bytes}", preview.bytes.to_string()),
+                    ],
+                )];
+                if preview.binary {
+                    lines.push(self.say(srcmgr_ui::TextKey::ResolutionBinaryNote));
+                }
+                let ticket = crate::confirmation::ticket()?;
+                self.resolution = Some(ResolutionPending {
+                    ticket: ticket.clone(),
+                    preview,
+                    expires: std::time::Instant::now() + std::time::Duration::from_secs(300),
+                });
+                Reply::ResolutionReview { ticket, lines }
+            }
+            Job::ApplyResolution(ticket) => {
+                let refused = match self.resolution.as_ref() {
+                    None => true,
+                    Some(pending) => pending.ticket != ticket || std::time::Instant::now() > pending.expires,
+                };
+                if refused {
+                    return Err(self.say(srcmgr_ui::TextKey::NoteResolutionExpired));
+                }
+                let Some(pending) = self.resolution.take() else {
+                    return Err(self.say(srcmgr_ui::TextKey::NoteResolutionExpired));
+                };
+                let session = open_trusted(&self.options, &self.worktree)?;
+                srcmgr_git::apply_resolution(&session.installation, &session.identity, &pending.preview)
+                    .map_err(|error| error.to_string())?;
+                let remaining = srcmgr_git::read_conflicts(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())?
+                    .len();
+                let label = match pending.preview.side {
+                    srcmgr_git::ResolutionSide::Current => self.say(srcmgr_ui::TextKey::ResolutionCurrent),
+                    srcmgr_git::ResolutionSide::Incoming => self.say(srcmgr_ui::TextKey::ResolutionIncoming),
+                };
+                Reply::ResolutionApplied {
+                    lines: vec![fill(
+                        &self.say(srcmgr_ui::TextKey::NoteResolutionDone),
+                        &[
+                            ("{path}", pending.preview.path.clone()),
+                            ("{side}", label),
+                            ("{count}", remaining.to_string()),
+                        ],
+                    )],
+                }
             }
             Job::PreviewRemoteEdit(edit) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
@@ -1139,6 +1212,7 @@ pub(crate) mod tests {
             merge: None,
             rebase: None,
             abort: None,
+            resolution: None,
         }
     }
 
@@ -2510,5 +2584,52 @@ pub(crate) mod tests {
         assert!(center.detail.iter().any(|line| line.contains("Incoming (stage 3)")), "{:?}", center.detail);
         assert!(std::fs::read_to_string(repo.join("a.txt")).unwrap().contains("<<<<<<<"));
         fixture_git(&repo, &["merge", "--abort"]);
+    }
+
+    #[test]
+    fn the_window_keys_resolve_a_conflict_and_continue_the_merge() {
+        let root = Scratch::new("resolve-keys");
+        let repo = repository(&root.0, "repo");
+        fixture_git(&repo, &["switch", "-q", "-c", "feature"]);
+        fs::write(repo.join("a.txt"), "one\nfeature\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "feature edit"]);
+        fixture_git(&repo, &["switch", "-q", "main"]);
+        fs::write(repo.join("a.txt"), "one\nmain\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "main edit"]);
+        let mut active = backend(&root.0, &repo, true);
+        let Reply::RepositoryOpened(opened) = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(repo.as_os_str()))) else {
+            panic!("open must succeed on a trusted repository");
+        };
+        let mut workspace = srcmgr_ui::Workspace::new(opened);
+
+        let _ = workspace.key(srcmgr_ui::Key::Char('m'));
+        for character in "feature".chars() {
+            let _ = workspace.key(srcmgr_ui::Key::Char(character));
+        }
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Enter) else { panic!("preview") };
+        let _ = workspace.reply(active.run(job));
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('y')) else { panic!("apply") };
+        let _ = workspace.reply(active.run(job));
+
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('C')) else { panic!("load conflicts") };
+        let _ = workspace.reply(active.run(job));
+        assert!(workspace.conflict_center().is_some());
+
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('u')) else { panic!("choose current") };
+        let _ = workspace.reply(active.run(job));
+        assert!(workspace.conflict_center().and_then(|center| center.review.as_ref()).is_some());
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('y')) else { panic!("apply side") };
+        let _ = workspace.reply(active.run(job));
+        // The applied reply asks for a reload; the test performs it as the
+        // window would on the next effect.
+        let _ = workspace.reply(active.run(Job::LoadConflicts));
+        assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "one\nmain\n");
+        assert!(workspace.conflict_center().is_none(), "no unmerged path remains");
+
+        let _ = workspace.reply(active.run(Job::ContinueIntegration));
+        assert!(!repo.join(".git/MERGE_HEAD").exists(), "the merge continues after resolution");
+        assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "one\nmain\n");
     }
 }

@@ -157,6 +157,160 @@ pub fn side_text(
     Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
 }
 
+/// Which recorded side a resolution takes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResolutionSide {
+    /// Stage 2: the current side.
+    Current,
+    /// Stage 3: the incoming side.
+    Incoming,
+}
+
+impl ResolutionSide {
+    pub const fn stage(self) -> u8 {
+        match self {
+            Self::Current => 2,
+            Self::Incoming => 3,
+        }
+    }
+}
+
+/// What taking one side would write, shown before anything is staged.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionPreview {
+    pub path: String,
+    pub side: ResolutionSide,
+    /// The exact object the resolution would put in the index and worktree.
+    pub oid: String,
+    pub mode: u32,
+    pub bytes: usize,
+    /// True when the side is binary; the preview then carries no text.
+    pub binary: bool,
+    /// The side's text, bounded, when it is text.
+    pub text: Option<String>,
+}
+
+/// The same bound the conflict center uses for one side.
+const RESOLUTION_TEXT_LIMIT: usize = 4000;
+
+fn conflicting_entry(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    path: &str,
+    side: ResolutionSide,
+) -> Result<ConflictEntry, GitError> {
+    let entries = read_conflicts(git, repo)?;
+    let Some(entry) = entries.into_iter().find(|entry| entry.path == path) else {
+        return Err(GitError::ConflictResolution(
+            "the path is not unmerged any more; refresh the conflict center",
+        ));
+    };
+    match entry.class {
+        ConflictClass::Content | ConflictClass::AddAdd => {}
+        ConflictClass::DeleteModify => {
+            return Err(GitError::ConflictResolution(
+                "one side deleted this path; taking a side here also decides whether the file exists, which this version does not stage",
+            ))
+        }
+        ConflictClass::Symlink | ConflictClass::Submodule | ConflictClass::Unclassified => {
+            return Err(GitError::ConflictResolution(
+                "this conflict type is not resolvable from the window; resolve it in a terminal",
+            ))
+        }
+    }
+    let present = match side {
+        ResolutionSide::Current => entry.current.is_some(),
+        ResolutionSide::Incoming => entry.incoming.is_some(),
+    };
+    if !present {
+        return Err(GitError::ConflictResolution(
+            "the index has no entry for that side of this path",
+        ));
+    }
+    Ok(entry)
+}
+
+/// Describes taking one side of one conflicted path. Nothing is written.
+pub fn preview_resolution(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    path: &str,
+    side: ResolutionSide,
+) -> Result<ResolutionPreview, GitError> {
+    let entry = conflicting_entry(git, repo, path, side)?;
+    let chosen = match side {
+        ResolutionSide::Current => entry.current.clone().expect("checked above"),
+        ResolutionSide::Incoming => entry.incoming.clone().expect("checked above"),
+    };
+    let output = runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["cat-file", "-s", &chosen.oid],
+        None,
+        Limits::METADATA,
+    )?;
+    let bytes = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| GitError::MalformedOutput { record: 0 })?;
+    let text = side_text(git, repo, &chosen.oid)?;
+    Ok(ResolutionPreview {
+        path: entry.path,
+        side,
+        oid: chosen.oid,
+        mode: chosen.mode,
+        bytes,
+        binary: text.is_none(),
+        text: text.map(|text| text.chars().take(RESOLUTION_TEXT_LIMIT).collect()),
+    })
+}
+
+/// Writes the reviewed side into the index and the worktree.
+///
+/// The index entry is replaced with the exact object the review showed, and
+/// then the worktree is filled from that entry. The \`--ours\`/\`--theirs\` names are
+/// never used: during a rebase their meanings swap, while a stage number does
+/// not.
+pub fn apply_resolution(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    preview: &ResolutionPreview,
+) -> Result<(), GitError> {
+    let entry = conflicting_entry(git, repo, &preview.path, preview.side)?;
+    let chosen = match preview.side {
+        ResolutionSide::Current => entry.current.as_ref().expect("checked by conflicting_entry"),
+        ResolutionSide::Incoming => entry.incoming.as_ref().expect("checked by conflicting_entry"),
+    };
+    if chosen.oid != preview.oid {
+        return Err(GitError::StaleOperationPreview);
+    }
+    runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &[
+            "update-index",
+            "--cacheinfo",
+            &format!("{:o},{},{}", preview.mode, preview.oid, preview.path),
+        ],
+        None,
+        Limits::MUTATION,
+    )?;
+    runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["checkout-index", "-f", "--", &preview.path],
+        None,
+        Limits::MUTATION,
+    )?;
+    let remaining = read_conflicts(git, repo)?;
+    if remaining.iter().any(|entry| entry.path == preview.path) {
+        return Err(GitError::ConflictResolution(
+            "the index still reports this path as unmerged after the resolution",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,5 +453,54 @@ mod tests {
                 Err(GitError::InvalidRevision)
             ));
         }
+    }
+
+    #[test]
+    fn taking_the_current_side_writes_that_blob_and_clears_the_path() {
+        let (root, installation, identity) = start("resolve-current");
+        stopped(&root, b"one\nmain\n", b"one\nfeature\n");
+        let preview = preview_resolution(&installation, &identity, "a.txt", ResolutionSide::Current).unwrap();
+        assert_eq!(preview.side, ResolutionSide::Current);
+        assert!(!preview.binary);
+        assert_eq!(preview.text.as_deref(), Some("one\nmain\n"));
+        assert!(std::fs::read_to_string(root.join("a.txt")).unwrap().contains("<<<<<<<"), "the conflict markers are still there before the resolution");
+        apply_resolution(&installation, &identity, &preview).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "one\nmain\n");
+        assert!(read_conflicts(&installation, &identity).unwrap().is_empty());
+    }
+
+    #[test]
+    fn taking_the_incoming_side_writes_the_other_blob() {
+        let (root, installation, identity) = start("resolve-incoming");
+        stopped(&root, b"one\nmain\n", b"one\nfeature\n");
+        let preview = preview_resolution(&installation, &identity, "a.txt", ResolutionSide::Incoming).unwrap();
+        assert_eq!(preview.text.as_deref(), Some("one\nfeature\n"));
+        apply_resolution(&installation, &identity, &preview).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "one\nfeature\n");
+        assert!(read_conflicts(&installation, &identity).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_delete_modify_conflict_is_refused_by_name() {
+        let (root, installation, identity) = start("resolve-delete");
+        run(&root, &["switch", "-q", "-c", "feature"]);
+        run(&root, &["rm", "-q", "a.txt"]);
+        commit(&root, "feature deletes a");
+        run(&root, &["switch", "-q", "main"]);
+        std::fs::write(root.join("a.txt"), "one\nmain\n").unwrap();
+        commit(&root, "main edits a");
+        let output = Command::new(git()).current_dir(&root).args(["merge", "feature"]).output().unwrap();
+        assert!(!output.status.success());
+        let error = preview_resolution(&installation, &identity, "a.txt", ResolutionSide::Current).expect_err("refused");
+        assert!(matches!(error, GitError::ConflictResolution(_)), "{error}");
+        run(&root, &["merge", "--abort"]);
+    }
+
+    #[test]
+    fn an_unmerged_path_that_no_longer_exists_is_refused_after_a_refresh() {
+        let (root, installation, identity) = start("resolve-gone");
+        let error = preview_resolution(&installation, &identity, "a.txt", ResolutionSide::Current).expect_err("clean index");
+        assert!(matches!(error, GitError::ConflictResolution(_)), "{error}");
+        assert!(root.join("a.txt").exists());
     }
 }
