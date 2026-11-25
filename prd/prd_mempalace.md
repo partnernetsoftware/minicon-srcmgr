@@ -153,6 +153,11 @@ enforced in code or a fixture today.
 - **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
   taken.** Show it, or say the time is unavailable; never present ahead/behind as
   live server truth.
+- **Route a new surface in `key_inner` in the same commit that draws it.** The
+  clone form proved the cost of the other order: it was painted and titled for a
+  whole round while no keystroke reached its fields, and every test drove the
+  form object directly. The merge form shipped with both the routing branch and
+  the `Workspace::key` test.
 - **A surface that is drawn but not routed is inert.** `key_inner` must hand keys
   to every open surface; the clone form was rendered and titled for a whole round
   while no keystroke reached it, and only a workspace-level key test caught it.

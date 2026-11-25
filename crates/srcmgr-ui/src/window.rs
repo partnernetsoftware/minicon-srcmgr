@@ -1718,6 +1718,27 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
         return;
     }
+    if let Some(form) = workspace.merge_form() {
+        if let Some((_, lines)) = &form.review {
+            let (apply, cancel) = trust_buttons(rect, grid);
+            let body = trust_content(rect, grid).0;
+            text_panel(draws, body, grid, true, workspace.t(TextKey::PanelMergeReviewTitle), &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+            button_draw(draws, apply, grid, workspace.t(TextKey::PanelReview), BORDER);
+            button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
+            return;
+        }
+        let frame_title = workspace.t(TextKey::PanelMergeTitle).to_owned();
+        frame(draws, rect, grid, true, &frame_title);
+        let body = locate_info(rect, grid);
+        let shown = if form.target.text.is_empty() { "(empty)".to_owned() } else { form.target.text.clone() };
+        let lines = [
+            format!("> {}: {shown}", workspace.t(TextKey::MergeTargetLabel)),
+            String::new(),
+            workspace.t(TextKey::MergeFormNote).to_owned(),
+        ];
+        text_panel(draws, body, grid, true, &frame_title, &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+        return;
+    }
     if let Some(panel) = workspace.remotes_panel() {
         let (apply, cancel) = trust_buttons(rect, grid);
         let snapshot = workspace.snapshot();
@@ -2214,6 +2235,15 @@ fn hints(workspace: &Workspace) -> String {
     }
     if workspace.checkout_review().is_some() {
         return workspace.t(TextKey::HintCheckoutReview).into();
+    }
+    if let Some(form) = workspace.merge_form() {
+        return if form.working {
+            workspace.t(TextKey::HintWorking).into()
+        } else if form.review.is_some() {
+            workspace.t(TextKey::HintMergeReview).into()
+        } else {
+            workspace.t(TextKey::HintMergeForm).into()
+        };
     }
     if let Some(panel) = workspace.remotes_panel() {
         return if panel.working {

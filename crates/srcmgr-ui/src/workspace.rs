@@ -253,6 +253,8 @@ pub struct Workspace {
     entry_input: Option<crate::entry_input::EntryInput>,
     locate: Option<crate::LocateForm>,
     clone: Option<crate::CloneForm>,
+    /// The merge form, open only while a repository is loaded.
+    merge: Option<crate::MergeForm>,
     tools: Option<crate::ToolForm>,
     navigation_issue: Option<crate::NavigationIssue>,
     filters: [crate::filter::FilterIndex; 3],
@@ -316,6 +318,7 @@ impl Workspace {
             entry_input: None,
             locate: None,
             clone: None,
+            merge: None,
             remotes: None,
             checkout: None,
             tools: None,
@@ -560,6 +563,59 @@ impl Workspace {
         Effect::Nothing
     }
     /// Fetches the current branch upstream's remote, else the first configured remote.
+    /// Opens the merge form. The form merges nothing until a review is approved.
+    pub fn request_merge(&mut self) -> Effect {
+        if self.snapshot.repository.is_none() || self.modal() {
+            return Effect::Nothing;
+        }
+        self.merge = Some(crate::MergeForm::new());
+        self.trust_scroll = 0;
+        Effect::Nothing
+    }
+
+    pub fn merge_form(&self) -> Option<&crate::MergeForm> {
+        self.merge.as_ref()
+    }
+
+    /// The merge form owns the keys while it is open: type a target, Enter to
+    /// review, y to merge exactly that review, n or Escape to leave.
+    pub fn merge_key(&mut self, key: Key) -> Effect {
+        let (reviewing, working) = self
+            .merge
+            .as_ref()
+            .map_or((false, false), |form| (form.review.is_some(), form.working));
+        match key {
+            Key::Char('y') if reviewing => self
+                .merge
+                .as_mut()
+                .map_or(Effect::Nothing, crate::MergeForm::approve),
+            Key::Char('n') | Key::Escape | Key::CtrlC if !working => {
+                self.merge = None;
+                Effect::Nothing
+            }
+            Key::Up => {
+                self.scroll_trust(-1);
+                Effect::Nothing
+            }
+            Key::Down => {
+                self.scroll_trust(1);
+                Effect::Nothing
+            }
+            Key::PageUp => {
+                self.scroll_trust(-(PAGE_LINES as isize));
+                Effect::Nothing
+            }
+            Key::PageDown => {
+                self.scroll_trust(PAGE_LINES as isize);
+                Effect::Nothing
+            }
+            other => self
+                .merge
+                .as_mut()
+                .map_or(Effect::Nothing, |form| form.edit(other)),
+        }
+    }
+
     pub fn fetch_remote(&mut self) -> Effect {
         let target = self.snapshot.upstream.as_ref().and_then(|upstream| upstream.split('/').next().filter(|name| !name.is_empty()).map(str::to_owned)).or_else(|| self.snapshot.remotes.first().map(|remote| remote.name.clone()));
         target.map_or_else(|| { self.notice = Some(crate::messages::text(crate::messages::Key::NoteNoRemote, self.locale()).to_owned()); Effect::Nothing }, |remote| Effect::Send(Job::Fetch { remote }))
@@ -1649,6 +1705,7 @@ impl Workspace {
         // The clone form owns the keys while it is open, including its failure
         // state. Without this the fields could be drawn but never edited.
         if self.clone.is_some() { return self.clone_key(key); }
+        if self.merge.is_some() { return self.merge_key(key); }
         if let Some(form) = self.locate.as_mut() {
             if !form.editor.preedit.is_empty() { return form.edit(key); }
             if key == Key::Escape { return self.cancel_locate(); }
@@ -1849,6 +1906,7 @@ impl Workspace {
             Key::Char('P') if !self.modal() => self.push_branch(),
             Key::Char('f') if !self.modal() => self.fetch_remote(),
             Key::Char('R') => self.request_remotes(),
+            Key::Char('m') if !self.modal() => self.request_merge(),
             Key::Char('o') if !self.modal() && self.snapshot.pending_checkout.is_some() => Effect::Send(Job::PreviewCheckout),
             Key::Char('t') if !self.modal() => self.request_terminal(),
             Key::Char('r') => Effect::Send(Job::Reload),
@@ -1871,13 +1929,16 @@ impl Workspace {
                 self.notice = Some(crate::messages::text(crate::messages::Key::NoteCheckoutDone, self.locale()).to_owned());
                 effect
             }
-            Reply::MergeReview { lines, .. } => {
-                // No approval surface yet: the review is shown, and the ticket
-                // stays with the backend until 0.2.0 wires the merge form.
-                self.notice = Some(lines.join(" "));
+            Reply::MergeReview { ticket, lines } => {
+                if let Some(form) = self.merge.as_mut() {
+                    form.working = false;
+                    form.review = Some((ticket, lines));
+                    self.trust_scroll = 0;
+                }
                 Effect::Nothing
             }
             Reply::MergeApplied { lines, snapshot } => {
+                self.merge = None;
                 let effect = self.reply(Reply::Full(snapshot));
                 self.notice = Some(lines.join(" "));
                 effect
@@ -3191,6 +3252,26 @@ mod tests {
         assert!(workspace.clone_form().is_some());
         assert_eq!(workspace.key(Key::Escape), Effect::Nothing);
         assert!(workspace.clone_form().is_none(), "Escape dismisses the failure");
+    }
+
+    #[test]
+    fn m_opens_the_merge_form_and_only_the_reviewed_ticket_merges() {
+        let mut workspace = Workspace::new(snapshot(None));
+        assert_eq!(workspace.key(Key::Char('m')), Effect::Nothing);
+        assert!(workspace.merge_form().is_some(), "m must open the merge form");
+        for character in "feature".chars() {
+            assert_eq!(workspace.key(Key::Char(character)), Effect::Nothing);
+        }
+        assert_eq!(
+            workspace.key(Key::Enter),
+            Effect::Send(Job::PreviewMerge("feature".into()))
+        );
+        workspace.reply(Reply::MergeReview { ticket: "t1".into(), lines: vec!["Fast-forward".into()] });
+        assert!(workspace.merge_form().and_then(|form| form.review.as_ref()).is_some());
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Send(Job::ApplyMerge("t1".into())));
+        workspace.reply(Reply::MergeApplied { lines: vec!["Merged".into()], snapshot: snapshot(None) });
+        assert!(workspace.merge_form().is_none(), "the form closes once the merge ran");
+        assert_eq!(workspace.notice.as_deref(), Some("Merged"));
     }
 
     #[test]

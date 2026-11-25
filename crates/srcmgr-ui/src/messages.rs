@@ -217,6 +217,12 @@ catalog! {
     PaneCommitsTitle => "[4] Loaded commits {count} max{limit}", "[4] 已载入提交 {count}，上限 {limit}";
     PaneStashesTitle => "[5] Stashes ({count}; max 200)", "[5] 贮藏（{count}；上限 200）";
     PaneStashesEmpty => "No stashes", "没有贮藏";
+    PanelMergeTitle => "Merge", "合并";
+    PanelMergeReviewTitle => "Review merge", "复核合并";
+    MergeTargetLabel => "Target", "目标";
+    MergeFormNote => "Enter reviews the merge; nothing is merged until you approve. Esc leaves.", "Enter 复核合并；批准前不会合并。Esc 离开。";
+    HintMergeForm => "m merge · type a branch, tag or OID · Enter reviews · Esc leaves", "m 合并 · 输入分支、标签或 OID · Enter 复核 · Esc 离开";
+    HintMergeReview => "y merges exactly this review · n or Esc cancels · nothing has been merged", "y 按此复核合并 · n 或 Esc 取消 · 尚未合并";
     CloneFailedTitle => "Clone failed", "克隆失败";
     CloneTargetLine => "Target: {destination}", "目标：{destination}";
     NoteCheckoutExpired => "The checkout review expired or was already used; review it again.", "检出复核已过期或已被使用；请重新复核。";

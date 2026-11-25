@@ -154,8 +154,8 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 
 | Case | Required outcome | State |
 |---|---|---|
-| C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[-]` preview answers all four outcomes from Git in `srcmgr-git::integrate`, with five fixture tests; the window entry, the review text and the apply ticket are not built |
-| C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[-]` `apply_merge` revalidates HEAD and the target, runs one `git merge --no-edit`, and reports a conflict stop from Git's own state; three fixture tests cover fast-forward, conflict stop and a stale preview. The backend now issues a one-use ticket bound to the preview; no window action yet |
+| C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[v]` `m` opens the form, Enter asks for the preview, the review names the outcome, the branch, the short OIDs, the commit count or the conflicting paths, and the worktree, index and refs are untouched; five Git-layer tests and one `Workspace::key` path prove it |
+| C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[v]` the ticket is one-use and bound to the preview, `y` merges exactly it, a wrong ticket is refused without consuming the review, and a conflict stop reports the paths with HEAD unmoved; three Git-layer tests plus one end-to-end case from keys through the backend |
 | C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[_]` |
 | C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[_]` |
 | C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[_]` |
@@ -302,6 +302,24 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
   merges and reports `Merged` with no operation left behind. `cargo test -p
   srcmgr-ui -p srcmgr-cli` passes (the one tool-launch case needs the harmless
   `GIT_CONFIG_COUNT=0` the case itself names), and workspace clippy is clean.
-- **Open.** No window key sends `PreviewMerge` yet, so the review is reachable from
-  the backend and from tests only; the merge form, its keys and the approval are
-  the next round.
+
+### 2026-11-25 · merge in the window
+
+- **Built.** `MergeForm` with one target field; `m` opens it from a loaded
+  repository, Enter sends `PreviewMerge`, the form shows the catalogued review,
+  `y` sends `ApplyMerge(ticket)`, `n` or Escape leaves, and page keys scroll the
+  review. The panel and its footer hints are drawn from the same state, and the
+  form is routed in `key_inner` before any list key can see it.
+- **Why the routing is part of the commit.** The clone form was drawn for a whole
+  round before `key_inner` handed it a key, and only a `Workspace::key` test caught
+  it. This round adds that test with the surface, not after it.
+- **Evidence.** `Workspace::key` case: `m` opens the form, typing fills the
+  target, Enter sends `PreviewMerge("feature")`, the review reply populates the
+  form, `y` sends `ApplyMerge` with the same ticket, and the applied reply closes
+  the form. End-to-end case in the backend tests: the same keys drive a real
+  repository through review and merge, and `b.txt` appears only after `y`.
+  `cargo test -p srcmgr-ui -p srcmgr-cli` passes and workspace clippy reports no
+  warning.
+- **Open.** Rebase (C3), the conflict center (C4/C5) and continuation (C6) are
+  untouched. The merge form cannot yet show an in-progress operation's paths,
+  because that surface is the conflict center.

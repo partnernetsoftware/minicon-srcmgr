@@ -2128,4 +2128,41 @@ pub(crate) mod tests {
         assert_eq!(snapshot.operation, None);
         assert_eq!(std::fs::read_to_string(repo.join("b.txt")).unwrap(), "two\n");
     }
+
+    #[test]
+    fn the_window_keys_drive_a_reviewed_merge_to_completion() {
+        let root = Scratch::new("merge-keys");
+        let repo = repository(&root.0, "repo");
+        fixture_git(&repo, &["switch", "-q", "-c", "feature"]);
+        fs::write(repo.join("b.txt"), "two\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "two"]);
+        fixture_git(&repo, &["switch", "-q", "main"]);
+        let mut active = backend(&root.0, &repo, true);
+        let Reply::RepositoryOpened(opened) = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(repo.as_os_str()))) else {
+            panic!("open must succeed on a trusted repository");
+        };
+        let mut workspace = srcmgr_ui::Workspace::new(opened);
+
+        assert_eq!(workspace.key(srcmgr_ui::Key::Char('m')), srcmgr_ui::Effect::Nothing);
+        for character in "feature".chars() {
+            let _ = workspace.key(srcmgr_ui::Key::Char(character));
+        }
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Enter) else {
+            panic!("Enter must ask for a preview");
+        };
+        assert!(matches!(job, Job::PreviewMerge(_)));
+        let _ = workspace.reply(active.run(job));
+        let review = workspace.merge_form().and_then(|form| form.review.clone()).expect("a review must be showing");
+        assert!(review.1.join(" ").contains("Fast-forward"), "{:?}", review.1);
+        assert!(!repo.join("b.txt").exists(), "a review must not merge");
+
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('y')) else {
+            panic!("y must apply the reviewed merge");
+        };
+        assert!(matches!(job, Job::ApplyMerge(_)));
+        let _ = workspace.reply(active.run(job));
+        assert!(workspace.merge_form().is_none(), "the form closes once the merge ran");
+        assert_eq!(std::fs::read_to_string(repo.join("b.txt")).unwrap(), "two\n");
+    }
 }
