@@ -1722,19 +1722,19 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         if let Some((_, lines)) = &form.review {
             let (apply, cancel) = trust_buttons(rect, grid);
             let body = trust_content(rect, grid).0;
-            text_panel(draws, body, grid, true, workspace.t(TextKey::PanelMergeReviewTitle), &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
+            text_panel(draws, body, grid, true, if form.rebase { workspace.t(TextKey::PanelRebaseReviewTitle) } else { workspace.t(TextKey::PanelMergeReviewTitle) }, &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
             button_draw(draws, apply, grid, workspace.t(TextKey::PanelReview), BORDER);
             button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
             return;
         }
-        let frame_title = workspace.t(TextKey::PanelMergeTitle).to_owned();
+        let frame_title = workspace.t(if form.rebase { TextKey::PanelRebaseTitle } else { TextKey::PanelMergeTitle }).to_owned();
         frame(draws, rect, grid, true, &frame_title);
         let body = locate_info(rect, grid);
         let shown = if form.target.text.is_empty() { "(empty)".to_owned() } else { form.target.text.clone() };
         let lines = [
             format!("> {}: {shown}", workspace.t(TextKey::MergeTargetLabel)),
             String::new(),
-            workspace.t(TextKey::MergeFormNote).to_owned(),
+            workspace.t(if form.rebase { TextKey::RebaseFormNote } else { TextKey::MergeFormNote }).to_owned(),
         ];
         text_panel(draws, body, grid, true, &frame_title, &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
         return;
@@ -2240,9 +2240,9 @@ fn hints(workspace: &Workspace) -> String {
         return if form.working {
             workspace.t(TextKey::HintWorking).into()
         } else if form.review.is_some() {
-            workspace.t(TextKey::HintMergeReview).into()
+            workspace.t(if form.rebase { TextKey::HintRebaseReview } else { TextKey::HintMergeReview }).into()
         } else {
-            workspace.t(TextKey::HintMergeForm).into()
+            workspace.t(if form.rebase { TextKey::HintRebaseForm } else { TextKey::HintMergeForm }).into()
         };
     }
     if let Some(panel) = workspace.remotes_panel() {

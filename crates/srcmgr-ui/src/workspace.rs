@@ -573,6 +573,16 @@ impl Workspace {
         Effect::Nothing
     }
 
+    /// Opens the same surface in rebase mode.
+    pub fn request_rebase(&mut self) -> Effect {
+        if self.snapshot.repository.is_none() || self.modal() {
+            return Effect::Nothing;
+        }
+        self.merge = Some(crate::MergeForm::new_rebase());
+        self.trust_scroll = 0;
+        Effect::Nothing
+    }
+
     pub fn merge_form(&self) -> Option<&crate::MergeForm> {
         self.merge.as_ref()
     }
@@ -589,7 +599,13 @@ impl Workspace {
                 .merge
                 .as_mut()
                 .map_or(Effect::Nothing, crate::MergeForm::approve),
-            Key::Char('n') | Key::Escape | Key::CtrlC if !working => {
+            // n is only a cancel while a review is showing; inside the field it
+            // is the letter, and closing on it made "main" unreachable.
+            Key::Char('n') if reviewing => {
+                self.merge = None;
+                Effect::Nothing
+            }
+            Key::Escape | Key::CtrlC if !working => {
                 self.merge = None;
                 Effect::Nothing
             }
@@ -1907,6 +1923,7 @@ impl Workspace {
             Key::Char('f') if !self.modal() => self.fetch_remote(),
             Key::Char('R') => self.request_remotes(),
             Key::Char('m') if !self.modal() => self.request_merge(),
+            Key::Char('b') if !self.modal() => self.request_rebase(),
             Key::Char('o') if !self.modal() && self.snapshot.pending_checkout.is_some() => Effect::Send(Job::PreviewCheckout),
             Key::Char('t') if !self.modal() => self.request_terminal(),
             Key::Char('r') => Effect::Send(Job::Reload),
@@ -1936,6 +1953,20 @@ impl Workspace {
                     self.trust_scroll = 0;
                 }
                 Effect::Nothing
+            }
+            Reply::RebaseReview { ticket, lines } => {
+                if let Some(form) = self.merge.as_mut() {
+                    form.working = false;
+                    form.review = Some((ticket, lines));
+                    self.trust_scroll = 0;
+                }
+                Effect::Nothing
+            }
+            Reply::RebaseApplied { lines, snapshot } => {
+                self.merge = None;
+                let effect = self.reply(Reply::Full(snapshot));
+                self.notice = Some(lines.join(" "));
+                effect
             }
             Reply::MergeApplied { lines, snapshot } => {
                 self.merge = None;
@@ -3272,6 +3303,22 @@ mod tests {
         workspace.reply(Reply::MergeApplied { lines: vec!["Merged".into()], snapshot: snapshot(None) });
         assert!(workspace.merge_form().is_none(), "the form closes once the merge ran");
         assert_eq!(workspace.notice.as_deref(), Some("Merged"));
+    }
+
+    #[test]
+    fn b_opens_the_same_surface_in_rebase_mode() {
+        let mut workspace = Workspace::new(snapshot(None));
+        assert_eq!(workspace.key(Key::Char('b')), Effect::Nothing);
+        assert!(workspace.merge_form().is_some_and(|form| form.rebase), "b must open rebase mode");
+        for character in "main".chars() {
+            let _ = workspace.key(Key::Char(character));
+        }
+        assert_eq!(
+            workspace.key(Key::Enter),
+            Effect::Send(Job::PreviewRebase("main".into()))
+        );
+        workspace.reply(Reply::RebaseReview { ticket: "r1".into(), lines: vec!["Rebase".into()] });
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Send(Job::ApplyRebase("r1".into())));
     }
 
     #[test]

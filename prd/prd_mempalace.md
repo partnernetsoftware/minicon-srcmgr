@@ -153,6 +153,10 @@ enforced in code or a fixture today.
 - **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
   taken.** Show it, or say the time is unavailable; never present ahead/behind as
   live server truth.
+- **A letter bound as a cancel key eats the same letter in a field.** `n` closed
+  the merge form whenever it was idle, so a target containing `n` could not be
+  typed; the test that typed `feature` missed it. Cancel keys are scoped to the
+  review state, and a typing test uses a value that contains every cancel letter.
 - **Route a new surface in `key_inner` in the same commit that draws it.** The
   clone form proved the cost of the other order: it was painted and titled for a
   whole round while no keystroke reached its fields, and every test drove the

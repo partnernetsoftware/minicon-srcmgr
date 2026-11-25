@@ -13,6 +13,10 @@ use crate::{Effect, Job, Key};
 const TARGET_LIMIT: usize = 1024;
 
 pub struct MergeForm {
+    /// True when the form replays the branch instead of merging into it. The
+    /// two share one surface because they share one shape: a target, a review,
+    /// an approval.
+    pub rebase: bool,
     /// The target exactly as typed: a branch, a remote-tracking name, a tag or
     /// an object id. The backend decides what it resolves to.
     pub target: ComposerState,
@@ -30,7 +34,12 @@ impl Default for MergeForm {
 
 impl MergeForm {
     pub fn new() -> Self {
-        Self { target: ComposerState::default(), working: false, review: None }
+        Self { rebase: false, target: ComposerState::default(), working: false, review: None }
+    }
+
+    /// The same surface, asking Git to replay the branch onto the target.
+    pub fn new_rebase() -> Self {
+        Self { rebase: true, ..Self::new() }
     }
 
     /// The exact binding the backend issued, if a review is showing.
@@ -48,7 +57,7 @@ impl MergeForm {
             return Effect::Nothing;
         }
         self.working = true;
-        Effect::Send(Job::PreviewMerge(target))
+        Effect::Send(if self.rebase { Job::PreviewRebase(target) } else { Job::PreviewMerge(target) })
     }
 
     /// Approves the reviewed merge. The ticket is one-use.
@@ -56,7 +65,7 @@ impl MergeForm {
         match self.ticket() {
             Some(ticket) => {
                 self.working = true;
-                Effect::Send(Job::ApplyMerge(ticket))
+                Effect::Send(if self.rebase { Job::ApplyRebase(ticket) } else { Job::ApplyMerge(ticket) })
             }
             None => Effect::Nothing,
         }

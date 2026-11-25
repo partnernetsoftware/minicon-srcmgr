@@ -156,7 +156,7 @@ because a surface that is drawn and not routed is the defect 0.1.3 already paid 
 |---|---|---|
 | C1 · merge preview | Up-to-date, fast-forward, real merge and conflict-only outcomes are named before approval; nothing changes before it | `[v]` `m` opens the form, Enter asks for the preview, the review names the outcome, the branch, the short OIDs, the commit count or the conflicting paths, and the worktree, index and refs are untouched; five Git-layer tests and one `Workspace::key` path prove it |
 | C2 · merge apply | An approved merge produces exactly the previewed result or stops with the conflicted paths listed | `[v]` the ticket is one-use and bound to the preview, `y` merges exactly it, a wrong ticket is refused without consuming the review, and a conflict stop reports the paths with HEAD unmoved; three Git-layer tests plus one end-to-end case from keys through the backend |
-| C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[_]` |
+| C3 · rebase | The replay count and the new base are named; conflicts stop the replay; abort restores the original branch and HEAD | `[-]` preview names the branch, the base and the replay count; `b` runs it under a one-use ticket; a conflict stops the replay with the paths named and the sequencer left for continuation. Abort belongs to C6 and is not built |
 | C4 · conflict center | Every unmerged path appears with its stages; the three sides are labelled by role; unsupported classes are refused with a named reason | `[_]` |
 | C5 · resolution | Whole-side and external-tool resolutions preview, stage only the marked path, and cannot mark a path resolved without a chosen result | `[_]` |
 | C6 · continuation | Continue, skip and abort follow Git's state; a restart shows the same operation; an interrupted action is needs-reconciliation | `[_]` |
@@ -323,3 +323,28 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
 - **Open.** Rebase (C3), the conflict center (C4/C5) and continuation (C6) are
   untouched. The merge form cannot yet show an in-progress operation's paths,
   because that surface is the conflict center.
+
+### 2026-11-25 · rebase on the same surface
+
+- **Built.** `preview_rebase` and `apply_rebase` mirror the merge pair: resolve
+  the base, compute the commits to replay, refuse a detached HEAD or an
+  unfinished operation, and revalidate HEAD and the base immediately before
+  `git rebase <base>`. A non-zero exit is a stop only when a rebase sequencer exists
+  afterwards; otherwise Git's own first error line is returned.
+- **One surface, two meanings.** The merge form gained a `rebase` flag and
+  `new_rebase()`; `b` opens the same surface in rebase mode and the panel, the
+  footer hints and the two titles follow the flag. Reusing the surface kept the
+  routing and the key handling in one place, which is where the previous round's
+  defect lived.
+- **A defect the rebase test found.** In the shared handler `n` was a cancel key
+  whenever the form was idle, so typing a base like `main` closed the form on its
+  last letter and Enter fell through to the file list. `n` now cancels only
+  while a review is showing; Escape and Ctrl+C still leave. The merge test never
+  caught it because `feature` contains no `n`.
+- **Evidence.** Four Git-layer tests (preview count, a successful replay with no
+  sequencer left, a conflict stop naming `a.txt` with a second approval refused,
+  and a branch that moved after the preview) plus one `Workspace::key` case and one
+  end-to-end case from `b` through the backend on a real repository. Full
+  `cargo test` for ui, cli and git passes and clippy reports no warning.
+- **Open.** Abort and continue are C6; the conflict center is C4/C5. Rebase cannot
+  yet be undone from the window, which is why C3 stays `[-]`.

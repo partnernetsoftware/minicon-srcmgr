@@ -271,6 +271,145 @@ pub fn apply_merge(
     Err(GitError::Exit { code: output.code, detail: output.detail })
 }
 
+/// The reviewed effect of moving the current branch onto another commit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RebasePreview {
+    /// The branch that would be rewound and replayed.
+    pub branch: String,
+    /// HEAD as it is now.
+    pub current: String,
+    /// The commit the branch would be replayed onto.
+    pub onto: String,
+    /// The common ancestor the replay starts from.
+    pub base: String,
+    /// Commits that would be replayed onto \u0060onto\u0060.
+    pub commits: usize,
+    /// Whether the worktree or index already holds changes beside the rebase.
+    pub worktree_dirty: bool,
+}
+
+/// The actual result of an approved rebase.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RebaseReport {
+    /// HEAD before the rebase.
+    pub before: String,
+    /// HEAD after the rebase; equal to \u0060before\u0060 when it stopped.
+    pub after: String,
+    /// Paths Git left unmerged.
+    pub conflicted: Vec<String>,
+    /// True when the branch was rewritten. A conflict stop leaves it part-way.
+    pub moved: bool,
+}
+
+/// Previews replaying the current branch onto \u0060onto\u0060.
+pub fn preview_rebase(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    onto: &str,
+) -> Result<RebasePreview, GitError> {
+    let onto = checked_target(onto)?;
+    let branch = read_line(git, repo, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if branch == "HEAD" {
+        return Err(GitError::DetachedHead);
+    }
+    let current = read_line(git, repo, &["rev-parse", "HEAD"])?;
+    let onto_oid = read_line(
+        git,
+        repo,
+        &["rev-parse", "--verify", &format!("{onto}^{{commit}}")],
+    )?;
+    let base = match runner::run(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["merge-base", "HEAD", &onto_oid],
+        None,
+        Limits::METADATA,
+    ) {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        Err(GitError::Exit { .. }) => {
+            return Err(GitError::IntegrationTarget(
+                "the two histories share no commit, so there is nothing to replay onto it",
+            ))
+        }
+        Err(other) => return Err(other),
+    };
+    let commits = if base == current {
+        0
+    } else {
+        read_line(
+            git,
+            repo,
+            &["rev-list", "--count", &format!("{base}..{current}")],
+        )?
+        .parse::<usize>()
+        .map_err(|_| GitError::MalformedOutput { record: 0 })?
+    };
+    Ok(RebasePreview {
+        branch,
+        current,
+        onto: onto_oid,
+        base,
+        commits,
+        worktree_dirty: worktree_dirty(git, repo)?,
+    })
+}
+
+/// Replays the reviewed branch onto the reviewed commit.
+///
+/// \u0060git rebase\u0060 exits non-zero when it stops on a conflict and when it refuses;
+/// the difference is whether a rebase directory exists afterwards, so the state
+/// is re-read before the exit is reported as an error.
+pub fn apply_rebase(
+    git: &GitInstallation,
+    repo: &RepositoryIdentity,
+    preview: &RebasePreview,
+) -> Result<RebaseReport, GitError> {
+    let state = crate::operation_state::detect(git, repo)?;
+    if state.blocks_writes() {
+        return Err(GitError::OperationInProgress);
+    }
+    let current = read_line(git, repo, &["rev-parse", "HEAD"])?;
+    if current != preview.current {
+        return Err(GitError::StaleMergePreview);
+    }
+    let onto = read_line(
+        git,
+        repo,
+        &["rev-parse", "--verify", &format!("{}^{{commit}}", preview.onto)],
+    )?;
+    if onto != preview.onto {
+        return Err(GitError::StaleMergePreview);
+    }
+
+    let output = runner::run_allowing_failure(
+        git.executable(),
+        Some(&repo.worktree_root),
+        &["rebase", &preview.onto],
+        Limits::MUTATION,
+    )?;
+
+    let after_state = crate::operation_state::detect(git, repo)?;
+    let stopped = after_state.operation.is_some() || !after_state.unmerged.is_empty();
+    if output.code == 0 && !stopped {
+        let after = read_line(git, repo, &["rev-parse", "HEAD"])?;
+        return Ok(RebaseReport {
+            moved: after != preview.current,
+            before: preview.current.clone(),
+            after,
+            conflicted: Vec::new(),
+        });
+    }
+    if stopped {
+        return Ok(RebaseReport {
+            before: preview.current.clone(),
+            after: read_line(git, repo, &["rev-parse", "HEAD"])?,
+            conflicted: after_state.unmerged,
+            moved: false,
+        });
+    }
+    Err(GitError::Exit { code: output.code, detail: output.detail })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,5 +609,78 @@ mod tests {
             Err(GitError::StaleMergePreview)
         ));
         assert_ne!(head(&root), preview.target);
+    }
+
+    #[test]
+    fn a_rebase_preview_names_the_commits_it_would_replay() {
+        let (root, installation) = base("rebase-preview");
+        let _ = feature(&root);
+        run(&root, &["switch", "-q", "feature"]);
+        let repo = identity(&root, &installation);
+        let preview = preview_rebase(&installation, &repo, "main").unwrap();
+        assert_eq!(preview.branch, "feature");
+        assert_eq!(preview.commits, 1);
+        assert_eq!(preview.onto.len(), 40, "the review carries a full object id");
+        assert!(!preview.worktree_dirty);
+        assert!(!root.join(".git/rebase-merge").exists());
+    }
+
+    #[test]
+    fn an_approved_rebase_replays_the_branch_and_leaves_no_sequencer() {
+        let (root, _) = base("rebase-apply");
+        let installation = feature(&root);
+        std::fs::write(root.join("c.txt"), "three\n").unwrap();
+        commit(&root, "main moves on");
+        run(&root, &["switch", "-q", "feature"]);
+        let repo = identity(&root, &installation);
+        let preview = preview_rebase(&installation, &repo, "main").unwrap();
+        let before = head(&root);
+        let report = apply_rebase(&installation, &repo, &preview).unwrap();
+        assert!(report.moved);
+        assert_eq!(report.before, before);
+        assert_ne!(report.after, before);
+        assert_eq!(head(&root), report.after);
+        assert!(report.conflicted.is_empty());
+        assert!(!root.join(".git/rebase-merge").exists());
+        assert!(!root.join(".git/rebase-apply").exists());
+        assert_eq!(std::fs::read_to_string(root.join("c.txt")).unwrap(), "three\n");
+    }
+
+    #[test]
+    fn a_conflicted_rebase_stops_and_reports_the_path() {
+        let (root, _) = base("rebase-conflict");
+        let _ = feature(&root);
+        std::fs::write(root.join("a.txt"), "one\nmain\n").unwrap();
+        commit(&root, "main edit");
+        run(&root, &["switch", "-q", "feature"]);
+        std::fs::write(root.join("a.txt"), "one\nfeature\n").unwrap();
+        commit(&root, "feature edit");
+        let installation = GitInstallation::probe(git()).unwrap();
+        let repo = identity(&root, &installation);
+        let preview = preview_rebase(&installation, &repo, "main").unwrap();
+        let report = apply_rebase(&installation, &repo, &preview).unwrap();
+        assert!(!report.moved);
+        assert_eq!(report.conflicted, vec!["a.txt".to_owned()]);
+        assert!(root.join(".git/rebase-merge").exists() || root.join(".git/rebase-apply").exists());
+        assert!(matches!(
+            apply_rebase(&installation, &repo, &preview),
+            Err(GitError::OperationInProgress)
+        ));
+        run(&root, &["rebase", "--abort"]);
+    }
+
+    #[test]
+    fn a_branch_that_moved_after_the_rebase_preview_is_not_replayed() {
+        let (root, installation) = base("rebase-stale");
+        let _ = feature(&root);
+        run(&root, &["switch", "-q", "feature"]);
+        let repo = identity(&root, &installation);
+        let preview = preview_rebase(&installation, &repo, "main").unwrap();
+        std::fs::write(root.join("d.txt"), "four\n").unwrap();
+        commit(&root, "moved on");
+        assert!(matches!(
+            apply_rebase(&installation, &repo, &preview),
+            Err(GitError::StaleMergePreview)
+        ));
     }
 }

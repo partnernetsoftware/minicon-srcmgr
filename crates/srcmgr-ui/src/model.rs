@@ -325,6 +325,10 @@ pub enum Job {
     PreviewMerge(String),
     /// Merges the reviewed target. The ticket is one-use.
     ApplyMerge(String),
+    /// Describes what replaying this branch onto the base would do.
+    PreviewRebase(String),
+    /// Replays the reviewed branch. The ticket is one-use.
+    ApplyRebase(String),
     /// Validates one remote edit and returns the exact local effect. Nothing is
     /// written and no server is contacted.
     PreviewRemoteEdit(RemoteEdit),
@@ -458,6 +462,16 @@ pub enum Reply {
     /// The merge ran. `lines` says whether the branch moved or stopped on
     /// conflicts; the snapshot reflects whatever Git actually did.
     MergeApplied {
+        lines: Vec<String>,
+        snapshot: Snapshot,
+    },
+    /// A reviewed rebase, waiting for approval. Nothing has moved.
+    RebaseReview {
+        ticket: String,
+        lines: Vec<String>,
+    },
+    /// The rebase ran. `lines` says whether the branch was rewritten or stopped.
+    RebaseApplied {
         lines: Vec<String>,
         snapshot: Snapshot,
     },

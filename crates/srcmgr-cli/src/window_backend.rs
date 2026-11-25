@@ -25,6 +25,15 @@ pub struct WindowBackend {
     checkout: Option<(String, std::time::Instant)>,
     /// A reviewed merge waiting for approval, with the exact preview it showed.
     merge: Option<MergePending>,
+    /// A reviewed rebase waiting for approval, with the exact preview it showed.
+    rebase: Option<RebasePending>,
+}
+
+/// A rebase whose effect was shown but not approved.
+struct RebasePending {
+    ticket: String,
+    preview: srcmgr_git::RebasePreview,
+    expires: std::time::Instant,
 }
 
 /// A merge whose effect was shown but not approved. The preview travels with
@@ -238,7 +247,7 @@ impl WindowBackend {
         let worktree = crate::canonical_worktree(path)?;
         let mut selected = options.clone();
         if selected.git.is_none() { selected.git = Some(crate::selected_git(options)?); }
-        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None, merge: None };
+        let candidate = Self { options: selected, worktree, prepared: None, commit_review: None, reviewed_diff: None, remote_edit: None, checkout: None, merge: None, rebase: None };
         let mut snapshot = candidate.snapshot()?;
         snapshot.navigation = open_profile_store(options)?.navigation(&NativePath::new(candidate.worktree.as_os_str())).map_err(|e| e.to_string())?
             .map(|record| srcmgr_ui::Navigation::decode(&record)).transpose().map_err(str::to_owned)?;
@@ -421,6 +430,73 @@ impl WindowBackend {
                     )]
                 };
                 Reply::MergeApplied { lines, snapshot: self.snapshot()? }
+            }
+            Job::PreviewRebase(onto) => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let preview = srcmgr_git::preview_rebase(&session.installation, &session.identity, &onto)
+                    .map_err(|error| error.to_string())?;
+                let mut lines = vec![if preview.commits == 0 {
+                    fill(
+                        &self.say(srcmgr_ui::TextKey::RebaseReviewNone),
+                        &[
+                            ("{branch}", preview.branch.clone()),
+                            ("{onto}", short(&preview.onto)),
+                        ],
+                    )
+                } else {
+                    fill(
+                        &self.say(srcmgr_ui::TextKey::RebaseReviewCommits),
+                        &[
+                            ("{commits}", preview.commits.to_string()),
+                            ("{branch}", preview.branch.clone()),
+                            ("{onto}", short(&preview.onto)),
+                        ],
+                    )
+                }];
+                if preview.worktree_dirty {
+                    lines.push(self.say(srcmgr_ui::TextKey::RebaseReviewDirty));
+                }
+                lines.push(self.say(srcmgr_ui::TextKey::RebaseReviewFooter));
+                let ticket = crate::confirmation::ticket()?;
+                self.rebase = Some(RebasePending {
+                    ticket: ticket.clone(),
+                    preview,
+                    expires: std::time::Instant::now() + std::time::Duration::from_secs(300),
+                });
+                Reply::RebaseReview { ticket, lines }
+            }
+            Job::ApplyRebase(ticket) => {
+                let refused = match self.rebase.as_ref() {
+                    None => true,
+                    Some(pending) => {
+                        pending.ticket != ticket || std::time::Instant::now() > pending.expires
+                    }
+                };
+                if refused {
+                    return Err(self.say(srcmgr_ui::TextKey::NoteRebaseExpired));
+                }
+                let Some(pending) = self.rebase.take() else {
+                    return Err(self.say(srcmgr_ui::TextKey::NoteRebaseExpired));
+                };
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let report = srcmgr_git::apply_rebase(&session.installation, &session.identity, &pending.preview)
+                    .map_err(|error| error.to_string())?;
+                let lines = if report.moved {
+                    vec![fill(
+                        &self.say(srcmgr_ui::TextKey::NoteRebaseDone),
+                        &[
+                            ("{branch}", pending.preview.branch.clone()),
+                            ("{onto}", short(&pending.preview.onto)),
+                            ("{after}", short(&report.after)),
+                        ],
+                    )]
+                } else {
+                    vec![fill(
+                        &self.say(srcmgr_ui::TextKey::NoteRebaseStopped),
+                        &[("{count}", report.conflicted.len().to_string())],
+                    )]
+                };
+                Reply::RebaseApplied { lines, snapshot: self.snapshot()? }
             }
             Job::PreviewRemoteEdit(edit) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
@@ -930,6 +1006,7 @@ pub(crate) mod tests {
             remote_edit: None,
             checkout: None,
             merge: None,
+            rebase: None,
         }
     }
 
@@ -2164,5 +2241,49 @@ pub(crate) mod tests {
         let _ = workspace.reply(active.run(job));
         assert!(workspace.merge_form().is_none(), "the form closes once the merge ran");
         assert_eq!(std::fs::read_to_string(repo.join("b.txt")).unwrap(), "two\n");
+    }
+
+    #[test]
+    fn the_window_keys_replay_a_branch_onto_a_moved_base() {
+        let root = Scratch::new("rebase-keys");
+        let repo = repository(&root.0, "repo");
+        fixture_git(&repo, &["switch", "-q", "-c", "feature"]);
+        fs::write(repo.join("b.txt"), "two\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "two"]);
+        fixture_git(&repo, &["switch", "-q", "main"]);
+        fs::write(repo.join("c.txt"), "three\n").unwrap();
+        fixture_git(&repo, &["add", "-A"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "main moves on"]);
+        fixture_git(&repo, &["switch", "-q", "feature"]);
+        let mut active = backend(&root.0, &repo, true);
+        let Reply::RepositoryOpened(opened) = active.run(Job::OpenRepository(srcmgr_domain::NativePath::new(repo.as_os_str()))) else {
+            panic!("open must succeed on a trusted repository");
+        };
+        let mut workspace = srcmgr_ui::Workspace::new(opened);
+        let before = git_text(&repo, &["rev-parse", "HEAD"]);
+
+        assert_eq!(workspace.key(srcmgr_ui::Key::Char('b')), srcmgr_ui::Effect::Nothing);
+        for character in "main".chars() {
+            let _ = workspace.key(srcmgr_ui::Key::Char(character));
+        }
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Enter) else {
+            panic!("Enter must ask for a rebase preview");
+        };
+        assert!(matches!(job, Job::PreviewRebase(_)));
+        let _ = workspace.reply(active.run(job));
+        let review = workspace.merge_form().and_then(|form| form.review.clone()).expect("a rebase review");
+        assert!(review.1.join(" ").contains("Replayed") || review.1.join(" ").contains("would be replayed"), "{:?}", review.1);
+        assert_eq!(git_text(&repo, &["rev-parse", "HEAD"]), before, "a review must not replay");
+
+        let srcmgr_ui::Effect::Send(job) = workspace.key(srcmgr_ui::Key::Char('y')) else {
+            panic!("y must apply the reviewed rebase");
+        };
+        assert!(matches!(job, Job::ApplyRebase(_)));
+        let _ = workspace.reply(active.run(job));
+        assert!(workspace.merge_form().is_none());
+        assert_ne!(git_text(&repo, &["rev-parse", "HEAD"]), before, "the replay rewrites the branch");
+        assert_eq!(std::fs::read_to_string(repo.join("c.txt")).unwrap(), "three\n");
+        assert!(!repo.join(".git/rebase-merge").exists() && !repo.join(".git/rebase-apply").exists());
     }
 }
