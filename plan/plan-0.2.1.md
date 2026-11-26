@@ -125,7 +125,7 @@ drawn and not routed is the defect 0.2.0 already paid for twice.
 | Case | Required outcome | State |
 |---|---|---|
 | D1 · panes | Four panes, roles named, read-only except the result | `[_]` |
-| D2 · encoding | UTF-8, BOM and UTF-16LE round-trip byte-identically; newline style preserved | `[_]` |
+| D2 · encoding | UTF-8, BOM and UTF-16LE round-trip byte-identically; newline style preserved | `[-]` `text_file::read/encode/write` detect the three encodings and the newline style, refuse anything else and write atomically; six byte-level fixtures pass. Save is not wired to it yet |
 | D3 · editing | Caret, selection, undo, IME and paste behave inside the bound | `[_]` |
 | D4 · save | Atomic under a job record; a failed save leaves the file untouched | `[_]` |
 | D5 · stage | Marker warning, then the index check; an unresolved path still blocks commit | `[_]` |
@@ -151,4 +151,21 @@ the same three ways; if the courts still cannot run, it publishes as
 
 ## Execution record
 
-No round has run.
+### 2026-11-26 · encoding first, UI later
+
+- **Built.** `crates/srcmgr-cli/src/text_file.rs`: `read` detects UTF-8, UTF-8 with
+  a BOM and UTF-16LE with a BOM, records the newline style (LF, CRLF or mixed)
+  and refuses anything else with a reason that says it will not re-encode.
+  `encode` and `write` put the bytes back exactly, and the write goes through a
+  temporary file and a rename so a failure leaves the original untouched.
+  `within_bound` holds the 2 MiB / 200 000 line limit in one place.
+- **Why a BOM decides.** A heuristic that guesses UTF-16 from NUL bytes will
+  eventually rewrite a file the user did not ask to change. The rule is written
+  in the plan and implemented literally: a BOM or UTF-8, nothing else.
+- **Evidence.** Six fixtures: plain UTF-8 with LF, a BOM kept out of the text and
+  put back, UTF-16LE through a full round trip, undecodable bytes refused, a
+  missing file refused without writing, and the bound checked in both bytes and
+  lines.
+- **Open.** Nothing calls it yet; E3/E4 will. Until the save path uses it, D2
+  stays `[-]` even though the codec itself is done.
+

@@ -23,6 +23,7 @@ use srcmgr_git::{
 };
 use srcmgr_state::{TrustStore, default_root, fingerprint};
 
+mod text_file;
 mod window_backend;
 mod clone_cleanup;
 mod confirmation;
