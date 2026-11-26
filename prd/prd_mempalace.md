@@ -323,6 +323,16 @@ enforced in code or a fixture today.
 - **A release page is checked from the outside.** After `gh release create`,
   re-download at least one archive through the release URL and compare its digest
   with `SHA256SUMS.txt`; the local assembly proves the pipeline, not the upload.
+- **Moving a ref is its own capability class.** Renaming a branch, creating or
+  deleting a tag, picking, reverting, resetting and amending change what the
+  repository points at; that is not more conflict resolution, so it opened 0.3.0
+  rather than another 0.2.x patch.
+- **A move is reported only when the after-value differs.** Read the ref before
+  and after with `rev-parse`; a zero exit is not a move, and a ticket is stale
+  when the value it reviewed is no longer the value on disk.
+- **A destructive mode names what it destroys first.** Reset lists the commits
+  that become unreachable, read from the graph; a hard reset refuses over tracked
+  worktree changes instead of offering a force flag.
 
 ## Four reading paths
 
