@@ -18,12 +18,8 @@ pub enum Encoding {
     Utf16Le,
 }
 
-/// The largest file this editor will hold. A larger one is refused by name; it
-/// is never truncated into a result that looks complete.
-pub const MAX_BYTES: usize = 2 * 1024 * 1024;
-
-/// The largest line count this editor will hold.
-pub const MAX_LINES: usize = 200_000;
+/// The editor's bound, owned by the buffer so the two cannot drift apart.
+pub use srcmgr_ui::{MAX_BYTES, MAX_LINES};
 
 /// The newline style the file used, as found.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

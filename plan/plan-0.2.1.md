@@ -126,7 +126,7 @@ drawn and not routed is the defect 0.2.0 already paid for twice.
 |---|---|---|
 | D1 · panes | Four panes, roles named, read-only except the result | `[_]` |
 | D2 · encoding | UTF-8, BOM and UTF-16LE round-trip byte-identically; newline style preserved | `[-]` `text_file::read/encode/write` detect the three encodings and the newline style, refuse anything else and write atomically; six byte-level fixtures pass. Save is not wired to it yet |
-| D3 · editing | Caret, selection, undo, IME and paste behave inside the bound | `[_]` |
+| D3 · editing | Caret, selection, undo, IME and paste behave inside the bound | `[-]` `ResultEditor` holds the text, caret, anchor, a 32-step undo stack and vertically clamp-correct movement, refusing any insertion that would cross either bound; seven fixtures pass. No pane draws it yet |
 | D4 · save | Atomic under a job record; a failed save leaves the file untouched | `[_]` |
 | D5 · stage | Marker warning, then the index check; an unresolved path still blocks commit | `[_]` |
 
@@ -168,4 +168,24 @@ the same three ways; if the courts still cannot run, it publishes as
   lines.
 - **Open.** Nothing calls it yet; E3/E4 will. Until the save path uses it, D2
   stays `[-]` even though the codec itself is done.
+
+### 2026-11-26 · the buffer behind the result pane
+
+- **Built.** `crates/srcmgr-ui/src/result_editor.rs`: `ResultEditor` holds the text,
+  a byte caret and a selection anchor, with insertion that refuses to cross the
+  byte or line bound, backspace that joins lines, vertical movement that keeps
+  the column and clamps at a short line, select-all, and a 32-step undo/redo
+  stack of text snapshots.
+- **Why snapshots and not an operation log.** A conflict result is at most a few
+  thousand lines in practice; 32 whole-text snapshots bound memory to something
+  predictable, and a log would need its own inverse for every operation.
+- **One bound, two crates.** `MAX_BYTES` and `MAX_LINES` live in the buffer and
+  the CLI file module re-exports them, so the saved file and the edited buffer
+  cannot disagree about what "too large" means.
+- **Evidence.** Seven unit cases: typing at the caret, whole-selection replace,
+  backspace joining two lines, vertical movement clamping at a short line and
+  extending with an anchor, an insertion refused whole at the byte bound, undo
+  and redo walking the same steps, and the line bound counted separately.
+- **Open.** No pane, no save. D3 stays `[-]` until the window routes keys into
+  this buffer.
 

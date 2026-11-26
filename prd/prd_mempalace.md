@@ -154,6 +154,9 @@ enforced in code or a fixture today.
 - **`FETCH_HEAD`'s modification time is the only evidence of when the counts were
   taken.** Show it, or say the time is unavailable; never present ahead/behind as
   live server truth.
+- **One bound, owned by the buffer.** `MAX_BYTES` and `MAX_LINES` live in the result
+  buffer and the file module re-exports them; duplicating the numbers lets the
+  edited text and the saved file disagree about what is too large.
 - **Text belongs to the user: BOM or UTF-8, nothing else.** Guessing UTF-16 from
   NUL bytes will eventually rewrite a file nobody asked to change. Detect the
   BOM, refuse what does not decode, keep the newline style, and write through a
