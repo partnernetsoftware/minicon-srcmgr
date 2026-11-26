@@ -35,6 +35,8 @@ pub enum Key {
     CloseRepository,
     EditMove { movement: Move, extend: bool },
     SelectAll,
+    Undo,
+    Redo,
     Cut,
     Paste,
     Pasted(String),
@@ -127,6 +129,12 @@ impl ConflictCenter {
         }
         self.detail = lines;
     }
+}
+
+/// One unmerged path being edited in the result pane.
+pub struct ConflictEditor {
+    pub row: crate::ConflictRow,
+    pub result: crate::ResultEditor,
 }
 
 /// What the window must do after a key or reply.
@@ -325,6 +333,8 @@ pub struct Workspace {
     skip: Option<(String, Vec<String>)>,
     /// The conflict center, open while it has rows to show.
     conflicts: Option<ConflictCenter>,
+    /// The result editor for one unmerged path.
+    editor: Option<ConflictEditor>,
     tools: Option<crate::ToolForm>,
     navigation_issue: Option<crate::NavigationIssue>,
     filters: [crate::filter::FilterIndex; 3],
@@ -392,6 +402,7 @@ impl Workspace {
             abort: None,
             skip: None,
             conflicts: None,
+            editor: None,
             remotes: None,
             checkout: None,
             tools: None,
@@ -694,6 +705,40 @@ impl Workspace {
         }
     }
 
+    /// The result editor, when one path is being resolved.
+    pub fn conflict_editor(&self) -> Option<&ConflictEditor> {
+        self.editor.as_ref()
+    }
+
+    /// Opens the result buffer for the selected path, seeded from the current
+    /// side when the index has one. Nothing is written.
+    pub fn open_conflict_editor(&mut self) -> Effect {
+        let Some(center) = self.conflicts.as_ref() else { return Effect::Nothing };
+        let Some(row) = center.rows.get(center.selected).cloned() else { return Effect::Nothing };
+        let seed = row.current.clone().unwrap_or_default();
+        self.editor = Some(ConflictEditor { row, result: crate::ResultEditor::new(seed) });
+        self.trust_scroll = 0;
+        Effect::Nothing
+    }
+
+    /// The editor owns the keys while it is open; Escape returns to the list.
+    pub fn editor_key(&mut self, key: Key) -> Effect {
+        let Some(editor) = self.editor.as_mut() else { return Effect::Nothing };
+        match key {
+            Key::Escape | Key::CtrlC => {
+                self.editor = None;
+                Effect::Nothing
+            }
+            // Saving is a write, so it is a job like any other; the buffer
+            // itself never touches the disk.
+            Key::Save => Effect::Send(Job::SaveResolution {
+                path: editor.row.path.clone(),
+                text: editor.result.text.clone(),
+            }),
+            other => editor.result.edit(other),
+        }
+    }
+
     /// The conflict center, when it is open.
     pub fn conflict_center(&self) -> Option<&ConflictCenter> {
         self.conflicts.as_ref()
@@ -740,6 +785,7 @@ impl Workspace {
             }
             Key::Char('u') if center.review.is_none() => center.preview(crate::ResolutionChoice::Current),
             Key::Char('w') if center.review.is_none() => center.preview(crate::ResolutionChoice::Incoming),
+            Key::Enter if center.review.is_none() => self.open_conflict_editor(),
             Key::Down | Key::Char('j') => {
                 center.move_selection(1);
                 Effect::Nothing
@@ -1901,6 +1947,9 @@ impl Workspace {
         if self.merge.is_some() { return self.merge_key(key); }
         if self.abort.is_some() { return self.abort_key(key); }
         if self.skip.is_some() { return self.skip_key(key); }
+        // The editor sits on top of the centre and must see keys first; the
+        // centre stays open underneath so Escape can return to it.
+        if self.editor.is_some() { return self.editor_key(key); }
         if self.conflicts.is_some() { return self.conflict_key(key); }
         if let Some(form) = self.locate.as_mut() {
             if !form.editor.preedit.is_empty() { return form.edit(key); }
@@ -2153,6 +2202,13 @@ impl Workspace {
                 }
                 self.notice = Some(lines.join(" "));
                 Effect::Send(Job::LoadConflicts)
+            }
+            Reply::ResolutionSaved { lines } => {
+                // The file changed on disk but the index has not; the editor
+                // closes so the list, and Space to stage, are reachable again.
+                self.editor = None;
+                self.notice = Some(lines.join(" "));
+                Effect::Nothing
             }
             Reply::ResolutionApplied { lines } => {
                 if let Some(center) = self.conflicts.as_mut() {
@@ -3601,6 +3657,90 @@ mod tests {
         assert_eq!(workspace.conflict_center().unwrap().selected, 1, "the selection clamps");
         assert_eq!(workspace.key(Key::Char('C')), Effect::Nothing);
         assert!(workspace.conflict_center().is_none());
+    }
+
+    #[test]
+    fn enter_opens_the_result_editor_and_escape_returns_to_the_list() {
+        let mut blocked = snapshot(None);
+        blocked.operation = Some("merge".into());
+        blocked.unmerged = vec!["a.txt".into()];
+        let mut workspace = Workspace::new(blocked);
+        let _ = workspace.key(Key::Char('C'));
+        workspace.reply(Reply::Conflicts(vec![crate::ConflictRow {
+            path: "a.txt".into(),
+            class: "content".into(),
+            base: Some("one".into()),
+            current: Some("one\nmain".into()),
+            incoming: Some("one\nfeature".into()),
+            binary: false,
+            truncated: false,
+        }]));
+        assert_eq!(workspace.key(Key::Enter), Effect::Nothing);
+        let editor = workspace.conflict_editor().expect("Enter opens the result editor");
+        assert_eq!(editor.result.text, "one\nmain", "the buffer seeds from the current side");
+        assert_eq!(editor.result.caret_position(), (1, 4));
+        // Keys reach the buffer, not the list underneath.
+        let _ = workspace.key(Key::Char('X'));
+        assert_eq!(workspace.conflict_editor().unwrap().result.text, "one\nmainX");
+        assert_eq!(workspace.conflict_center().unwrap().selected, 0, "the list must not move while editing");
+        // Escape leaves the editor but keeps the centre open.
+        assert_eq!(workspace.key(Key::Escape), Effect::Nothing);
+        assert!(workspace.conflict_editor().is_none());
+        assert!(workspace.conflict_center().is_some(), "Escape returns to the list, not out of it");
+    }
+
+    #[test]
+    fn ctrl_s_sends_the_buffer_and_the_reply_closes_the_editor() {
+        let mut blocked = snapshot(None);
+        blocked.operation = Some("merge".into());
+        blocked.unmerged = vec!["a.txt".into()];
+        let mut workspace = Workspace::new(blocked);
+        let _ = workspace.key(Key::Char('C'));
+        workspace.reply(Reply::Conflicts(vec![crate::ConflictRow {
+            path: "a.txt".into(),
+            class: "content".into(),
+            base: Some("one".into()),
+            current: Some("one".into()),
+            incoming: Some("feature".into()),
+            binary: false,
+            truncated: false,
+        }]));
+        let _ = workspace.key(Key::Enter);
+        let _ = workspace.key(Key::Enter);
+        for character in "main".chars() {
+            let _ = workspace.key(Key::Char(character));
+        }
+        assert_eq!(
+            workspace.key(Key::Save),
+            Effect::Send(Job::SaveResolution { path: "a.txt".into(), text: "one\nmain".into() })
+        );
+        workspace.reply(Reply::ResolutionSaved { lines: vec!["Wrote a.txt".into()] });
+        assert!(workspace.conflict_editor().is_none(), "the editor closes once the file is written");
+        assert!(workspace.conflict_center().is_some(), "the list is still there to stage from");
+        assert_eq!(workspace.notice.as_deref(), Some("Wrote a.txt"));
+    }
+
+    #[test]
+    fn a_pending_resolution_review_blocks_the_editor() {
+        let mut blocked = snapshot(None);
+        blocked.operation = Some("merge".into());
+        blocked.unmerged = vec!["a.txt".into()];
+        let mut workspace = Workspace::new(blocked);
+        let _ = workspace.key(Key::Char('C'));
+        workspace.reply(Reply::Conflicts(vec![crate::ConflictRow {
+            path: "a.txt".into(),
+            class: "content".into(),
+            base: Some("one".into()),
+            current: Some("one".into()),
+            incoming: Some("feature".into()),
+            binary: false,
+            truncated: false,
+        }]));
+        let _ = workspace.key(Key::Char('u'));
+        workspace.reply(Reply::ResolutionReview { ticket: "s1".into(), lines: vec!["Resolve".into()] });
+        assert_eq!(workspace.key(Key::Enter), Effect::Nothing);
+        assert!(workspace.conflict_editor().is_none(), "a ticket on screen must not be bypassed by the editor");
+        assert_eq!(workspace.key(Key::Char('y')), Effect::Send(Job::ApplyResolution("s1".into())));
     }
 
     #[test]

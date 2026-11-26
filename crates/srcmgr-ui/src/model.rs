@@ -380,6 +380,9 @@ pub enum Job {
     ApplyResolution(String),
     /// Stages whatever the worktree now holds for one unmerged path.
     StageResolution(String),
+    /// Writes the edited result into the worktree file, keeping its encoding
+    /// and newline style. Staging stays a separate, reviewable step.
+    SaveResolution { path: String, text: String },
     /// Validates one remote edit and returns the exact local effect. Nothing is
     /// written and no server is contacted.
     PreviewRemoteEdit(RemoteEdit),
@@ -569,6 +572,10 @@ pub enum Reply {
     },
     /// The edited copy was staged; its lines carry any marker warning.
     ResolutionStaged {
+        lines: Vec<String>,
+    },
+    /// The result was written; its lines carry any marker warning.
+    ResolutionSaved {
         lines: Vec<String>,
     },
     RemoteReview {

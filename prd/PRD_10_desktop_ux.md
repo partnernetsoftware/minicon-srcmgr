@@ -291,3 +291,24 @@ While a fresh repository-action review is open, its footer cannot fall back to a
 The initial Windows UIA publisher is an in-progress consumer of the private capability in [02](PRD_02_architecture_reuse.md#native-accessibility-publication-extension). The UI exports bounded names/roles/current values and physical rectangles from the same layout functions as pointer handling. Welcome/Open, separate repository trust, ordinary rows/tabs/Changes controls, prepared action review and commit composition have initial semantic mappings. Invoke reaches the existing pointer/workspace dispatch; field replacement names only the currently editable field, never submits, preserves an in-flight target and retains commit draft acknowledgement. Disabled/modal/stale nodes cannot authorize a new target. Focus is not invocation; controls without a dedicated focus contract must not advertise keyboard focus support.
 
 This is not completed UX-04 or a screen-reader pass. Other forms currently expose explicit readable content with their field/action mappings pending; they cannot advertise invented buttons. Full focus/selection/text-range semantics, remaining forms, actual screen-reader interaction, native IME/clipboard/DPI and Linux/macOS publication remain required. A real UIA tree/read/action receipt proves only its selected cases. Native initialization/publication errors are capability failures; a title, compile result or accepted no-op is insufficient evidence.
+
+## 0.2.1 conflict result editor
+
+Enter in the conflict centre opens the four-pane result editor. Base, current and
+incoming are read-only and labelled by stage role; the result pane is the only
+editable one, seeded from the current side and shown with a caret bar and an
+L{line}:{col} readout. Caret, selection, undo (32 snapshots, Ctrl+Z) and redo
+(Ctrl+Y), paste and Enter for a new line belong to the buffer; an insertion that
+would cross 2 MiB or 200 000 lines is refused whole rather than cut.
+
+Ctrl+S saves. The file's encoding (UTF-8, UTF-8 with a BOM, UTF-16LE with a BOM)
+and newline style are preserved; anything else is refused by name rather than
+re-encoded. The write goes beside the file and is renamed, and a job record named
+save-result is written before it and cleared when it returns. Marker-like lines
+are a warning, not a refusal. Escape closes the pane without saving; staging stays
+a separate Space action with the existing index re-check, so the index still
+decides whether the path is resolved.
+
+Not in this slice: search across the four panes, IME composition in the buffer,
+syntax colouring, word wrap, multiple cursors, and any resolution of binary,
+symlink, submodule or delete/modify conflicts, which stay refused by name.

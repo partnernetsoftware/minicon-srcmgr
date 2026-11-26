@@ -6,8 +6,6 @@
 //! supported and everything else is refused by name rather than re-encoded on a
 //! guess: a silent conversion is corruption with good intentions.
 
-#![allow(dead_code)] // wired into save and the panes in E3/E4
-
 use std::path::Path;
 
 /// The encodings this slice reads and writes.
@@ -72,6 +70,30 @@ fn decode_utf16le(bytes: &[u8]) -> Option<String> {
 /// file can be small in bytes and enormous in lines.
 pub fn within_bound(file: &TextFile) -> bool {
     file.text.len() <= MAX_BYTES && file.text.lines().count() <= MAX_LINES
+}
+
+/// Rewrites the text to the newline style the file already used. A file with
+/// both styles is left exactly as the editor produced it, because normalising
+/// it would change lines the user did not touch.
+pub fn normalise_newlines(file: &mut TextFile) {
+    let unified = file.text.replace("\r\n", "\n");
+    file.text = match file.newline {
+        Newline::Lf => unified,
+        Newline::Crlf => unified.replace('\n', "\r\n"),
+        Newline::Mixed => return,
+    };
+}
+
+/// Counts lines that begin with a conflict marker. This is a warning, never a
+/// refusal: the index decides whether a path is resolved.
+pub fn marker_lines(text: &str) -> usize {
+    text.lines()
+        .filter(|line| {
+            ["<<<<<<<", "=======", ">>>>>>>", "|||||||"]
+                .iter()
+                .any(|marker| line.starts_with(marker))
+        })
+        .count()
 }
 
 /// Reads a file as text and records how it was stored.
@@ -216,5 +238,43 @@ mod tests {
         assert!(!within_bound(&too_long));
         let too_big = TextFile { text: "x".repeat(MAX_BYTES + 1), ..file };
         assert!(!within_bound(&too_big));
+    }
+
+    #[test]
+    fn a_lf_file_stays_lf_and_a_crlf_file_gets_crlf_back() {
+        let path = scratch("newline");
+        std::fs::write(&path, "one\r\ntwo\r\n").unwrap();
+        let mut file = read(&path).unwrap();
+        assert_eq!(file.newline, Newline::Crlf);
+        file.text = "one\nmain\nfeature\n".into();
+        normalise_newlines(&mut file);
+        assert_eq!(file.text, "one\r\nmain\r\nfeature\r\n");
+        write(&path, &file).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"one\r\nmain\r\nfeature\r\n");
+
+        let path = scratch("lf");
+        std::fs::write(&path, "one\ntwo\n").unwrap();
+        let mut file = read(&path).unwrap();
+        assert_eq!(file.newline, Newline::Lf);
+        file.text = "one\r\nmain\n".into();
+        normalise_newlines(&mut file);
+        assert_eq!(file.text, "one\nmain\n");
+
+        // A file with both styles is not rewritten behind the user's back.
+        let path = scratch("mixed");
+        std::fs::write(&path, "one\r\ntwo\n").unwrap();
+        let mut file = read(&path).unwrap();
+        assert_eq!(file.newline, Newline::Mixed);
+        file.text = "one\r\nthree\n".into();
+        normalise_newlines(&mut file);
+        assert_eq!(file.text, "one\r\nthree\n");
+    }
+
+    #[test]
+    fn conflict_markers_are_counted_as_a_warning() {
+        assert_eq!(marker_lines("one\ntwo\n"), 0);
+        assert_eq!(marker_lines("<<<<<<< HEAD\none\n=======\ntwo\n>>>>>>> feature\n"), 3);
+        assert_eq!(marker_lines("||||||| base\n"), 1);
+        assert_eq!(marker_lines("  <<<<<<< indented is text\n"), 0);
     }
 }

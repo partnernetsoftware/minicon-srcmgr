@@ -793,6 +793,60 @@ impl WindowBackend {
                 }
                 Reply::ResolutionStaged { lines }
             }
+            Job::SaveResolution { path, text } => {
+                let session = open_trusted(&self.options, &self.worktree)?;
+                let conflicts = srcmgr_git::read_conflicts(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())?;
+                let relative = std::path::Path::new(&path);
+                let plain = relative
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_)));
+                if !plain || !conflicts.iter().any(|entry| entry.path == path) {
+                    return Err(fill(
+                        &self.say(srcmgr_ui::TextKey::NoteSaveNotUnmerged),
+                        &[("{path}", path.clone())],
+                    ));
+                }
+                let root = self.worktree.canonicalize().unwrap_or_else(|_| self.worktree.clone());
+                let absolute = root.join(relative);
+                let mut file = crate::text_file::read(&absolute).map_err(|error| {
+                    fill(
+                        &self.say(srcmgr_ui::TextKey::NoteSaveEncoding),
+                        &[("{path}", path.clone()), ("{reason}", error.reason().to_owned())],
+                    )
+                })?;
+                let candidate = crate::text_file::TextFile { text: text.clone(), ..file.clone() };
+                if !crate::text_file::within_bound(&candidate) {
+                    return Err(fill(
+                        &self.say(srcmgr_ui::TextKey::NoteSaveTooLarge),
+                        &[("{path}", path.clone())],
+                    ));
+                }
+                file.text = text;
+                crate::text_file::normalise_newlines(&mut file);
+                let markers = crate::text_file::marker_lines(&file.text);
+                // The record goes down before the write and comes off when the
+                // write returns, so a crash leaves a name for what was running.
+                srcmgr_git::begin_journal(&session.installation, &session.identity, "save-result")
+                    .map_err(|error| error.to_string())?;
+                let written = crate::text_file::write(&absolute, &file);
+                srcmgr_git::finish_journal(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())?;
+                written.map_err(|error| {
+                    fill(
+                        &self.say(srcmgr_ui::TextKey::NoteSaveEncoding),
+                        &[("{path}", path.clone()), ("{reason}", error.reason().to_owned())],
+                    )
+                })?;
+                let mut lines = vec![fill(
+                    &self.say(srcmgr_ui::TextKey::NoteSavedResult),
+                    &[("{path}", path.clone()), ("{count}", conflicts.len().to_string())],
+                )];
+                if markers > 0 {
+                    lines.push(self.say(srcmgr_ui::TextKey::NoteSavedMarkers));
+                }
+                Reply::ResolutionSaved { lines }
+            }
             Job::PreviewRemoteEdit(edit) => {
                 let session = open_trusted(&self.options, &self.worktree)?;
                 let change = remote_change(edit);
@@ -1306,6 +1360,84 @@ pub(crate) mod tests {
             resolution: None,
             skip: None,
         }
+    }
+
+    #[test]
+    fn a_saved_result_keeps_the_file_encoding_and_newlines_and_clears_its_record() {
+        let root = Scratch::new("save-result");
+        let repo = repository(&root.0, "save");
+        fixture_git(&repo, &["add", "a.txt"]);
+        fixture_git(&repo, &["commit", "-q", "-m", "two"]);
+        fixture_git(&repo, &["checkout", "-q", "-b", "feature"]);
+        fs::write(repo.join("a.txt"), "one\nfeature\n").expect("feature side");
+        fixture_git(&repo, &["commit", "-q", "-am", "feature"]);
+        fixture_git(&repo, &["checkout", "-q", "main"]);
+        fs::write(repo.join("a.txt"), "one\nmain\n").expect("main side");
+        fixture_git(&repo, &["commit", "-q", "-am", "main"]);
+        let merge = Command::new(git_executable())
+            .current_dir(&repo)
+            .args(["merge", "feature"])
+            .output()
+            .expect("merge");
+        assert!(!merge.status.success(), "the fixture must conflict");
+
+        // The conflicted file as the user's tooling left it: a BOM and CRLF.
+        let mut conflicted = vec![0xEF, 0xBB, 0xBF];
+        conflicted.extend_from_slice(
+            b"<<<<<<< HEAD\r\none\r\nmain\r\n=======\r\none\r\nfeature\r\n>>>>>>> feature\r\n",
+        );
+        fs::write(repo.join("a.txt"), &conflicted).expect("conflicted file");
+
+        let mut backend = backend(&root.0, &repo, true);
+        let loaded = backend.run(Job::LoadConflicts);
+        let Reply::Conflicts(rows) = loaded else {
+            panic!("the conflict must load, got {loaded:?}");
+        };
+        assert!(rows.iter().any(|row| row.path == "a.txt"));
+
+        let saved = backend.run(Job::SaveResolution {
+            path: "a.txt".into(),
+            text: "one\nmain\nfeature\n".into(),
+        });
+        let Reply::ResolutionSaved { lines } = saved else {
+            panic!("expected a save, got {saved:?}");
+        };
+        assert_eq!(lines.len(), 1, "a clean result carries no marker warning: {lines:?}");
+        assert!(!repo.join(".git").join("srcmgr-job").exists(), "the record is cleared when the write returns");
+        let written = fs::read(repo.join("a.txt")).expect("written file");
+        let mut expected = vec![0xEF, 0xBB, 0xBF];
+        expected.extend_from_slice(b"one\r\nmain\r\nfeature\r\n");
+        assert_eq!(written, expected, "the BOM and the CRLF style survive the save");
+
+        // A marker-like line is a warning, not a refusal.
+        let warned = backend.run(Job::SaveResolution {
+            path: "a.txt".into(),
+            text: "<<<<<<< HEAD\nmain\n".into(),
+        });
+        let Reply::ResolutionSaved { lines } = warned else {
+            panic!("a marker must not block the save, got {warned:?}");
+        };
+        assert_eq!(lines.len(), 2, "the second line is the warning: {lines:?}");
+
+        // The staged copy is the one just saved; the index check still decides.
+        let staged = backend.run(Job::StageResolution("a.txt".into()));
+        let Reply::ResolutionStaged { lines } = staged else {
+            panic!("expected a stage, got {staged:?}");
+        };
+        assert_eq!(lines.len(), 2, "the saved markers are warned about again at stage time: {lines:?}");
+        let Reply::Conflicts(rows) = backend.run(Job::LoadConflicts) else {
+            panic!("the list must reload");
+        };
+        assert!(rows.is_empty(), "the index no longer reports the path: {rows:?}");
+
+        // A path the index does not hold as unmerged is refused before any write.
+        let before = fs::read(repo.join("u.txt")).expect("untracked file");
+        let refused = backend.run(Job::SaveResolution {
+            path: "u.txt".into(),
+            text: "x\n".into(),
+        });
+        assert!(matches!(refused, Reply::Notice(ref text) if text.contains("not unmerged")), "{refused:?}");
+        assert_eq!(fs::read(repo.join("u.txt")).unwrap(), before, "a refusal writes nothing");
     }
 
     fn config_bytes(repo: &Path) -> Vec<u8> {

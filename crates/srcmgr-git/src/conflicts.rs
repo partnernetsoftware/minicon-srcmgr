@@ -363,7 +363,10 @@ fn conflict_markers(path: &std::path::Path) -> bool {
         Ok(bytes) => bytes,
         Err(_) => return false,
     };
-    let text = String::from_utf8_lossy(&bytes);
+    // A UTF-8 BOM sits before the first character, so a marker on line one
+    // would not look like a line start unless the BOM is dropped first.
+    let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+    let text = String::from_utf8_lossy(body);
     text.lines().any(|line| {
         line.starts_with("<<<<<<< ") || line.starts_with(">>>>>>> ") || line == "======="
     })

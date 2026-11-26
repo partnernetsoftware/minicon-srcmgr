@@ -4,8 +4,6 @@
 //! bounded undo history, and it refuses to grow past the same limit the conflict
 //! center applies. The window draws it and the backend saves it; neither reaches
 //! into the fields directly.
-#![allow(dead_code)] // wired into the panes and save in E3/E4
-
 use crate::{Effect, Key};
 
 /// The largest buffer this editor holds, in bytes of UTF-8.
@@ -50,6 +48,15 @@ impl ResultEditor {
 
     pub fn line_count(&self) -> usize {
         self.text.matches('\n').count() + 1
+    }
+
+    /// The caret as a zero-based line index and a character column, so the
+    /// renderer never has to convert byte offsets itself.
+    pub fn caret_position(&self) -> (usize, usize) {
+        let before = &self.text[..self.caret];
+        let line = before.matches('\n').count();
+        let column = before.rsplit('\n').next().map_or(0, |tail| tail.chars().count());
+        (line, column)
     }
 
     /// The selected byte range, ordered low to high.
@@ -250,6 +257,12 @@ impl ResultEditor {
         }
         match key {
             Key::SelectAll => self.select_all(),
+            Key::Undo => {
+                self.undo();
+            }
+            Key::Redo => {
+                self.redo();
+            }
             Key::CtrlC | Key::Cut => {
                 return self.selected_text().map_or(Effect::Nothing, |text| Effect::Copy {
                     text: text.to_owned(),
@@ -278,6 +291,9 @@ impl ResultEditor {
             },
             Key::Char(character) => {
                 self.insert(&character.to_string());
+            }
+            Key::Enter => {
+                self.insert("\n");
             }
             Key::Space => {
                 self.insert(" ");
@@ -308,6 +324,15 @@ mod tests {
         assert_eq!(buffer.text, "zero\none\ntwo\n");
         assert_eq!(buffer.caret, 5);
         assert_eq!(buffer.line_count(), 4);
+    }
+
+    #[test]
+    fn enter_inserts_a_newline_and_the_caret_follows_it() {
+        let mut buffer = editor("ono");
+        buffer.caret = 2;
+        buffer.edit(Key::Enter);
+        assert_eq!(buffer.text, "on\no");
+        assert_eq!(buffer.caret_position(), (1, 0));
     }
 
     #[test]

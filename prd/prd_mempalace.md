@@ -280,6 +280,23 @@ enforced in code or a fixture today.
   notes are committed, measure each archive, check every line of `SHA256SUMS.txt`,
   run the packaged executable for its version and read the signature status back.
   A table copied from a CI log is a claim; only the shipped bytes are evidence.
+- **An overlay pane must see keys before the page underneath.** The result editor
+  sits on top of the conflict centre, which stays open so Escape can go back. The
+  centre's arm was checked first, so every key went to the list and the buffer was
+  drawn but deaf. Route the topmost surface first.
+- **A multi-line buffer needs Enter.** `ResultEditor::edit` silently ignored
+  `Key::Enter`, so a drawn newline could never be typed. The unit that owns the
+  text owns every key that changes it.
+- **Saving a conflict result re-derives the path from the index.** The pane names
+  a path a moment ago; before writing, the backend re-reads the unmerged entries
+  and refuses anything else, so a stale pane cannot write a file Git no longer
+  considers conflicted. The same check rejects parent-dir components.
+- **Newline normalisation belongs at save, not in the buffer.** Read keeps CRLF in
+  the text; the buffer never rewrites it. Matching the file's recorded style just
+  before the write keeps "CRLF stays CRLF" true without a second editor rule.
+- **A requirement left out keeps its ledger row open.** 0.2.1's panes arrived
+  without the cross-pane search, so D1 stays `[-]` even though the four panes
+  draw and take keys; a delivered half is not a closed case.
 
 ## Four reading paths
 

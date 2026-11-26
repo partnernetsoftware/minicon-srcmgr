@@ -1,7 +1,8 @@
 # 0.2.1 the result editor, inside the window
 
-Status: `[_]` planned, not started. Workspace version stays **0.2.0** until that
-version publishes. This plan finishes the sentence 0.2.0 deliberately left open:
+Status: `[-]` in progress. Panes, editing and the save path are built and
+verified; cross-pane search, the incoming/empty seed and IME in the buffer are
+still open. Workspace version stays **0.2.0** until this version publishes. This plan finishes the sentence 0.2.0 deliberately left open:
 whole-side and edited-copy resolution shipped, but the file itself was resolved
 in an external editor. 0.2.1 puts the result pane in the window.
 
@@ -124,11 +125,11 @@ drawn and not routed is the defect 0.2.0 already paid for twice.
 
 | Case | Required outcome | State |
 |---|---|---|
-| D1 · panes | Four panes, roles named, read-only except the result | `[_]` |
-| D2 · encoding | UTF-8, BOM and UTF-16LE round-trip byte-identically; newline style preserved | `[-]` `text_file::read/encode/write` detect the three encodings and the newline style, refuse anything else and write atomically; six byte-level fixtures pass. Save is not wired to it yet |
-| D3 · editing | Caret, selection, undo, IME and paste behave inside the bound | `[-]` `ResultEditor` holds the text, caret, anchor, a 32-step undo stack and vertically clamp-correct movement, refusing any insertion that would cross either bound; seven fixtures pass. No pane draws it yet |
-| D4 · save | Atomic under a job record; a failed save leaves the file untouched | `[_]` |
-| D5 · stage | Marker warning, then the index check; an unresolved path still blocks commit | `[_]` |
+| D1 · panes | Four panes, roles named, read-only except the result | `[-]` `window.rs::result_editor_panel` draws base/current/incoming/result with caret bar and `L{line}:{col}`, and the frame test passes in both languages. Missing: search across the four panes (product tree A3) and the choice of an incoming or empty seed |
+| D2 · encoding | UTF-8, BOM and UTF-16LE round-trip byte-identically; newline style preserved | `[v]` `text_file` fixtures cover the three encodings plus LF/CRLF/mixed normalisation; `a_saved_result_keeps_the_file_encoding_and_newlines_and_clears_its_record` saves into a BOM+CRLF conflicted file through the real backend and compares the bytes |
+| D3 · editing | Caret, selection, undo, IME and paste behave inside the bound | `[-]` `ResultEditor` holds text, caret, anchor and a 32-step undo stack, refuses any insertion that would cross either bound, and now takes Enter, Ctrl+Z and Ctrl+Y from the window; nine fixtures pass. Missing: IME composition has a `preedit` field but no setter and no drawing |
+| D4 · save | Atomic under a job record; a failed save leaves the file untouched | `[v]` `Job::SaveResolution` re-reads the unmerged entries, refuses a path the index does not hold (and any parent-dir component), refuses a result over the bound, records `save-result` before `text_file::write` (temp file + rename) and clears it after; the fixture asserts a refusal writes nothing and the record is gone |
+| D5 · stage | Marker warning, then the index check; an unresolved path still blocks commit | `[v]` The same fixture warns on a marker-like save, stages the saved copy, sees the stage warning again and reloads an empty conflict list. `conflict_markers` now drops a UTF-8 BOM before scanning, so a first-line marker in a BOM file is seen |
 
 ## Selected verification and stopping
 
@@ -188,4 +189,39 @@ the same three ways; if the courts still cannot run, it publishes as
   and redo walking the same steps, and the line bound counted separately.
 - **Open.** No pane, no save. D3 stays `[-]` until the window routes keys into
   this buffer.
+
+### 2026-11-26 · four panes, and the save behind Ctrl+S
+
+- **Built.** `window.rs::result_editor_panel` draws base, current and incoming
+  read-only and the result editable, with the stage role named, a caret bar
+  inserted between characters and an `L{line}:{col}` readout; each side is cut at
+  eight lines with its remaining count and any display-bound truncation. Enter in
+  the conflict centre opens it, seeded from the current side.
+- **Routing came first, not last.** The editor sits above the conflict centre,
+  which stays open so Escape can return. The centre's key arm was checked first,
+  so every key reached the list and the buffer was drawn but deaf; the plane that
+  is on top now gets the keys first, and a test types into the buffer and asserts
+  the list selection did not move.
+- **The buffer learned Enter, Ctrl+Z and Ctrl+Y.** `edit` silently ignored
+  `Key::Enter`, so a newline could never be typed; undo and redo had no key at all
+  even though the stack existed. Both now go through the buffer, and the footer
+  names them.
+- **Save is a job, not a file handle in the pane.** `Ctrl+S` sends
+  `Job::SaveResolution { path, text }`. The backend re-reads the unmerged entries,
+  refuses a path the index no longer holds and any parent-dir component, decodes
+  the file, refuses a result over the 2 MiB / 200 000 line bound, matches the
+  recorded newline style, records `save-result`, writes through a temporary file
+  and a rename, clears the record, and reports marker-like lines as a warning.
+- **A BOM hid a marker.** The fixture saved `<<<<<<< HEAD` as the first line of a
+  BOM file and the stage refused to warn: `conflict_markers` compared raw bytes,
+  so line one began with `EF BB BF`. The BOM is now dropped before the scan, and
+  the same fixture asserts the warning on save and again on stage.
+- **Evidence.** `cargo test -p srcmgr-ui` — 149 passed, including the bilingual
+  four-pane frame and the Ctrl+S routing case. With `SRCMGR_TEST_GIT` pointing at
+  MinGit 2.47.1, `a_saved_result_keeps_the_file_encoding_and_newlines_and_clears_its_record`
+  passes: bytes `EF BB BF` + CRLF survive, the record is gone, a refusal writes
+  nothing, staging the saved copy empties the conflict list.
+- **Open.** Cross-pane search and the incoming/empty seed keep D1 `[-]`; IME
+  composition keeps D3 `[-]`. Neither is claimed by the release note until it
+  lands.
 

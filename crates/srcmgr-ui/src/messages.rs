@@ -254,6 +254,12 @@ catalog! {
     HintRebaseStopped => "rebase stopped · S reviews a skip · N continues when resolved · A reviews an abort", "变基已停止 · S 复核跳过 · 解决后 N 继续 · A 复核中止";
     HintOperation => "{operation} in progress · N continues when resolved · A reviews an abort", "{operation} 进行中 · 解决后 N 继续 · A 复核中止";
     PanelConflictsTitle => "Conflicts", "冲突";
+    PanelResultTitle => "Conflict editor", "冲突编辑";
+    ResultPaneLabel => "Result", "结果";
+    ResultEditorNote => "Editing the result. Nothing is saved yet; Esc returns to the conflict list.", "正在编辑结果。尚未保存；Esc 返回冲突列表。";
+    ResultEditorBinarySide => "(binary side, not shown)", "（二进制侧，未显示）";
+    ResultEditorMore => "… {count} more line(s)", "…… 还有 {count} 行";
+    HintResultEditor => "type to edit · Enter breaks the line · Ctrl+Z undoes · Ctrl+S saves · Esc returns without saving", "输入以编辑 · Enter 换行 · Ctrl+Z 撤销 · Ctrl+S 保存 · Esc 返回且不保存";
     ConflictBaseLabel => "Base (stage 1)", "基线（阶段 1）";
     ConflictCurrentLabel => "Current (stage 2)", "当前（阶段 2）";
     ConflictIncomingLabel => "Incoming (stage 3)", "传入（阶段 3）";
@@ -269,6 +275,11 @@ catalog! {
     NoteResolutionExpired => "The resolution review expired or was already used; choose the side again.", "解决复核已过期或已被使用；请重新选择该侧。";
     NoteStagedResolved => "Staged the edited copy of {path}; {count} path(s) remain unmerged.", "已暂存 {path} 的编辑结果；仍有 {count} 个路径未合并。";
     NoteStagedMarkers => "Warning: the staged file still contains conflict-marker-like lines. Git accepted it, so check that the markers are what you meant to keep.", "警告：暂存的文件中仍有类似冲突标记的行。Git 已接受，请确认这些标记确实是你要保留的内容。";
+    NoteSavedResult => "Wrote {path}; {count} path(s) remain unmerged. Space stages the copy; the index still decides.", "已写入 {path}；仍有 {count} 个路径未合并。Space 暂存该副本；仍由索引判定。";
+    NoteSavedMarkers => "Warning: the saved text still contains conflict-marker-like lines. Saving is not resolving; check the result.", "警告：保存的文本中仍有类似冲突标记的行。保存不等于解决；请检查结果。";
+    NoteSaveNotUnmerged => "{path} is not unmerged any more; the conflict center needs a refresh before anything is written.", "{path} 已不再处于未合并状态；写入前需要刷新冲突中心。";
+    NoteSaveTooLarge => "{path} is beyond the 2 MiB or 200 000 line bound; this version refuses it rather than cutting the file.", "{path} 超过 2 MiB 或 20 万行的上限；本版本拒绝处理，而不是截断文件。";
+    NoteSaveEncoding => "{path} could not be written as text: {reason}", "无法以文本方式写入 {path}：{reason}";
     HintResolutionReview => "y applies this side · n or Esc keeps the conflict", "y 应用该侧 · n 或 Esc 保留冲突";
     HintConflicts => "C closes · j/k moves · u current · w incoming · e editor · Space stages the edited file", "C 关闭 · j/k 移动 · u 当前侧 · w 传入侧 · e 编辑器 · Space 暂存已编辑文件";
     CloneFailedTitle => "Clone failed", "克隆失败";

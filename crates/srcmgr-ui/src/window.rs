@@ -1709,6 +1709,76 @@ fn operation_suffix(workspace: &Workspace) -> String {
     }
 }
 
+/// The four panes for one unmerged path: three read-only sides and the result
+/// buffer the keys edit. Nothing here writes; saving is E4.
+fn result_editor_panel(
+    draws: &mut Vec<Draw>,
+    rect: Rect,
+    grid: Grid,
+    workspace: &Workspace,
+    editor: &crate::workspace::ConflictEditor,
+) {
+    const SIDE_ROWS: usize = 8;
+    let title = format!("{} · {}", workspace.t(TextKey::PanelResultTitle), editor.row.path);
+    frame(draws, rect, grid, true, &title);
+    let body = locate_info(rect, grid);
+    let inner = inner_of(body, grid);
+    let (line, column) = editor.result.caret_position();
+    let rows = inner.rows.max(1) as usize;
+    let result_rows = (rows / 2).max(1);
+    let total = editor.result.line_count();
+    let start = (line + 1).saturating_sub(result_rows);
+    let mut lines = vec![workspace.t(TextKey::ResultEditorNote).to_owned()];
+    lines.push(format!("{}  L{}:{}", workspace.t(TextKey::ResultPaneLabel), line + 1, column + 1));
+    for (offset, text) in editor.result.lines().skip(start).take(result_rows).enumerate() {
+        if start + offset == line {
+            let (before, after) = split_at_column(text, column);
+            lines.push(format!("> {before}|{after}"));
+        } else {
+            lines.push(format!("  {text}"));
+        }
+    }
+    if total > start + result_rows {
+        lines.push(workspace.t(TextKey::ResultEditorMore).replace("{count}", &(total - start - result_rows).to_string()));
+    }
+    let sides = [
+        (TextKey::ConflictBaseLabel, editor.row.base.as_ref()),
+        (TextKey::ConflictCurrentLabel, editor.row.current.as_ref()),
+        (TextKey::ConflictIncomingLabel, editor.row.incoming.as_ref()),
+    ];
+    for (label, side) in sides {
+        lines.push(String::new());
+        lines.push(workspace.t(label).to_owned());
+        match side {
+            None if editor.row.binary => lines.push(workspace.t(TextKey::ResultEditorBinarySide).to_owned()),
+            None => lines.push(workspace.t(TextKey::ConflictMissingSide).to_owned()),
+            Some(text) => {
+                for source in text.lines().take(SIDE_ROWS) {
+                    lines.push(format!("  {source}"));
+                }
+                let all = text.lines().count();
+                if all > SIDE_ROWS {
+                    lines.push(workspace.t(TextKey::ResultEditorMore).replace("{count}", &(all - SIDE_ROWS).to_string()));
+                }
+                if editor.row.truncated {
+                    lines.push(workspace.t(TextKey::ConflictTruncated).to_owned());
+                }
+            }
+        }
+    }
+    let scroll = start;
+    text_panel(draws, body, grid, true, &title, &wrapped_lines(&lines.join("\n"), inner.cols), scroll, None);
+}
+
+/// Splits at a character column, so the caret bar lands between characters and
+/// never inside a multi-byte sequence.
+fn split_at_column(text: &str, column: usize) -> (&str, &str) {
+    match text.char_indices().nth(column) {
+        Some((index, _)) => text.split_at(index),
+        None => (text, ""),
+    }
+}
+
 fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspace) {
     if let Some((_, lines)) = workspace.checkout_review() {
         let (apply, cancel) = trust_buttons(rect, grid);
@@ -1716,6 +1786,10 @@ fn main_panel(draws: &mut Vec<Draw>, rect: Rect, grid: Grid, workspace: &Workspa
         text_panel(draws, body, grid, true, "Review checkout", &wrapped_lines(&lines.join("\n"), inner_of(body, grid).cols), workspace.trust_scroll(), None);
         button_draw(draws, apply, grid, workspace.t(TextKey::PanelReview), BORDER);
         button_draw(draws, cancel, grid, workspace.t(TextKey::ActionCancel), FOCUS_BORDER);
+        return;
+    }
+    if let Some(editor) = workspace.conflict_editor() {
+        result_editor_panel(draws, rect, grid, workspace, editor);
         return;
     }
     if let Some(center) = workspace.conflict_center() {
@@ -2275,6 +2349,9 @@ fn hints(workspace: &Workspace) -> String {
     if workspace.checkout_review().is_some() {
         return workspace.t(TextKey::HintCheckoutReview).into();
     }
+    if workspace.conflict_editor().is_some() {
+        return workspace.t(TextKey::HintResultEditor).into();
+    }
     if let Some(center) = workspace.conflict_center() {
         return if center.review.is_some() {
             workspace.t(TextKey::HintResolutionReview).into()
@@ -2426,6 +2503,8 @@ fn key_of(event: &NormalizedKeyEvent) -> Option<Key> {
                     "a" | "A" => Some(Key::SelectAll),
                     "x" | "X" => Some(Key::Cut),
                     "v" | "V" => Some(Key::Paste),
+                    "z" | "Z" => Some(Key::Undo),
+                    "y" | "Y" => Some(Key::Redo),
                     "s" | "S" => Some(Key::Save),
                     "w" | "W" => Some(Key::CloseRepository),
                     "c" | "C" => Some(Key::CtrlC),
@@ -2487,6 +2566,45 @@ mod tests {
     }
 
     pub(super) const GRID: Grid = Grid { row: 20, ascent: 15, advance: 8.0, margin: 10, gap: 6 };
+
+    #[test]
+    fn the_result_editor_draws_four_named_panes_with_the_caret_bar() {
+        let blocked = Snapshot {
+            repository: Some(NativePath::new("repo")),
+            operation: Some("merge".into()),
+            unmerged: vec!["a.txt".into()],
+            ..Snapshot::welcome()
+        };
+        let mut workspace = Workspace::new(blocked.clone());
+        let _ = workspace.key(Key::Char('C'));
+        workspace.reply(Reply::Conflicts(vec![crate::ConflictRow {
+            path: "a.txt".into(),
+            class: "content".into(),
+            base: Some("one".into()),
+            current: Some("one\nmain".into()),
+            incoming: Some("one\nfeature".into()),
+            binary: false,
+            truncated: false,
+        }]));
+        let _ = workspace.key(Key::Enter);
+        let body = texts(&scene(&workspace, 1200, 900, GRID, 0)).join("\n");
+        assert!(body.contains("Conflict editor"), "the editor names itself: {body}");
+        assert!(body.contains("Result"), "the editable pane is named: {body}");
+        assert!(body.contains("Base (stage 1)"), "stage roles are named: {body}");
+        assert!(body.contains("Current (stage 2)"), "{body}");
+        assert!(body.contains("Incoming (stage 3)"), "{body}");
+        assert!(body.contains("main|"), "the caret bar sits in the result text: {body}");
+        assert!(body.contains("L2:5"), "the caret position is shown: {body}");
+
+        // The same frame in Chinese keeps its own names for the four panes.
+        workspace.reply(Reply::LocaleChanged(Snapshot { locale: crate::Locale::ZhCn, locale_tag: "zh-CN".into(), ..blocked }));
+        let chinese = texts(&scene(&workspace, 1200, 900, GRID, 0)).join("\n");
+        assert!(chinese.contains("冲突编辑"), "{chinese}");
+        assert!(chinese.contains("结果"), "{chinese}");
+        assert!(chinese.contains("基线（阶段 1）"), "{chinese}");
+        assert!(chinese.contains("当前（阶段 2）"), "{chinese}");
+        assert!(chinese.contains("传入（阶段 3）"), "{chinese}");
+    }
 
     #[test]
     fn create_repository_queue_guard_preserves_form_and_welcome_has_named_entry() {
