@@ -107,6 +107,10 @@ Status: published 2026-11-09 as [v0.1.2](https://github.com/partnernetsoftware/m
 
 Per cell, an archive contains the executable, a README, a checksum list and a receipt naming the source SHA and the asset digests. A cell whose runtime court did not pass is never packaged, and a partial matrix is never a release candidate. [The 0.1.2 plan](../plan/plan-0.1.2.md) owns the evidence.
 
+## 0.2.1 delivery target
+
+Status: **published** as a pre-release, `v0.2.1-beta`, on 2026-11-26 (https://github.com/partnernetsoftware/minicon-srcmgr/releases/tag/v0.2.1-beta), under the second exit path of [the 0.2.1 plan](../plan/plan-0.2.1.md#qualification-path-and-exit-criteria): every ledger row D1-D5 is delivered with named evidence, and the clean-image and five-participant courts remain `NOT-RUN`. The same six cells, signing mode and pre-publication checks apply: six archives assembled from the cell receipts and the signed Windows bytes, `sha256sum -c` passed for all six, the packaged Windows executable reports `minicon-srcmgr 0.2.1` and is `Valid` with a timestamp. The release notes name every limit, including no composition display, no search navigation, and binary, symlink, submodule and delete/modify conflicts still refused by name.
+
 ## 0.2.0 delivery target
 
 Status: **published** as a pre-release, `v0.2.0-beta`, on 2026-11-26 (https://github.com/partnernetsoftware/minicon-srcmgr/releases/tag/v0.2.0-beta), under the second exit path of [the 0.2.0 plan](../plan/plan-0.2.0.md#qualification-path-and-exit-criteria): the integration, conflict and continuation cases are delivered with named evidence, and the five-participant court is `NOT-RUN` because this repository cannot supply participants. The same six cells, signing mode and pre-publication checks apply; the release notes name every limit, including that no dedicated three-way merge tool is configured and that the in-app result editor is 0.2.1.

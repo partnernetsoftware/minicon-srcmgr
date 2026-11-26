@@ -1,8 +1,8 @@
 # 0.2.1 the result editor, inside the window
 
-Status: `[-]` in progress. Every ledger row D1-D5 is `[v]`; what remains is the
-version bump, the release notes and the beta publication. Workspace version stays
-**0.2.0** until that happens. This plan finishes the sentence 0.2.0 deliberately left open:
+Status: `[v]` closed — published as `v0.2.1-beta` on 2026-11-26 under exit path 2,
+with the clean-image and five-participant courts named `NOT-RUN`. The workspace
+version is **0.2.1**. This plan finishes the sentence 0.2.0 deliberately left open:
 whole-side and edited-copy resolution shipped, but the file itself was resolved
 in an external editor. 0.2.1 puts the result pane in the window.
 
@@ -245,4 +245,24 @@ the same three ways; if the courts still cannot run, it publishes as
   entry.
 - **Open.** Release preparation: version bump, notes, tag, and the inherited C6/C7
   courts.
+
+### 2026-11-26 · published as v0.2.1-beta
+
+- **Gate.** `Cargo.toml`, `release-policy.json` and `Cargo.lock` moved to 0.2.1;
+  `v0.2.1-beta` tagged at `1460c9f`. Six-cell run
+  [45838156984](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/45838156984)
+  passed on that commit; the release-eligible signing run
+  [45839289744](https://github.com/partnernetsoftware/minicon-srcmgr/actions/runs/45839289744)
+  was dispatched on the tag and both Windows executables came back `Valid` with a
+  timestamp.
+- **Assembly.** `scripts/assemble_release.py` exited 0 over the six cell artifacts
+  and the signed bytes; `sha256sum -c SHA256SUMS.txt` passed for all six archives.
+- **Shipped bytes.** The packaged `minicon-srcmgr.exe` reports `minicon-srcmgr
+  0.2.1`, `Get-AuthenticodeSignature` returns `Valid` with the company publisher
+  and a Microsoft RFC 3161 timestamp. The archive re-downloaded from the release
+  page hashes to the same digest as the assembled file.
+- **Published.** `gh release create v0.2.1-beta --prerelease` attached the six
+  archives, `SHA256SUMS.txt`, `release-manifest.json` and `signing-receipt.json`.
+  The notes name the unrun courts, the absent composition display and the
+  byte-only search, and carry the measured bytes and digests.
 

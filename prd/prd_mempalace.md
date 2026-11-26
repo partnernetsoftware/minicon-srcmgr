@@ -311,6 +311,18 @@ enforced in code or a fixture today.
 - **A search count states its rule.** Matches are counted as plain byte
   occurrences, case-sensitive, across the result and three sides; the panel says
   "across four panes" and the plan does not call it case-insensitive search.
+- **Download release artifacts one at a time.** `gh run download <run> -D dir`
+  can stop partway through a run with an EOF from blob storage; per-artifact
+  downloads are resumable and their failures are nameable. `gh release download`
+  needs `-R owner/repo` when it runs outside the checkout.
+- **The signed artifact already holds the signed bytes.** The signing job's
+  `signed-candidates` upload carries `signing-input/cells/{cell}/minicon-srcmgr.exe`
+  (the signed files, not the inputs they started from) plus one inspection per
+  cell and the receipt; hand that directory to `assemble_release.py --signed` and
+  it finds each cell's bytes and inspection exactly once.
+- **A release page is checked from the outside.** After `gh release create`,
+  re-download at least one archive through the release URL and compare its digest
+  with `SHA256SUMS.txt`; the local assembly proves the pipeline, not the upload.
 
 ## Four reading paths
 
