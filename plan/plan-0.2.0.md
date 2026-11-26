@@ -1,6 +1,6 @@
 # 0.2.0 integration inside the window
 
-Status: `[-]` release candidate at version **0.2.0**. C1–C6 are `[v]` with named evidence; C7 is `NOT-RUN` with a fixed runbook, so this version publishes only as a pre-release under exit path 2, with the court named in its notes. It starts the first capability class the 0.1.x series never admitted: writing an integration.
+Status: `[v]` closed — published as `v0.2.0-beta` on 2026-11-26 under exit path 2, with C7 named in the notes. C1–C6 are delivered with named evidence; the five-participant court could not run here and the release page says so. The next increment is [0.2.1](plan-0.2.1.md).
 `v0.1.3-beta` on 2026-11-14). This plan starts the first capability class the
 0.1.x series never admitted: authoring an integration. Product admission is owned
 by [01](../prd/PRD_01_product.md#first-user-admission-matrix), the mutation gate
@@ -235,7 +235,11 @@ The in-app text result editor is not one of these cases: it is 0.2.1, and no
 - **Tagged.** \`v0.2.0-beta\` points at \`8e8f7ff\` and is pushed, so the six-cell
   build and the signing run are executing on exactly that source. Nothing is
   published; the assemble, re-hash, inspect and re-download steps follow.
-- **What is not done here.** No artifacts, no publication. The six-cell
+- **Published and checked from the outside.** The release page exists as a
+  pre-release with nine assets; the Windows x86_64 archive downloaded from it
+  re-hashed to the noted bytes, the extracted executable reports
+  minicon-srcmgr 0.2.0 and its signature inspects @Valid@.
+- **What was not done before publication.** The six-cell
   build and the signing run happen on a pushed tag, and publication is a shared
   action that follows the same order as 0.1.3: assemble, re-hash, inspect the
   signature, then publish and re-download.

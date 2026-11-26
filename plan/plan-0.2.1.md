@@ -64,6 +64,44 @@ proof of an unresolved conflict.
 | Bounds | Sides are cut at 4000 characters for display | A file being edited cannot be cut; it is refused above the bound instead |
 | Job record | Every mutation begins and finishes one | Save joins it like any other mutation |
 
+## Dependency graph
+
+```text
+E1 encoding (new module, no UI)
+      │
+E2 editor state (new module, no UI) ──┐
+      │                               │
+E3 panes (window + workspace) ────────┤  needs E1+E2
+      │                               │
+E4 save and stage (backend) ──────────┘  needs E1, reuses 0.2.0 stage check
+      ↓
+   release 0.2.1 (courts inherited)
+```
+
+Merge points: `crates/srcmgr-ui/src/result_editor.rs` is one writer; `window.rs`
+takes E3 in one commit with its `Workspace::key` test, because a pane that is
+drawn and not routed is the defect 0.2.0 already paid for twice.
+
+## What must be true before the first line of code
+
+- The bound is chosen once and written down here: 2 MiB of bytes or 200 000
+  lines, whichever comes first. A larger file is refused by name, and the
+  conflict center keeps showing its bounded sides.
+- Encoding detection is specification-first: a BOM decides UTF-8 or UTF-16LE;
+  no BOM means UTF-8 if the bytes decode, otherwise the file is refused. No
+  heuristic re-encoding, no locale guessing.
+- Newline style is taken from the file as it exists in the worktree, and a file
+  with mixed endings keeps them as written; the editor does not normalise.
+- Undo is a bounded stack of editor snapshots (32 steps), not an operation log.
+
+## Risks this plan accepts, and why
+
+| Risk | Why it is accepted | What bounds it |
+|---|---|---|
+| A full text editor is a large surface | The four-pane reading already exists and the composer contract already handles caret/selection/IME | Bound, no syntax colouring, no word wrap, no multi-cursor |
+| Encoding round trips can corrupt a file | Refusing an undeterminable encoding is safer than guessing | Byte-compared fixtures for every supported combination |
+| A failed save can truncate work | Save is atomic: write beside the file, then rename | A test that a failed save leaves the file byte-identical |
+
 ## Work packages
 
 | Package | Deliverable | Minimum evidence |

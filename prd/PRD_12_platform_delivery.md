@@ -109,7 +109,7 @@ Per cell, an archive contains the executable, a README, a checksum list and a re
 
 ## 0.2.0 delivery target
 
-Status: release candidate at version **0.2.0**, publishing as a pre-release under the second exit path of [the 0.2.0 plan](../plan/plan-0.2.0.md#qualification-path-and-exit-criteria): the integration, conflict and continuation cases are delivered with named evidence, and the five-participant court is `NOT-RUN` because this repository cannot supply participants. The same six cells, signing mode and pre-publication checks apply; the release notes name every limit, including that no dedicated three-way merge tool is configured and that the in-app result editor is 0.2.1.
+Status: **published** as a pre-release, `v0.2.0-beta`, on 2026-11-26 (https://github.com/partnernetsoftware/minicon-srcmgr/releases/tag/v0.2.0-beta), under the second exit path of [the 0.2.0 plan](../plan/plan-0.2.0.md#qualification-path-and-exit-criteria): the integration, conflict and continuation cases are delivered with named evidence, and the five-participant court is `NOT-RUN` because this repository cannot supply participants. The same six cells, signing mode and pre-publication checks apply; the release notes name every limit, including that no dedicated three-way merge tool is configured and that the in-app result editor is 0.2.1.
 
 ## 0.1.3 delivery target
 
