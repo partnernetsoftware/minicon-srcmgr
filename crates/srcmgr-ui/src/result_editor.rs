@@ -30,8 +30,6 @@ pub struct ResultEditor {
     anchor: Option<usize>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
-    /// Input-method composition text, not yet part of the buffer.
-    pub preedit: String,
     /// First visible line, kept by the renderer.
     pub scroll: usize,
 }
@@ -39,7 +37,7 @@ pub struct ResultEditor {
 impl ResultEditor {
     pub fn new(text: String) -> Self {
         let caret = text.len();
-        Self { text, caret, anchor: None, undo: Vec::new(), redo: Vec::new(), preedit: String::new(), scroll: 0 }
+        Self { text, caret, anchor: None, undo: Vec::new(), redo: Vec::new(), scroll: 0 }
     }
 
     pub fn lines(&self) -> impl Iterator<Item = &str> {
@@ -251,10 +249,6 @@ impl ResultEditor {
     /// Handles one editing key. Anything the buffer does not own is ignored, so
     /// the window decides which keys belong here.
     pub fn edit(&mut self, key: Key) -> Effect {
-        if !self.preedit.is_empty() && key == Key::Escape {
-            self.preedit.clear();
-            return Effect::Nothing;
-        }
         match key {
             Key::SelectAll => self.select_all(),
             Key::Undo => {
@@ -333,6 +327,17 @@ mod tests {
         buffer.edit(Key::Enter);
         assert_eq!(buffer.text, "on\no");
         assert_eq!(buffer.caret_position(), (1, 0));
+    }
+
+    #[test]
+    fn one_committed_ime_text_lands_once_at_the_caret() {
+        let mut buffer = editor("one\n");
+        buffer.caret = 4;
+        buffer.edit(Key::Text("中文".into()));
+        assert_eq!(buffer.text, "one\n中文");
+        assert_eq!(buffer.caret_position(), (1, 2));
+        assert!(buffer.undo(), "one commit is one undo step");
+        assert_eq!(buffer.text, "one\n");
     }
 
     #[test]

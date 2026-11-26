@@ -1,8 +1,8 @@
 # 0.2.1 the result editor, inside the window
 
-Status: `[-]` in progress. Panes, editing and the save path are built and
-verified; cross-pane search, the incoming/empty seed and IME in the buffer are
-still open. Workspace version stays **0.2.0** until this version publishes. This plan finishes the sentence 0.2.0 deliberately left open:
+Status: `[-]` in progress. Every ledger row D1-D5 is `[v]`; what remains is the
+version bump, the release notes and the beta publication. Workspace version stays
+**0.2.0** until that happens. This plan finishes the sentence 0.2.0 deliberately left open:
 whole-side and edited-copy resolution shipped, but the file itself was resolved
 in an external editor. 0.2.1 puts the result pane in the window.
 
@@ -125,9 +125,9 @@ drawn and not routed is the defect 0.2.0 already paid for twice.
 
 | Case | Required outcome | State |
 |---|---|---|
-| D1 · panes | Four panes, roles named, read-only except the result | `[-]` `window.rs::result_editor_panel` draws base/current/incoming/result with caret bar and `L{line}:{col}`, and the frame test passes in both languages. Missing: search across the four panes (product tree A3) and the choice of an incoming or empty seed |
+| D1 · panes | Four panes, roles named, read-only except the result | `[v]` `window.rs::result_editor_panel` draws base/current/incoming/result with caret bar and `L{line}:{col}`; `Ctrl+F` opens a find field that counts matches live across all four panes, and Enter/i/0 open the result from the current side, the incoming side or empty. The frame test passes in both languages and asserts `4 match(es) across four panes` / `四个窗格共 4 处匹配` |
 | D2 · encoding | UTF-8, BOM and UTF-16LE round-trip byte-identically; newline style preserved | `[v]` `text_file` fixtures cover the three encodings plus LF/CRLF/mixed normalisation; `a_saved_result_keeps_the_file_encoding_and_newlines_and_clears_its_record` saves into a BOM+CRLF conflicted file through the real backend and compares the bytes |
-| D3 · editing | Caret, selection, undo, IME and paste behave inside the bound | `[-]` `ResultEditor` holds text, caret, anchor and a 32-step undo stack, refuses any insertion that would cross either bound, and now takes Enter, Ctrl+Z and Ctrl+Y from the window; nine fixtures pass. Missing: IME composition has a `preedit` field but no setter and no drawing |
+| D3 · editing | Caret, selection, undo, IME and paste behave inside the bound | `[v]` `ResultEditor` holds text, caret, anchor and a 32-step undo stack, refuses any insertion that would cross either bound, and takes Enter, Ctrl+Z, Ctrl+Y and Ctrl+F from the window; ten fixtures pass. IME arrives as committed `Key::Text` (one insertion, one undo step) because the window has no composition stream, so no preedit is drawn or claimed; paste arrives as `Key::Pasted` through the same insert |
 | D4 · save | Atomic under a job record; a failed save leaves the file untouched | `[v]` `Job::SaveResolution` re-reads the unmerged entries, refuses a path the index does not hold (and any parent-dir component), refuses a result over the bound, records `save-result` before `text_file::write` (temp file + rename) and clears it after; the fixture asserts a refusal writes nothing and the record is gone |
 | D5 · stage | Marker warning, then the index check; an unresolved path still blocks commit | `[v]` The same fixture warns on a marker-like save, stages the saved copy, sees the stage warning again and reloads an empty conflict list. `conflict_markers` now drops a UTF-8 BOM before scanning, so a first-line marker in a BOM file is seen |
 
@@ -224,4 +224,25 @@ the same three ways; if the courts still cannot run, it publishes as
 - **Open.** Cross-pane search and the incoming/empty seed keep D1 `[-]`; IME
   composition keeps D3 `[-]`. Neither is claimed by the release note until it
   lands.
+
+### 2026-11-26 · find, the seed choice, and what IME really is here
+
+- **Built.** `Ctrl+F` opens a find field inside the result editor; typing counts
+  matches live across the result and the three sides (plain byte search, no case
+  folding), Enter closes the field and keeps the count, Escape clears it. The
+  count line is drawn in both languages. In the conflict centre, Enter, `i` and
+  `0` open the result from the current side, the incoming side or empty.
+- **The find field is above the buffer.** While it is open it takes characters,
+  text and paste itself, so a query can hold anything a filename can; the buffer
+  never sees those keys. Escape closes the field before it closes the editor.
+- **IME is committed text, and that is all this window has.** Earlier text claimed
+  "IME composition" sat in `preedit`, but nothing could ever set that field and
+  nothing drew it. The field is gone; a composition arrives as one `Key::Text`
+  commit, inserts once, and costs one undo step. No preedit display is claimed.
+- **Evidence.** `cargo test -p srcmgr-ui` — 152 passed, including the live-count
+  case (4) and both seeds; the bilingual frame test asserts the count line. The
+  whole-workspace run and the backend save fixture are unchanged from the previous
+  entry.
+- **Open.** Release preparation: version bump, notes, tag, and the inherited C6/C7
+  courts.
 

@@ -309,6 +309,11 @@ are a warning, not a refusal. Escape closes the pane without saving; staging sta
 a separate Space action with the existing index re-check, so the index still
 decides whether the path is resolved.
 
-Not in this slice: search across the four panes, IME composition in the buffer,
-syntax colouring, word wrap, multiple cursors, and any resolution of binary,
-symlink, submodule or delete/modify conflicts, which stay refused by name.
+Enter opens the result from the current side; i opens it from the incoming side
+and 0 opens it empty. Ctrl+F opens a find field that counts matches live across
+the result and the three sides, shown in the panel and kept after Enter; it is a
+plain byte search with no case folding. A composition arrives as one committed
+text event and is inserted once; the window has no composition stream, so no
+preedit is displayed. Not in this slice: syntax colouring, word wrap, multiple
+cursors, and any resolution of binary, symlink, submodule or delete/modify
+conflicts, which stay refused by name.

@@ -297,6 +297,20 @@ enforced in code or a fixture today.
 - **A requirement left out keeps its ledger row open.** 0.2.1's panes arrived
   without the cross-pane search, so D1 stays `[-]` even though the four panes
   draw and take keys; a delivered half is not a closed case.
+- **A field over a buffer is another layer of the same key chain.** The find
+  field inside the result editor takes characters, text and paste before the
+  buffer does; Escape closes the field before it closes the editor. Any new input
+  surface joins the top of that chain, never a parallel one.
+- **IME here is one committed text event.** The window has no composition stream,
+  so a composition arrives as a single `Key::Text` that inserts once and costs one
+  undo step. A `preedit` field nothing can set is decoration; it was removed
+  rather than described as a feature.
+- **"Empty" is a seed like any other.** The result buffer can start from the
+  current side, the incoming side or nothing, and the third case needs its own key
+  and its own test; `None` falling back to an empty string is not a choice.
+- **A search count states its rule.** Matches are counted as plain byte
+  occurrences, case-sensitive, across the result and three sides; the panel says
+  "across four panes" and the plan does not call it case-insensitive search.
 
 ## Four reading paths
 

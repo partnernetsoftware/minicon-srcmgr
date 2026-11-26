@@ -1730,6 +1730,18 @@ fn result_editor_panel(
     let start = (line + 1).saturating_sub(result_rows);
     let mut lines = vec![workspace.t(TextKey::ResultEditorNote).to_owned()];
     lines.push(format!("{}  L{}:{}", workspace.t(TextKey::ResultPaneLabel), line + 1, column + 1));
+    let find = editor.find.as_deref().map(|query| {
+        let count = editor.found.as_ref().map_or(0, |(_, count)| *count);
+        (query, count)
+    });
+    if let Some((query, count)) = find.or_else(|| editor.found.as_ref().map(|(query, count)| (query.as_str(), *count))) {
+        lines.push(
+            workspace
+                .t(TextKey::ResultFindLine)
+                .replace("{query}", query)
+                .replace("{count}", &count.to_string()),
+        );
+    }
     for (offset, text) in editor.result.lines().skip(start).take(result_rows).enumerate() {
         if start + offset == line {
             let (before, after) = split_at_column(text, column);
@@ -2349,8 +2361,12 @@ fn hints(workspace: &Workspace) -> String {
     if workspace.checkout_review().is_some() {
         return workspace.t(TextKey::HintCheckoutReview).into();
     }
-    if workspace.conflict_editor().is_some() {
-        return workspace.t(TextKey::HintResultEditor).into();
+    if let Some(editor) = workspace.conflict_editor() {
+        return if editor.find.is_some() {
+            workspace.t(TextKey::HintFindField).into()
+        } else {
+            workspace.t(TextKey::HintResultEditor).into()
+        };
     }
     if let Some(center) = workspace.conflict_center() {
         return if center.review.is_some() {
@@ -2503,6 +2519,7 @@ fn key_of(event: &NormalizedKeyEvent) -> Option<Key> {
                     "a" | "A" => Some(Key::SelectAll),
                     "x" | "X" => Some(Key::Cut),
                     "v" | "V" => Some(Key::Paste),
+                    "f" | "F" => Some(Key::Find),
                     "z" | "Z" => Some(Key::Undo),
                     "y" | "Y" => Some(Key::Redo),
                     "s" | "S" => Some(Key::Save),
@@ -2587,6 +2604,10 @@ mod tests {
             truncated: false,
         }]));
         let _ = workspace.key(Key::Enter);
+        let _ = workspace.key(Key::Find);
+        for character in "one".chars() {
+            let _ = workspace.key(Key::Char(character));
+        }
         let body = texts(&scene(&workspace, 1200, 900, GRID, 0)).join("\n");
         assert!(body.contains("Conflict editor"), "the editor names itself: {body}");
         assert!(body.contains("Result"), "the editable pane is named: {body}");
@@ -2604,6 +2625,8 @@ mod tests {
         assert!(chinese.contains("基线（阶段 1）"), "{chinese}");
         assert!(chinese.contains("当前（阶段 2）"), "{chinese}");
         assert!(chinese.contains("传入（阶段 3）"), "{chinese}");
+        assert!(body.contains("4 match(es) across four panes"), "the search count is drawn: {body}");
+        assert!(chinese.contains("查找：one · 四个窗格共 4 处匹配"), "{chinese}");
     }
 
     #[test]

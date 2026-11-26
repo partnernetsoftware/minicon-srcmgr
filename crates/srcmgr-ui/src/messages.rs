@@ -259,7 +259,9 @@ catalog! {
     ResultEditorNote => "Editing the result. Nothing is saved yet; Esc returns to the conflict list.", "正在编辑结果。尚未保存；Esc 返回冲突列表。";
     ResultEditorBinarySide => "(binary side, not shown)", "（二进制侧，未显示）";
     ResultEditorMore => "… {count} more line(s)", "…… 还有 {count} 行";
-    HintResultEditor => "type to edit · Enter breaks the line · Ctrl+Z undoes · Ctrl+S saves · Esc returns without saving", "输入以编辑 · Enter 换行 · Ctrl+Z 撤销 · Ctrl+S 保存 · Esc 返回且不保存";
+    HintResultEditor => "type to edit · Enter breaks the line · Ctrl+F finds · Ctrl+Z undoes · Ctrl+S saves · Esc returns without saving", "输入以编辑 · Enter 换行 · Ctrl+F 查找 · Ctrl+Z 撤销 · Ctrl+S 保存 · Esc 返回且不保存";
+    HintFindField => "typing counts live across the four panes · Enter closes the field · Esc clears it", "输入即实时统计四个窗格 · Enter 关闭输入行 · Esc 清除";
+    ResultFindLine => "Find: {query} · {count} match(es) across four panes", "查找：{query} · 四个窗格共 {count} 处匹配";
     ConflictBaseLabel => "Base (stage 1)", "基线（阶段 1）";
     ConflictCurrentLabel => "Current (stage 2)", "当前（阶段 2）";
     ConflictIncomingLabel => "Incoming (stage 3)", "传入（阶段 3）";
@@ -281,7 +283,7 @@ catalog! {
     NoteSaveTooLarge => "{path} is beyond the 2 MiB or 200 000 line bound; this version refuses it rather than cutting the file.", "{path} 超过 2 MiB 或 20 万行的上限；本版本拒绝处理，而不是截断文件。";
     NoteSaveEncoding => "{path} could not be written as text: {reason}", "无法以文本方式写入 {path}：{reason}";
     HintResolutionReview => "y applies this side · n or Esc keeps the conflict", "y 应用该侧 · n 或 Esc 保留冲突";
-    HintConflicts => "C closes · j/k moves · u current · w incoming · e editor · Space stages the edited file", "C 关闭 · j/k 移动 · u 当前侧 · w 传入侧 · e 编辑器 · Space 暂存已编辑文件";
+    HintConflicts => "C closes · j/k moves · Enter result · i from incoming · 0 empty · u current · w incoming · e editor · Space stages", "C 关闭 · j/k 移动 · Enter 结果 · i 从传入侧 · 0 空白 · u 当前侧 · w 传入侧 · e 编辑器 · Space 暂存";
     CloneFailedTitle => "Clone failed", "克隆失败";
     CloneTargetLine => "Target: {destination}", "目标：{destination}";
     NoteCheckoutExpired => "The checkout review expired or was already used; review it again.", "检出复核已过期或已被使用；请重新复核。";

@@ -37,6 +37,7 @@ pub enum Key {
     SelectAll,
     Undo,
     Redo,
+    Find,
     Cut,
     Paste,
     Pasted(String),
@@ -135,6 +136,41 @@ impl ConflictCenter {
 pub struct ConflictEditor {
     pub row: crate::ConflictRow,
     pub result: crate::ResultEditor,
+    /// The find field's text while it is open.
+    pub find: Option<String>,
+    /// The last query and its live count across all four panes, kept for the
+    /// panel after the field closes.
+    pub found: Option<(String, usize)>,
+}
+
+/// Which side a new result buffer starts from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Seed {
+    Current,
+    Incoming,
+    Empty,
+}
+
+impl ConflictEditor {
+    fn new(row: crate::ConflictRow, seed: Seed) -> Self {
+        let text = match seed {
+            Seed::Current => row.current.clone(),
+            Seed::Incoming => row.incoming.clone(),
+            Seed::Empty => None,
+        }
+        .unwrap_or_default();
+        Self { row, result: crate::ResultEditor::new(text), find: None, found: None }
+    }
+
+    /// How many times the query occurs in the result and the three sides. Plain
+    /// byte search: no case folding and no regex, so the count is reproducible.
+    fn occurrences(&self, query: &str) -> usize {
+        if query.is_empty() {
+            return 0;
+        }
+        let sides = [Some(&self.result.text), self.row.base.as_ref(), self.row.current.as_ref(), self.row.incoming.as_ref()];
+        sides.into_iter().flatten().map(|text| text.match_indices(query).count()).sum()
+    }
 }
 
 /// What the window must do after a key or reply.
@@ -713,20 +749,54 @@ impl Workspace {
     /// Opens the result buffer for the selected path, seeded from the current
     /// side when the index has one. Nothing is written.
     pub fn open_conflict_editor(&mut self) -> Effect {
+        self.open_result(Seed::Current)
+    }
+
+    /// Opens the result buffer from a named side, or empty.
+    pub fn open_result(&mut self, seed: Seed) -> Effect {
         let Some(center) = self.conflicts.as_ref() else { return Effect::Nothing };
         let Some(row) = center.rows.get(center.selected).cloned() else { return Effect::Nothing };
-        let seed = row.current.clone().unwrap_or_default();
-        self.editor = Some(ConflictEditor { row, result: crate::ResultEditor::new(seed) });
+        self.editor = Some(ConflictEditor::new(row, seed));
         self.trust_scroll = 0;
         Effect::Nothing
     }
 
     /// The editor owns the keys while it is open; Escape returns to the list.
+    /// The find field, when open, takes every editing key first.
     pub fn editor_key(&mut self, key: Key) -> Effect {
         let Some(editor) = self.editor.as_mut() else { return Effect::Nothing };
+        if let Some(mut query) = editor.find.take() {
+            match key {
+                Key::Escape | Key::CtrlC => {
+                    editor.found = None;
+                    return Effect::Nothing;
+                }
+                Key::Enter => {
+                    // The count was kept live; Enter only closes the field.
+                    return Effect::Nothing;
+                }
+                Key::Backspace => {
+                    query.pop();
+                }
+                Key::Char(character) => query.push(character),
+                Key::Text(text) | Key::Pasted(text) => query.push_str(&text),
+                _ => {
+                    editor.find = Some(query);
+                    return Effect::Nothing;
+                }
+            }
+            let counted = editor.occurrences(&query);
+            editor.found = Some((query.clone(), counted));
+            editor.find = Some(query);
+            return Effect::Nothing;
+        }
         match key {
             Key::Escape | Key::CtrlC => {
                 self.editor = None;
+                Effect::Nothing
+            }
+            Key::Find => {
+                editor.find = Some(String::new());
                 Effect::Nothing
             }
             // Saving is a write, so it is a job like any other; the buffer
@@ -785,7 +855,9 @@ impl Workspace {
             }
             Key::Char('u') if center.review.is_none() => center.preview(crate::ResolutionChoice::Current),
             Key::Char('w') if center.review.is_none() => center.preview(crate::ResolutionChoice::Incoming),
-            Key::Enter if center.review.is_none() => self.open_conflict_editor(),
+            Key::Enter if center.review.is_none() => self.open_result(Seed::Current),
+            Key::Char('i') if center.review.is_none() => self.open_result(Seed::Incoming),
+            Key::Char('0') if center.review.is_none() => self.open_result(Seed::Empty),
             Key::Down | Key::Char('j') => {
                 center.move_selection(1);
                 Effect::Nothing
@@ -3687,6 +3759,62 @@ mod tests {
         assert_eq!(workspace.key(Key::Escape), Effect::Nothing);
         assert!(workspace.conflict_editor().is_none());
         assert!(workspace.conflict_center().is_some(), "Escape returns to the list, not out of it");
+    }
+
+    fn conflict_workspace() -> Workspace {
+        let mut blocked = snapshot(None);
+        blocked.operation = Some("merge".into());
+        blocked.unmerged = vec!["a.txt".into()];
+        let mut workspace = Workspace::new(blocked);
+        let _ = workspace.key(Key::Char('C'));
+        workspace.reply(Reply::Conflicts(vec![crate::ConflictRow {
+            path: "a.txt".into(),
+            class: "content".into(),
+            base: Some("one".into()),
+            current: Some("one\nmain".into()),
+            incoming: Some("one\nfeature".into()),
+            binary: false,
+            truncated: false,
+        }]));
+        workspace
+    }
+
+    #[test]
+    fn ctrl_f_counts_matches_across_the_four_panes() {
+        let mut workspace = conflict_workspace();
+        let _ = workspace.key(Key::Enter);
+        assert_eq!(workspace.key(Key::Find), Effect::Nothing);
+        assert_eq!(workspace.conflict_editor().unwrap().find.as_deref(), Some(""));
+        for character in "one".chars() {
+            let _ = workspace.key(Key::Char(character));
+        }
+        let editor = workspace.conflict_editor().unwrap();
+        assert_eq!(editor.find.as_deref(), Some("one"));
+        assert_eq!(editor.found, Some(("one".into(), 4)), "result, base, current and incoming each hold it once");
+        // Enter closes the field and keeps the count on the panel.
+        assert_eq!(workspace.key(Key::Enter), Effect::Nothing);
+        let editor = workspace.conflict_editor().unwrap();
+        assert!(editor.find.is_none());
+        assert_eq!(editor.found, Some(("one".into(), 4)));
+        // Escape in the field clears it and leaves the editor open.
+        let _ = workspace.key(Key::Find);
+        let _ = workspace.key(Key::Char('m'));
+        assert_eq!(workspace.key(Key::Escape), Effect::Nothing);
+        let editor = workspace.conflict_editor().expect("the editor stays open");
+        assert!(editor.find.is_none() && editor.found.is_none());
+        assert_eq!(workspace.key(Key::Escape), Effect::Nothing);
+        assert!(workspace.conflict_editor().is_none(), "a second Escape leaves the editor");
+    }
+
+    #[test]
+    fn i_and_zero_choose_the_seed_of_the_result_buffer() {
+        let mut workspace = conflict_workspace();
+        assert_eq!(workspace.key(Key::Char('i')), Effect::Nothing);
+        assert_eq!(workspace.conflict_editor().unwrap().result.text, "one\nfeature");
+        let _ = workspace.key(Key::Escape);
+        assert_eq!(workspace.key(Key::Char('0')), Effect::Nothing);
+        assert_eq!(workspace.conflict_editor().unwrap().result.text, "");
+        assert_eq!(workspace.conflict_editor().unwrap().result.caret_position(), (0, 0));
     }
 
     #[test]
