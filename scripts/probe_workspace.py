@@ -310,14 +310,14 @@ def sustained(git, repo, root, prefix, hwnd, user, gdi, key, seconds, cycles, ch
             finally:
                 lock.unlink()
             press(0x1B)  # Retry the retained text after storage is available.
-            draft = sp.run(prefix + ["draft", str(repo), "show"], check=True, capture_output=True).stdout.strip()
+            draft = sp.run(prefix + ["-C", str(repo), "draft", "show"], check=True, capture_output=True).stdout.strip()
             if draft.lower() != b"faildraft":
                 raise RuntimeError("failed draft save lost the original message before retry")
             press(0x43)
             for _ in range(len(draft)):
                 press(0x08)
             press(0x1B)
-            assert sp.run(prefix + ["draft", str(repo), "show"], check=True, capture_output=True).stdout.strip() == b"no draft", "blank save must produce the CLI's documented empty-draft state"
+            assert sp.run(prefix + ["-C", str(repo), "draft", "show"], check=True, capture_output=True).stdout.strip() == b"no draft", "blank save must produce the CLI's documented empty-draft state"
         elif kind == "repository-disappearance":
             away = repo.with_name("repo-away")
             assert repo.resolve().parent == root and away.parent == root and not away.exists()
@@ -400,7 +400,7 @@ def sustained(git, repo, root, prefix, hwnd, user, gdi, key, seconds, cycles, ch
                 press(code)
             if postcommit_fault:
                 press(0x1B)
-                assert sp.run(prefix + ["draft", str(repo), "show"], check=True, capture_output=True).stdout.strip() == b"soak"
+                assert sp.run(prefix + ["-C", str(repo), "draft", "show"], check=True, capture_output=True).stdout.strip() == b"soak"
                 press(0x43)
             press(0x0D, True)
             expect(lambda: run("rev-parse", "HEAD") != previous, "sustained GUI commit did not advance HEAD")
@@ -417,12 +417,12 @@ def sustained(git, repo, root, prefix, hwnd, user, gdi, key, seconds, cycles, ch
                 ImageGrab.grab(bbox=(bounds.left, bounds.top, bounds.right, bounds.bottom)).save(root / "postcommit-completed.png")
                 lock.unlink()  # Only the verified owned injection is removed.
                 press(0x52)
-                assert sp.run(prefix + ["draft", str(repo), "show"], check=True, capture_output=True).stdout.strip() == b"soak", "cleanup failure lost the durable draft"
+                assert sp.run(prefix + ["-C", str(repo), "draft", "show"], check=True, capture_output=True).stdout.strip() == b"soak", "cleanup failure lost the durable draft"
                 press(0x43)
                 for _ in range(4):
                     press(0x08)
                 press(0x1B)
-                assert sp.run(prefix + ["draft", str(repo), "show"], check=True, capture_output=True).stdout.strip() == b"no draft"
+                assert sp.run(prefix + ["-C", str(repo), "draft", "show"], check=True, capture_output=True).stdout.strip() == b"no draft"
                 failures.append({"case": "post-commit-profile-io", "verdict": "PASS: Git created the commit; foreign lock and durable draft preserved; refresh recovered after removing the owned injection", "capture": "postcommit-completed.png"})
             if run("show", "HEAD:f00000.txt") != content or run("diff", "--cached", "--name-only"):
                 raise RuntimeError("sustained GUI commit/index integrity mismatch")
@@ -461,7 +461,7 @@ def sustained(git, repo, root, prefix, hwnd, user, gdi, key, seconds, cycles, ch
     for code in (0x44, 0x52, 0x41, 0x46, 0x54):
         press(code)
     press(0x1B)
-    draft = sp.run(prefix + ["draft", str(repo), "show"], check=True, capture_output=True).stdout.strip()
+    draft = sp.run(prefix + ["-C", str(repo), "draft", "show"], check=True, capture_output=True).stdout.strip()
     if draft.lower() != b"draft":
         raise RuntimeError("acknowledged GUI draft was not stored")
     scope = "Delivered native local paths with synthetic fixtures; controlled post-commit hook injects only the owned profile lock" if postcommit_fault else "Delivered native local paths with synthetic fixtures and no custom hooks"
@@ -868,8 +868,8 @@ def main():
         (repo / "f00000.txt").write_text("ONE\ntwo\nthree\n", encoding="utf-8")
     prefix = [exe, "--git", args.git, "--profile", str(root / "profile")]
     if not args.welcome_entry:
-        sp.run(prefix + ["trust", "grant", str(repo)], check=True, capture_output=True)
-    sp.run(prefix + ["setting", "set", "history.limit", "200"], check=True, capture_output=True)
+        sp.run(prefix + ["-C", str(repo), "trust", "grant"], check=True, capture_output=True)
+    sp.run(prefix + ["config", "set", "history.limit", "200"], check=True, capture_output=True)
     other = None
     if args.entry_smoke:
         other_root = root / "entry-other"
@@ -880,9 +880,9 @@ def main():
         other = target.resolve()
         sp.run([args.git, "-C", str(other), "branch", "-m", "entry-target"], check=True, capture_output=True)
         if not args.welcome_entry:
-            sp.run(prefix + ["trust", "grant", str(other)], check=True, capture_output=True)
+            sp.run(prefix + ["-C", str(other), "trust", "grant"], check=True, capture_output=True)
         for path, text in ((repo, "source draft"), (other, "target draft")):
-            sp.run(prefix + ["draft", str(path), "save", "-m", text], check=True, capture_output=True)
+            sp.run(prefix + ["-C", str(path), "draft", "save", "-m", text], check=True, capture_output=True)
     user, gdi, sample, key = native()
     previous = user.GetForegroundWindow()
     from windows_job_probe import OwnedTree
@@ -890,7 +890,7 @@ def main():
     kwargs = {"stdout": sp.DEVNULL, "stderr": (root / "stderr.log").open("w")}
     if args.measure_ui:
         kwargs["env"] = dict(os.environ, SRCMGR_MEASURE_UI="1")
-    launch = prefix + (["gui"] if args.welcome_entry else ["gui", str(repo)])
+    launch = prefix + (["gui"] if args.welcome_entry else ["-C", str(repo), "gui"])
     child = tree.spawn(launch, **kwargs) if tree else sp.Popen(launch, creationflags=sp.CREATE_NO_WINDOW, **kwargs)
     harness_first = sample(os.getpid())
     receipt = {"artifact_sha256": hashlib.sha256(Path(exe).read_bytes()).hexdigest(), "os": platform.platform(), "fixture": {"files": args.files, "commits": args.commits, "refs": 200, "changed": min(args.files, 200)}, "git": sp.check_output([args.git, "--version"], text=True).strip()}
@@ -1053,7 +1053,7 @@ def main():
             if child.returncode != 0:
                 raise RuntimeError("controlled close failed before draft restart check")
             hwnd = None
-            child = tree.spawn(prefix + ["gui", str(repo)], **kwargs) if tree else sp.Popen(prefix + ["gui", str(repo)], creationflags=sp.CREATE_NO_WINDOW, **kwargs)
+            child = tree.spawn(prefix + ["-C", str(repo), "gui"], **kwargs) if tree else sp.Popen(prefix + ["-C", str(repo), "gui"], creationflags=sp.CREATE_NO_WINDOW, **kwargs)
             until = time.monotonic() + 30
             while not hwnd and time.monotonic() < until:
                 user.EnumWindows(callback, 0)
@@ -1065,7 +1065,7 @@ def main():
             key(hwnd, 0x32)
             time.sleep(0.1)
             wait_quiet(hwnd, user, gdi)
-            draft = sp.run(prefix + ["draft", str(repo), "show"], check=True, capture_output=True).stdout.strip().decode()
+            draft = sp.run(prefix + ["-C", str(repo), "draft", "show"], check=True, capture_output=True).stdout.strip().decode()
             if draft != receipt["sustained"]["acknowledged_draft"]:
                 raise RuntimeError("controlled restart lost acknowledged draft")
             receipt["controlled_restart"] = {"first_pid": old_pid, "restarted_pid": child.pid, "draft": "PASS: acknowledged GUI draft preserved across controlled close/relaunch", "first_exit_code": 0}

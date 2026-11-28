@@ -133,7 +133,7 @@ fixture. C4 is one mechanical commit that touches no assertion.
 | G2 · porcelain | `status --porcelain=v2 -z` matches real `git` byte for byte on the emitted fields | `[v]` `porcelain_v2_and_v1_are_byte_identical_to_git` and `porcelain_matches_git_through_a_rename_and_a_conflict` compare the product's bytes with `git`'s on the same repository, through a rename record; the product passes the command through rather than rebuilding it |
 | G3 · names | `log`, `check-ignore`, `branch -m`, `config` replace the private names; the old spelling names its replacement | `[v]` `the_git_names_replace_the_private_ones_and_the_old_ones_say_so` and `branch_m_renames_through_git_and_reads_the_result_back`; `history`, `setting` and `ignore` exit 129 naming `log`, `config` and `check-ignore` |
 | G4 · gate | An untrusted repository refuses before Git runs, from `-C` and from the current directory | `[v]` `an_untrusted_repository_refuses_before_git_runs_from_either_path` uses a Git that leaves a marker when executed, from the directory, a subdirectory and `-C`; the marker never appears |
-| G5 · migration | Every integration test runs in the new spelling with its assertions intact; CI workflows pass | `[v]` 15 integration files moved by `scripts/migrate_cli_tests_022.py` plus three hand moves; all green with `SRCMGR_TEST_GIT`. Three CI workflow calls were `setting get`; the first CI run caught the third (`local-client.yml`, through `cargo run`) after a grep pattern missed it. All three now call `config get`; `Local client contracts` is green on `d103025` |
+| G5 · migration | Every integration test runs in the new spelling with its assertions intact; every caller passes | `[-]` 15 integration files moved by `scripts/migrate_cli_tests_022.py` plus three hand moves, all green with `SRCMGR_TEST_GIT`; three CI workflow calls and four scripts (`cell_runtime_court.py`, `probe_commit.py`, `probe_tabs.py`, `probe_workspace.py`) moved. The six-cell court passes locally against the binary; its CI run on the next tag is the evidence |
 
 ## Selected verification and stopping
 
@@ -215,5 +215,24 @@ The first round built C1-C4 together; the record follows.
   wrong word for a path and silent about `-C`. `status`, `commit` and `log` now
   say `takes no path; the repository comes from -C <path> or the current
   directory`, with a unit case.
-- **Open.** Release: version 0.2.2, tag, six cells, signing, assembly,
-  publication.
+- **The first tag failed on every cell, and the cause was the same miss
+  again.** `v0.2.2-beta` at `652d2c6`: signing succeeded, the six-cell court
+  failed its runtime step on all six. `scripts/cell_runtime_court.py` still
+  called the product in the removed spelling, and so did three probe scripts;
+  the earlier search had looked for the program's name, and in these files the
+  verb sits in quotes far from it. Searching for the verb as a literal found
+  nineteen call sites in four files.
+- **Fixed by hand, then executed.** The court script was rewritten and run
+  against the binary with Git 2.47: `passed`. The probe scripts were changed
+  one call at a time, each with an assertion on its exact count, so a miscount
+  stopped the script before it wrote. `probe_commit.py` was then run: every
+  migrated call executed, the window was created, and the journey stopped at
+  `activation refused`, which is this host's foreground restriction and is
+  recorded as not run, not as passed. A first attempt to migrate the probes
+  with one regex produced a nested, reordered list and was reverted.
+- **Found, not caused, and left alone.** On a Git below the floor `trust grant`
+  succeeds and `remote list` is refused with the status message, because every
+  verb goes through the status capability check. That predates this version and
+  is recorded here rather than changed inside a release.
+- **Open.** The tag moves to the corrected commit; six cells, assembly and
+  publication follow a green run.

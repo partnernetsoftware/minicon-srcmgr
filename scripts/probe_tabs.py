@@ -50,7 +50,7 @@ def main():
         run(repo, "commit", "-qm", "fixture")
         for name in ("a.txt", "b.txt"):
             (repo / name).write_bytes(changed)
-        sp.run([exe, "--git", git, "--profile", str(profile), "trust", "grant", str(repo)], env=env, check=True, capture_output=True)
+        sp.run([exe, "--git", git, "--profile", str(profile), "-C", str(repo), "trust", "grant"], env=env, check=True, capture_output=True)
     heads = [run(p, "rev-parse", "HEAD") for p in (left, right)]
     def records(table, where="1"):
         with sqlite3.connect((profile / "profile.sqlite3").as_uri() + "?mode=ro", uri=True) as db:
@@ -123,7 +123,7 @@ def main():
         user.mouse_event(4, 0, 0, 0, 0)
     try:
         with (root / "stderr.log").open("w", encoding="utf-8") as log:
-            child = tree.spawn([exe, "--git", git, "--profile", str(profile), "gui", str(left)], env=env, stdout=sp.DEVNULL, stderr=log)
+            child = tree.spawn([exe, "--git", git, "--profile", str(profile), "-C", str(left), "gui"], env=env, stdout=sp.DEVNULL, stderr=log)
         wait_entry(find_window, "no owned native window")
         user.ShowWindow(hwnd, 9)
         if args.owned_topmost:

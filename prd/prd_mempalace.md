@@ -360,6 +360,35 @@ enforced in code or a fixture today.
   first pass of the CLI test migration inserted `--` into `diff` and `hunk`
   calls and turned `--staged` and an action word into paths; the diff showed it.
   Migrate call shapes only, leave assertions alone, and read the diff per shape.
+- **A release note is tested against the binary, line by line.** Writing
+  "a bare repository and a `.git` file are refused" meant running both, and
+  they were. The same pass found a defect the tests had allowed: the removed
+  shape `status <worktree>` was refused as `unknown option '.'`, which
+  misnames a path and says nothing about `-C`. Each stated limit is a claim
+  until the command has been run.
+- **An operand a verb does not take is not an "unknown option".** `status`,
+  `commit` and `log` take no path; the likely cause is the removed spelling
+  with the repository first, so the refusal says where the repository comes
+  from. A refusal that names the wrong kind of word sends the user the wrong
+  way.
+- **Search for the verb, then run the caller.** A renamed command was hunted
+  twice by the program's name and twice it got through: three workflows, then
+  four Python scripts whose argument lists put the verb in quotes away from the
+  binary. The six-cell court then failed on every cell. Searching for the verb
+  as a quoted literal found all of them in one pass; running the fixed court
+  script locally against the binary is what proved the fix. A rename is not
+  done until every caller has been executed, not searched.
+- **A regex migration of unlike shapes corrupts faster than it helps.** One
+  pattern was made to cover `verb path` and `verb subverb path` together and
+  produced `["-C", "grant", "trust", str(repo)]` inside a nested list. For a
+  dozen call sites of four different shapes, replace each by hand with an
+  assertion on its exact count: the first attempt then failed loudly on a
+  miscount (7, not 6) before writing anything.
+- **The bash guard reads the commit message.** A heredoc commit message
+  containing two dashes followed by an English word was refused as a force
+  push, and the whole chained command (commit, tag, push) never ran. Commit
+  with `-F <file>`, and keep push on its own line.
+
 
 ## Four reading paths
 

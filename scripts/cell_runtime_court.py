@@ -82,10 +82,12 @@ def main() -> int:
         head = run([git, "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
 
         profile = root / "profile"
-        granted = run([str(binary), "--profile", str(profile), "--git", git, "trust", "grant", str(worktree)])
+        # The Git spelling: the repository comes from `-C <path>`, before the verb.
+        product = [str(binary), "--profile", str(profile), "--git", git, "-C", str(worktree)]
+        granted = run(product + ["trust", "grant"])
         record("trust_grant", granted.returncode == 0, f"exit={granted.returncode} err={granted.stderr.strip()}")
 
-        status = run([str(binary), "--profile", str(profile), "--git", git, "status", str(worktree), "--json"])
+        status = run(product + ["status", "--json"])
         body = status.stdout
         record(
             "status_json",
@@ -93,7 +95,7 @@ def main() -> int:
             f"exit={status.returncode} err={status.stderr.strip()} out={body[:200]}",
         )
 
-        remotes = run([str(binary), "--profile", str(profile), "--git", git, "remote", str(worktree), "list", "--json"])
+        remotes = run(product + ["remote", "list", "--json"])
         record(
             "remote_list",
             remotes.returncode == 0 and remotes.stdout.strip().startswith("["),
@@ -101,7 +103,7 @@ def main() -> int:
         )
 
         # A repository without an upstream must report that, not invent one.
-        tracking = run([str(binary), "--profile", str(profile), "--git", git, "remote", str(worktree), "tracking", "--json"])
+        tracking = run(product + ["remote", "tracking", "--json"])
         record(
             "tracking_honest",
             tracking.returncode == 0 and '"upstream": null' in tracking.stdout,
