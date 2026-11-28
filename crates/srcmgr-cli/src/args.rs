@@ -286,7 +286,20 @@ fn only_option(options: &[&OsStr], known: &[&str], verb: &str) -> Result<(), Usa
     Ok(())
 }
 
+/// Refuses a word a verb that takes no operands has been given. An option is
+/// named as an unknown option; anything else is an operand, and the likely
+/// cause is the removed spelling where the repository was the first operand.
+fn no_operand(word: &OsStr, verb: &str, usage: &str) -> Usage {
+    match word.to_str() {
+        Some(option) if option.starts_with('-') => Usage(format!("unknown option '{option}' for {verb}; {usage}")),
+        _ => Usage(format!(
+            "{verb} takes no path; the repository comes from -C <path> or the current directory. {usage}"
+        )),
+    }
+}
+
 fn status(words: &[OsString]) -> Result<Command, Usage> {
+    const USAGE_LINE: &str = "status [--porcelain[=v2]] [-z] [--json]";
     let mut porcelain = None;
     let mut null = false;
     let mut json = false;
@@ -296,8 +309,7 @@ fn status(words: &[OsString]) -> Result<Command, Usage> {
             Some("--porcelain=v2") => porcelain = Some(Porcelain::V2),
             Some("-z") => null = true,
             Some("--json") => json = true,
-            Some(other) => return Err(Usage(format!("unknown option '{other}' for status"))),
-            None => return Err(Usage("status [--porcelain[=v2]] [-z] [--json]".into())),
+            _ => return Err(no_operand(word, "status", USAGE_LINE)),
         }
     }
     if json && porcelain.is_some() {
@@ -324,8 +336,7 @@ fn commit(words: &[OsString]) -> Result<Command, Usage> {
     while index < words.len() {
         match words[index].to_str() {
             Some("-m") | Some("--message") => message = Some(value(words, &mut index, "-m needs a message")?),
-            Some(other) => return Err(Usage(format!("unknown option '{other}' for commit"))),
-            None => return Err(Usage("commit [-m <message>]".into())),
+            _ => return Err(no_operand(&words[index], "commit", "commit [-m <message>]")),
         }
         index += 1;
     }
@@ -507,8 +518,7 @@ fn log(words: &[OsString]) -> Result<Command, Usage> {
             Some("--limit") => limit = Some(number(&value(words, &mut index, "--limit needs a number")?, "--limit")?),
             Some(word) if word.starts_with("--skip=") => skip = number(OsStr::new(&word[7..]), "--skip")?,
             Some(word) if word.starts_with("--limit=") => limit = Some(number(OsStr::new(&word[8..]), "--limit")?),
-            Some(other) => return Err(Usage(format!("unknown option '{other}' for log"))),
-            None => return Err(Usage("log [--skip <n>] [--limit <n>]".into())),
+            _ => return Err(no_operand(&words[index], "log", "log [--skip <n>] [--limit <n>]")),
         }
         index += 1;
     }
@@ -649,6 +659,21 @@ mod tests {
         assert!(parse(&["ignore", "repo", "a.txt"]).unwrap_err().0.contains("'check-ignore'"));
         let unknown = parse(&["frobnicate"]).unwrap_err();
         assert!(unknown.0.contains("not a minicon-srcmgr command"), "{unknown}");
+    }
+
+    #[test]
+    fn the_removed_shape_names_c_for_the_repository() {
+        // `status <worktree>` was the 0.2.1 shape; the path is now an operand
+        // the verb does not take, and the refusal says where the repository
+        // comes from instead of calling the path an option.
+        for (verb, word) in [("status", "."), ("commit", "repo"), ("log", "somewhere")] {
+            let refused = parse(&[verb, word]).unwrap_err();
+            assert!(refused.0.contains("the repository comes from -C <path>"), "{verb}: {refused}");
+            assert!(!refused.0.contains("unknown option"), "{verb}: {refused}");
+        }
+        // An option is still reported as an option.
+        let refused = parse(&["status", "--force"]).unwrap_err();
+        assert!(refused.0.contains("unknown option '--force'"), "{refused}");
     }
 
     #[test]
