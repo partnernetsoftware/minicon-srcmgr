@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $startupProfile = Join-Path $env:RUNNER_TEMP ('srcmgr-candidate-' + [guid]::NewGuid().ToString('N'))
-          $output = & target/qualification/ci-windows-candidate/candidate/minicon-srcmgr.exe --profile $startupProfile setting get history.limit
+          $output = & target/qualification/ci-windows-candidate/candidate/minicon-srcmgr.exe --profile $startupProfile config get history.limit
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($output -ne 'unset') { throw 'Frozen candidate did not return the fresh-profile setting' }
       - name: Relevant build failure excerpt

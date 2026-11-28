@@ -94,7 +94,7 @@ fn untrusted_status_does_not_run_the_repository_fsmonitor_command() {
     let hostile = hostile_repository(&scratch);
     let profile = scratch.root.join("profile");
 
-    let output = cli(&profile, &["status", p(&hostile.repo)]);
+    let output = cli(&profile, &["-C", p(&hostile.repo), "status"]);
     assert!(!output.status.success());
     assert!(err(&output).contains("not trusted yet"), "{}", err(&output));
     assert!(!hostile.marker.exists(), "the repository command ran before trust was granted");
@@ -105,12 +105,12 @@ fn granted_status_runs_the_command_which_proves_the_probe_works() {
     let scratch = Scratch::new("positive-control");
     let hostile = hostile_repository(&scratch);
     let profile = scratch.root.join("profile");
-    let granted = cli(&profile, &["trust", "grant", p(&hostile.repo)]);
+    let granted = cli(&profile, &["-C", p(&hostile.repo), "trust", "grant"]);
     assert!(granted.status.success(), "{}", err(&granted));
 
     // The exit status of status is not the subject here; only whether the
     // configured command ran under the grant.
-    let _ = cli(&profile, &["status", p(&hostile.repo)]);
+    let _ = cli(&profile, &["-C", p(&hostile.repo), "status"]);
     assert!(hostile.marker.exists(), "the positive control did not run; the probe is not trustworthy");
 }
 
@@ -119,13 +119,13 @@ fn a_config_change_after_the_grant_stops_execution_again() {
     let scratch = Scratch::new("changed");
     let hostile = hostile_repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&hostile.repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&hostile.repo), "trust", "grant"]).status.success());
 
     // Attacker-style edit after the user granted trust: a new hook-like key.
     fixture_git(&hostile.repo, &["config", "core.quotePath", "false"]);
     let _ = fs::remove_file(&hostile.marker);
 
-    let output = cli(&profile, &["status", p(&hostile.repo)]);
+    let output = cli(&profile, &["-C", p(&hostile.repo), "status"]);
     assert!(!output.status.success());
     assert!(err(&output).contains("changed since trust was granted"), "{}", err(&output));
     assert!(!hostile.marker.exists(), "a changed, untrusted configuration still executed");
@@ -136,11 +136,11 @@ fn a_revoked_grant_stops_execution() {
     let scratch = Scratch::new("revoked");
     let hostile = hostile_repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&hostile.repo)]).status.success());
-    assert!(cli(&profile, &["trust", "revoke", p(&hostile.repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&hostile.repo), "trust", "grant"]).status.success());
+    assert!(cli(&profile, &["-C", p(&hostile.repo), "trust", "revoke"]).status.success());
     let _ = fs::remove_file(&hostile.marker);
 
-    let output = cli(&profile, &["status", p(&hostile.repo)]);
+    let output = cli(&profile, &["-C", p(&hostile.repo), "status"]);
     assert!(!output.status.success());
     assert!(!hostile.marker.exists(), "a revoked repository still executed its command");
 }

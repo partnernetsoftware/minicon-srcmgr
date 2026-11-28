@@ -74,25 +74,25 @@ fn push_then_pull_moves_exactly_the_pushed_commit() {
         for (key, value) in [("user.name", name), ("user.email", "user@example.test")] {
             git(destination, &["config", key, value]);
         }
-        let granted = cli(&profile, &["trust", "grant", destination.to_str().expect("path")]);
+        let granted = cli(&profile, &["-C", destination.to_str().expect("path"), "trust", "grant"]);
         assert!(granted.status.success(), "trust: {}", err(&granted));
     }
 
     fs::write(work.join("a.txt"), "one\ntwo\n").expect("edit");
     git(&work, &["commit", "-am", "two"]);
     let local = git(&work, &["rev-parse", "HEAD"]);
-    let pushed = cli(&profile, &["push", work.to_str().expect("work"), "origin"]);
+    let pushed = cli(&profile, &["-C", work.to_str().expect("work"), "push", "origin"]);
     assert!(pushed.status.success(), "push: {}", err(&pushed));
     assert!(text(&pushed).contains("updated"), "{}", text(&pushed));
     assert_eq!(git(&bare, &["rev-parse", "refs/heads/main"]), local);
 
-    let pulled = cli(&profile, &["pull", second.to_str().expect("second")]);
+    let pulled = cli(&profile, &["-C", second.to_str().expect("second"), "pull"]);
     assert!(pulled.status.success(), "pull: {}", err(&pulled));
     assert!(text(&pulled).contains("fast-forwarded"), "{}", text(&pulled));
     assert_eq!(git(&second, &["rev-parse", "HEAD"]), local);
     assert_eq!(fs::read_to_string(second.join("a.txt")).expect("content"), "one\ntwo\n");
 
-    let again = cli(&profile, &["pull", second.to_str().expect("second")]);
+    let again = cli(&profile, &["-C", second.to_str().expect("second"), "pull"]);
     assert!(again.status.success(), "{}", err(&again));
     assert!(text(&again).contains("already up to date"), "{}", text(&again));
 }

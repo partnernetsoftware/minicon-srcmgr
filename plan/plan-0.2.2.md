@@ -1,7 +1,8 @@
 # 0.2.2 the Git-compatible command line
 
-Status: `[_]` planned, not started. The workspace version stays **0.2.1** until
-this version's work begins.
+Status: `[-]` in progress. C1-C4 are built: the parser, repository discovery,
+the Git names and formats, and the migrated tests. The workspace version stays
+**0.2.1** until this version publishes.
 
 ## Why this version exists
 
@@ -128,11 +129,11 @@ fixture. C4 is one mechanical commit that touches no assertion.
 
 | Case | Required outcome | State |
 |---|---|---|
-| G1 · invocation | `-C <path>` and current-directory discovery work for every repository verb | `[_]` |
-| G2 · porcelain | `status --porcelain=v2 -z` matches real `git` byte for byte on the emitted fields | `[_]` |
-| G3 · names | `log`, `check-ignore`, `branch -m`, `config` replace the private names; the old spelling names its replacement | `[_]` |
-| G4 · gate | An untrusted repository refuses before Git runs, from `-C` and from the current directory | `[_]` |
-| G5 · migration | Every integration test runs in the new spelling with its assertions intact; CI workflows pass | `[_]` |
+| G1 · invocation | `-C <path>` and current-directory discovery work for every repository verb | `[v]` `the_repository_comes_from_c_or_the_current_directory` runs from the repository, from a subdirectory, from `-C`, from the attached `-C<path>` and from `-C ""`; `args` unit cases cover the global options |
+| G2 · porcelain | `status --porcelain=v2 -z` matches real `git` byte for byte on the emitted fields | `[v]` `porcelain_v2_and_v1_are_byte_identical_to_git` and `porcelain_matches_git_through_a_rename_and_a_conflict` compare the product's bytes with `git`'s on the same repository, through a rename record; the product passes the command through rather than rebuilding it |
+| G3 · names | `log`, `check-ignore`, `branch -m`, `config` replace the private names; the old spelling names its replacement | `[v]` `the_git_names_replace_the_private_ones_and_the_old_ones_say_so` and `branch_m_renames_through_git_and_reads_the_result_back`; `history`, `setting` and `ignore` exit 129 naming `log`, `config` and `check-ignore` |
+| G4 · gate | An untrusted repository refuses before Git runs, from `-C` and from the current directory | `[v]` `an_untrusted_repository_refuses_before_git_runs_from_either_path` uses a Git that leaves a marker when executed, from the directory, a subdirectory and `-C`; the marker never appears |
+| G5 · migration | Every integration test runs in the new spelling with its assertions intact; CI workflows pass | `[-]` 15 integration files moved by `scripts/migrate_cli_tests_022.py` plus three hand moves; all green with `SRCMGR_TEST_GIT`. The two CI workflows now call `config get`; their next run is the evidence |
 
 ## Selected verification and stopping
 
@@ -158,5 +159,48 @@ naming them.
 
 ## Execution record
 
-Nothing built yet. The first round starts with C1 and C2 together and proves
-them with `trust`, `status` and `stage` before any format work.
+The first round built C1-C4 together; the record follows.
+
+### 2026-11-28 · the spelling is measured, not remembered
+
+- **Built.** `crates/srcmgr-cli/src/args.rs` parses one invocation into global
+  options (`--profile`, `--git`, `-C`, before the verb only) and a per-verb
+  `Command` with its own options; an option a verb does not know is refused by
+  name. `main.rs` dispatches on it, every repository verb takes the repository
+  from `-C` or the current directory, and `history`, `setting` and `ignore` are
+  `log`, `config` and `check-ignore`. A usage error exits 129, as `git` does.
+- **The oracle ran before the code.** Four rules were measured on `git` 2.47
+  first and three corrected what was about to be written: `-C` is accepted
+  before the subcommand only (`git status -C .` is an unknown switch), `-C ""`
+  is accepted and changes nothing, and `--porcelain=v2 -z` carries no
+  `# branch` header unless `--branch` is asked for. The smoke script then
+  failed three times on its own `-C` placement, a bash redirect and the working
+  directory; the product was right each time.
+- **Porcelain is Git's bytes.** The product already reads
+  `status --porcelain=v2 -z --branch --untracked-files=normal` for its own
+  snapshot, so `--porcelain` passes that command's stdout through
+  (`srcmgr_git::run_raw`) after the trust gate. Rebuilding the records from the
+  coarser `StatusSnapshot` could not produce a rename's score and second
+  operand; passing the bytes through makes compatibility constructive.
+- **Discovery reads metadata, then the gate runs.** Without `-C` the repository
+  is the first ancestor whose `.git` is a plain directory; nothing runs Git to
+  find it, and what is found is a candidate that still goes through
+  `open_trusted`.
+- **`branch -m` is new behaviour.** `srcmgr_git::rename_branch` validates the
+  new name, reads the old value, writes a `branch-rename` job record, renames
+  through Git so the upstream follows, and reads the new value back; a taken
+  destination is refused by Git before anything moves and the record is
+  cleared.
+- **Migration changed shapes only.** `scripts/migrate_cli_tests_022.py`
+  rewrote the single-line calls; three were moved by hand: two multi-line
+  calls, and one whose path literal holds a `]`. Its first run inserted `--`
+  into `diff` and `hunk` calls and turned a trailing `--staged` and the `hunk`
+  action word into paths; the diff review caught it before a test ran.
+  `branch list` was accepted beside `--list` because the tests and the PRD
+  contract both use it.
+- **Evidence.** `cargo test -p srcmgr-cli --tests` with `SRCMGR_TEST_GIT`: 17
+  suites green including the new `git_compat.rs` (8 cases).
+  `cargo clippy --workspace --all-targets` clean. A 26-step smoke against real
+  `git` passes.
+- **Open.** The full-workspace run and the two CI workflows are the remaining
+  evidence for G5; the release bump, notes and beta publication follow them.

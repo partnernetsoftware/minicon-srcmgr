@@ -100,17 +100,17 @@ fn fetch_updates_the_reported_ref_and_credentials_stay_out_of_output() {
     git(&first, &["remote", "set-url", "--push", "secure", "https://oauth2:token@example.test/repo.git"]);
 
     let profile = fixture.root.join("profile");
-    let granted = cli(&profile, &["trust", "grant", first.to_str().expect("first")]);
+    let granted = cli(&profile, &["-C", first.to_str().expect("first"), "trust", "grant"]);
     assert!(granted.status.success(), "trust grant failed: {}", stderr(&granted));
 
-    let listed = cli(&profile, &["remote", first.to_str().expect("first"), "list", "--json"]);
+    let listed = cli(&profile, &["-C", first.to_str().expect("first"), "remote", "list", "--json"]);
     assert!(listed.status.success(), "list failed: {}", stderr(&listed));
     let listing = stdout(&listed);
     assert!(listing.contains("\"origin\""), "listing: {listing}");
     assert!(listing.contains("https://alice@example.test/repo.git"), "listing: {listing}");
     assert!(!listing.contains("s3cret") && !listing.contains("token@"), "credential leaked: {listing}");
     assert!(listing.contains("refs/remotes/origin/*"), "refspec missing: {listing}");
-    let fetched = cli(&profile, &["fetch", first.to_str().expect("first"), "origin"]);
+    let fetched = cli(&profile, &["-C", first.to_str().expect("first"), "fetch", "origin"]);
     assert!(fetched.status.success(), "fetch failed: {}", stderr(&fetched));
     let report = stdout(&fetched);
     assert!(report.contains("refs/remotes/origin/main"), "report: {report}");
@@ -119,7 +119,7 @@ fn fetch_updates_the_reported_ref_and_credentials_stay_out_of_output() {
     let actual = git(&first, &["rev-parse", "refs/remotes/origin/main"]);
     assert_eq!(actual, remote_head);
 
-    let tracking = cli(&profile, &["remote", first.to_str().expect("first"), "tracking", "--json"]);
+    let tracking = cli(&profile, &["-C", first.to_str().expect("first"), "remote", "tracking", "--json"]);
     assert!(tracking.status.success(), "tracking failed: {}", stderr(&tracking));
     let state = stdout(&tracking);
     assert!(state.contains("origin/main"), "tracking: {state}");
@@ -142,10 +142,10 @@ fn fetch_reports_an_unknown_remote_without_changing_refs() {
     let head = git(&worktree, &["rev-parse", "HEAD"]);
 
     let profile = fixture.root.join("profile");
-    let granted = cli(&profile, &["trust", "grant", worktree.to_str().expect("worktree")]);
+    let granted = cli(&profile, &["-C", worktree.to_str().expect("worktree"), "trust", "grant"]);
     assert!(granted.status.success(), "trust grant failed: {}", stderr(&granted));
 
-    let fetched = cli(&profile, &["fetch", worktree.to_str().expect("worktree"), "missing"]);
+    let fetched = cli(&profile, &["-C", worktree.to_str().expect("worktree"), "fetch", "missing"]);
     assert!(!fetched.status.success());
     assert!(stderr(&fetched).contains("not configured"), "stderr: {}", stderr(&fetched));
     assert_eq!(git(&worktree, &["rev-parse", "HEAD"]), head);

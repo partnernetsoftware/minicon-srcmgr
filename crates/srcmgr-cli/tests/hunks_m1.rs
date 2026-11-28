@@ -88,7 +88,7 @@ fn two_hunk_repository(scratch: &Scratch) -> (PathBuf, PathBuf, Vec<String>, Vec
     fs::write(repo.join("a.txt"), numbered(&edited)).expect("write edits");
 
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
     (repo, profile, original, edited)
 }
 
@@ -96,7 +96,7 @@ fn two_hunk_repository(scratch: &Scratch) -> (PathBuf, PathBuf, Vec<String>, Vec
 fn list_shows_both_hunks_of_an_unstaged_change() {
     let scratch = Scratch::new("list");
     let (repo, profile, _, _) = two_hunk_repository(&scratch);
-    let listed = cli(&profile, &["hunk", p(&repo), "list", "a.txt"]);
+    let listed = cli(&profile, &["-C", p(&repo), "hunk", "list", "a.txt"]);
     assert!(listed.status.success());
     let text = String::from_utf8_lossy(&listed.stdout).into_owned();
     let labels = text.lines().filter(|line| line.starts_with("hunk ")).count();
@@ -110,7 +110,7 @@ fn staging_hunk_one_puts_only_that_change_in_the_index() {
     let (repo, profile, original, edited) = two_hunk_repository(&scratch);
     let worktree_before = fs::read(repo.join("a.txt")).expect("read");
 
-    let staged = cli(&profile, &["hunk", p(&repo), "stage", "a.txt", "1"]);
+    let staged = cli(&profile, &["-C", p(&repo), "hunk", "stage", "a.txt", "1"]);
     assert!(staged.status.success(), "{}", String::from_utf8_lossy(&staged.stderr));
 
     // Expected index: the first edit applied, the second still at its original text.
@@ -140,8 +140,8 @@ fn unstaging_a_staged_hunk_restores_the_head_blob() {
         .expect("blob")
         .to_owned();
 
-    assert!(cli(&profile, &["hunk", p(&repo), "stage", "a.txt", "1"]).status.success());
-    assert!(cli(&profile, &["hunk", p(&repo), "unstage", "a.txt", "1"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "hunk", "stage", "a.txt", "1"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "hunk", "unstage", "a.txt", "1"]).status.success());
 
     let index_blob = oracle(&repo, &["ls-files", "--stage", "--", "a.txt"])
         .split_whitespace()
@@ -157,7 +157,7 @@ fn an_out_of_range_hunk_number_changes_nothing() {
     let (repo, profile, _, _) = two_hunk_repository(&scratch);
     let before = oracle(&repo, &["ls-files", "--stage", "--", "a.txt"]);
 
-    let refused = cli(&profile, &["hunk", p(&repo), "stage", "a.txt", "9"]);
+    let refused = cli(&profile, &["-C", p(&repo), "hunk", "stage", "a.txt", "9"]);
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("no hunk has that number"));
     assert_eq!(oracle(&repo, &["ls-files", "--stage", "--", "a.txt"]), before);

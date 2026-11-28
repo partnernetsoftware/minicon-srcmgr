@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP ('srcmgr-' + [guid]::NewGuid().ToString('N'))
-          $output = & target/qualification/ci-candidate/candidate/minicon-srcmgr.exe --profile $profile setting get history.limit
+          $output = & target/qualification/ci-candidate/candidate/minicon-srcmgr.exe --profile $profile config get history.limit
           if ($LASTEXITCODE -ne 0) { throw 'candidate did not start' }
           if ($output -ne 'unset') { throw 'candidate did not return the fresh-profile setting' }
       - uses: actions/upload-artifact@v4

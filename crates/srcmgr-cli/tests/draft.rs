@@ -84,13 +84,13 @@ fn a_saved_draft_is_committed_without_a_message_and_then_cleared() {
     let scratch = Scratch::new("commit-draft");
     let repo = staged_repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
-    assert!(cli(&profile, &["stage", p(&repo), "a.txt"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "stage", "--", "a.txt"]).status.success());
 
-    assert!(cli(&profile, &["draft", p(&repo), "save", "-m", "from the draft"]).status.success());
-    assert_eq!(text(&cli(&profile, &["draft", p(&repo), "show"])), "from the draft");
+    assert!(cli(&profile, &["-C", p(&repo), "draft", "save", "-m", "from the draft"]).status.success());
+    assert_eq!(text(&cli(&profile, &["-C", p(&repo), "draft", "show"])), "from the draft");
 
-    let committed = cli(&profile, &["commit", p(&repo)]);
+    let committed = cli(&profile, &["-C", p(&repo), "commit"]);
     assert!(committed.status.success(), "{}", err(&committed));
     let subject = Command::new(git_executable())
         .current_dir(&repo)
@@ -98,7 +98,7 @@ fn a_saved_draft_is_committed_without_a_message_and_then_cleared() {
         .output()
         .expect("log");
     assert_eq!(String::from_utf8_lossy(&subject.stdout).trim(), "from the draft");
-    assert_eq!(text(&cli(&profile, &["draft", p(&repo), "show"])).trim(), "no draft");
+    assert_eq!(text(&cli(&profile, &["-C", p(&repo), "draft", "show"])).trim(), "no draft");
 }
 
 #[test]
@@ -106,14 +106,14 @@ fn a_refused_commit_keeps_the_draft_for_the_next_attempt() {
     let scratch = Scratch::new("keep-draft");
     let repo = staged_repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
-    assert!(cli(&profile, &["draft", p(&repo), "save", "-m", "keep me"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "draft", "save", "-m", "keep me"]).status.success());
 
     // Nothing is staged, so the commit is refused and the draft must remain.
-    let refused = cli(&profile, &["commit", p(&repo)]);
+    let refused = cli(&profile, &["-C", p(&repo), "commit"]);
     assert!(!refused.status.success());
     assert!(err(&refused).to_ascii_lowercase().contains("nothing is staged"), "{}", err(&refused));
-    assert_eq!(text(&cli(&profile, &["draft", p(&repo), "show"])), "keep me");
+    assert_eq!(text(&cli(&profile, &["-C", p(&repo), "draft", "show"])), "keep me");
 }
 
 #[test]
@@ -121,10 +121,10 @@ fn a_draft_does_not_bypass_the_trust_gate() {
     let scratch = Scratch::new("draft-trust");
     let repo = staged_repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["draft", p(&repo), "save", "-m", "sneaky"]).status.success());
-    assert_eq!(text(&cli(&profile, &["draft", p(&repo), "show"])), "sneaky");
+    assert!(cli(&profile, &["-C", p(&repo), "draft", "save", "-m", "sneaky"]).status.success());
+    assert_eq!(text(&cli(&profile, &["-C", p(&repo), "draft", "show"])), "sneaky");
 
-    let output = cli(&profile, &["commit", p(&repo)]);
+    let output = cli(&profile, &["-C", p(&repo), "commit"]);
     assert!(!output.status.success());
     assert!(err(&output).contains("not trusted yet"), "{}", err(&output));
 }
@@ -134,7 +134,7 @@ fn draft_clear_removes_the_saved_message() {
     let scratch = Scratch::new("clear");
     let repo = staged_repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["draft", p(&repo), "save", "-m", "gone soon"]).status.success());
-    assert!(cli(&profile, &["draft", p(&repo), "clear"]).status.success());
-    assert_eq!(text(&cli(&profile, &["draft", p(&repo), "show"])).trim(), "no draft");
+    assert!(cli(&profile, &["-C", p(&repo), "draft", "save", "-m", "gone soon"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "draft", "clear"]).status.success());
+    assert_eq!(text(&cli(&profile, &["-C", p(&repo), "draft", "show"])).trim(), "no draft");
 }

@@ -233,6 +233,68 @@ pub fn create_branch(
     Ok(())
 }
 
+/// Renames a local branch through Git, so its upstream configuration follows
+/// the new name. Both values are read back: the report carries the before and
+/// after object ids of the new name, and `moved` is true only when they differ.
+///
+/// A destination that already exists is refused by Git before anything moves.
+/// The worktree is not touched; the checked-out branch may be renamed.
+pub fn rename_branch(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    old: &str,
+    new: &str,
+) -> Result<RenameReport, GitError> {
+    let new = checked_branch_name(installation, identity, new.as_ref())?;
+    let before = reference_target(installation, identity, &format!("refs/heads/{old}"))?;
+    crate::journal::begin(installation, identity, "branch-rename")?;
+    let outcome = run_mutation(
+        installation,
+        identity,
+        &["branch".into(), "--move".into(), old.into(), new.clone()],
+        None,
+    );
+    match outcome {
+        Ok(_) => {
+            crate::journal::finish(installation, identity)?;
+            let after = reference_target(installation, identity, &format!("refs/heads/{}", new.to_string_lossy()))?;
+            let moved = after != before;
+            Ok(RenameReport { before, moved, after })
+        }
+        Err(error) => {
+            // The command refused: no move happened, and the record must not
+            // survive as a suggestion that one might have.
+            let _ = crate::journal::finish(installation, identity);
+            Err(error)
+        }
+    }
+}
+
+/// What renaming a branch found, read back from Git.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenameReport {
+    /// The object the name pointed at before the rename.
+    pub before: String,
+    /// The object the new name points at afterwards; equal to `before` when
+    /// Git renamed in place and nothing else changed.
+    pub after: String,
+    /// True only when the two values differ.
+    pub moved: bool,
+}
+
+/// Runs one read-only Git command and returns its raw stdout, NUL bytes and
+/// all. Used for `--porcelain` output, which is Git's own format and must not
+/// be rebuilt from a coarser snapshot.
+pub fn run_raw(
+    installation: &GitInstallation,
+    identity: &RepositoryIdentity,
+    arguments: &[&str],
+) -> Result<Vec<u8>, GitError> {
+    installation.require_supported()?;
+    let output = runner::run(installation.executable(), Some(&identity.worktree_root), arguments, None, Limits::STATUS)?;
+    Ok(output.stdout)
+}
+
 /// Switches the worktree to an existing local branch. Git itself refuses a
 /// switch that would overwrite local changes, and that refusal is returned.
 pub fn switch_branch(

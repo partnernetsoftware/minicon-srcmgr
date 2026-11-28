@@ -6,7 +6,7 @@
 //! passes the trust gate, which checks only filesystem metadata before Git runs.
 
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -23,6 +23,7 @@ use srcmgr_git::{
 };
 use srcmgr_state::{TrustStore, default_root, fingerprint};
 
+mod args;
 mod text_file;
 mod window_backend;
 mod clone_cleanup;
@@ -30,86 +31,89 @@ mod confirmation;
 mod entry;
 mod tools;
 
-const USAGE: &str = "usage:
-  minicon-srcmgr --version
-  minicon-srcmgr [--profile DIR] [--git EXE] status <worktree> [--json]
-  minicon-srcmgr [--profile DIR] trust grant|revoke <worktree>
-  minicon-srcmgr [--profile DIR] [--git EXE] stage <worktree> <path>...
-  minicon-srcmgr [--profile DIR] [--git EXE] unstage <worktree> <path>...
-  minicon-srcmgr [--profile DIR] [--git EXE] commit <worktree> [-m <message>]
-  minicon-srcmgr [--profile DIR] draft <worktree> save -m <message> | show | clear
-  minicon-srcmgr [--profile DIR] [--git EXE] gui [worktree]
-  minicon-srcmgr [--profile DIR] [--git EXE] diff <worktree> <path> [--staged]
-  minicon-srcmgr [--profile DIR] [--git EXE] branch <worktree> list|create|switch <name>
-  minicon-srcmgr [--profile DIR] [--git EXE] remote <worktree> list [--json]
-  minicon-srcmgr [--profile DIR] [--git EXE] remote <worktree> tracking [--json]
-  minicon-srcmgr [--profile DIR] [--git EXE] fetch <worktree> <remote> [--json]
-  minicon-srcmgr [--git EXE] clone <url> <destination> [--branch N] [--depth N] [--json]
-  minicon-srcmgr [--profile DIR] [--git EXE] remote <worktree> add|set-url|rename|remove ... [--yes]
-  minicon-srcmgr [--profile DIR] [--git EXE] history <worktree> [--skip N] [--limit N]
-  minicon-srcmgr [--profile DIR] setting get|set <key> [value]   (keys: history.limit)
-  minicon-srcmgr [--profile DIR] [--git EXE] ignore <worktree> <path>
-  minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> list <path> [--staged]
-  minicon-srcmgr [--profile DIR] [--git EXE] hunk <worktree> stage|unstage <path> <number>";
+use args::{BranchAction, Command, ConfigAction, DraftAction, HunkAction, Porcelain, RemoteAction, RemoteChange, TrustAction, Usage};
+
 const SCHEMA: &str = "minicon-srcmgr.status/1";
 const TRUST_FILE: &str = "trust.v1";
 
+/// The global options. Everything after them is parsed per verb in [`args`].
 #[derive(Clone, Default)]
 struct Options {
     profile: Option<PathBuf>,
     git: Option<PathBuf>,
-    json: bool,
-    message: Option<OsString>,
-    positional: Vec<OsString>,
+    /// `-C <path>`; empty means "the current directory, as git reads it".
+    directory: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
     match run(env::args_os().skip(1).collect()) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
+        Err(Refusal::Usage(message)) => {
+            eprintln!("minicon-srcmgr: {message}");
+            // git exits 129 for a usage error.
+            ExitCode::from(129)
+        }
+        Err(Refusal::Failed(message)) => {
             eprintln!("minicon-srcmgr: {message}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run(arguments: Vec<OsString>) -> Result<(), String> {
-    let options = parse(arguments)?;
-    if options.positional.is_empty() { return gui(&options); }
-    let command = options.positional.first().and_then(|word| word.to_str()).ok_or(USAGE)?;
-    match command {
-        "--version" | "-V" | "version" => {
-            println!("minicon-srcmgr {}", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
-        "status" => status(&options),
-        "trust" => trust(&options),
-        "stage" => change_paths(&options, Change::Stage),
-        "unstage" => change_paths(&options, Change::Unstage),
-        "commit" => commit_command(&options),
-        "draft" => draft_command(&options),
-        "gui" => gui(&options),
-        "diff" => diff_command(&options),
-        "branch" => branch_command(&options),
-        "remote" => remote_command(&options),
-        "fetch" => fetch_command(&options),
-        "clone" => clone_command(&options),
-        "upstream" => upstream_command(&options),
-        "pull" => pull_command(&options),
-        "push" => push_command(&options),
-        "hunk" => hunk_command(&options),
-        "ignore" => ignore_command(&options),
-        "history" => history_command(&options),
-        "setting" => setting_command(&options),
-        _ => Err(USAGE.to_owned()),
+/// How a run ended. A usage error is the caller's mistake and gets git's own
+/// exit code; a failed or refused operation is `1`.
+#[derive(Debug)]
+enum Refusal {
+    Usage(String),
+    Failed(String),
+}
+
+impl From<String> for Refusal {
+    fn from(message: String) -> Self {
+        Refusal::Failed(message)
     }
+}
+
+impl From<Usage> for Refusal {
+    fn from(usage: Usage) -> Self {
+        Refusal::Usage(usage.0)
+    }
+}
+
+fn run(arguments: Vec<OsString>) -> Result<(), Refusal> {
+    let parsed = args::parse(arguments)?;
+    let options = Options { profile: parsed.profile, git: parsed.git, directory: parsed.directory };
+    match parsed.command {
+        Command::Version => {
+            println!("minicon-srcmgr {}", env!("CARGO_PKG_VERSION"));
+        }
+        Command::Status { porcelain, null, json } => status(&options, porcelain, null, json)?,
+        Command::Trust { action } => trust(&options, action)?,
+        Command::Stage { paths } => change_paths(&options, Change::Stage, &paths)?,
+        Command::Unstage { paths } => change_paths(&options, Change::Unstage, &paths)?,
+        Command::Commit { message } => commit_command(&options, message.as_deref())?,
+        Command::Draft { action, message } => draft_command(&options, action, message.as_deref())?,
+        Command::Gui => gui(&options)?,
+        Command::Diff { staged, path } => diff_command(&options, &path, staged)?,
+        Command::Branch { action } => branch_command(&options, action)?,
+        Command::Remote { action } => remote_command(&options, action)?,
+        Command::Fetch { remote, json } => fetch_command(&options, &remote, json)?,
+        Command::Clone { url, directory, branch, depth } => clone_command(&options, &url, directory, branch, depth)?,
+        Command::Pull => pull_command(&options)?,
+        Command::Push { remote } => push_command(&options, &remote)?,
+        Command::Hunk { action } => hunk_command(&options, action)?,
+        Command::Log { skip, limit } => log_command(&options, skip, limit)?,
+        Command::CheckIgnore { path } => check_ignore_command(&options, &path)?,
+        Command::Config { action } => config_command(&options, action)?,
+    }
+    Ok(())
 }
 
 /// Opens the workspace window. The first snapshot goes through the trust gate,
 /// so the window never shows a repository that is not granted; every later
 /// action passes the gate again on the worker.
 fn gui(options: &Options) -> Result<(), String> {
-    let initial = options.positional.get(1).map(|path| NativePath::new(path.clone()));
+    let initial = options.directory.as_ref().map(|path| NativePath::new(path.as_os_str().to_owned()));
     let timing = if env::var_os("SRCMGR_MEASURE_UI").as_deref() == Some(std::ffi::OsStr::new("1")) {
         drop(open_profile_store(options)?);
         let profile = std::fs::canonicalize(profile_root(options)?).map_err(|e| e.to_string())?;
@@ -127,62 +131,52 @@ fn gui(options: &Options) -> Result<(), String> {
         .map_err(|error| format!("the workspace window could not be shown: {error}"))
 }
 
-/// `branch <worktree> create <name>` or `branch <worktree> switch <name>`.
-fn branch_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    let session = open_trusted(options, worktree)?;
-    if action == "list" {
-        for branch in srcmgr_git::local_branches(&session.installation, &session.identity)
-            .map_err(|error| error.to_string())?
-        {
-            println!("{} {}", if branch.current { '*' } else { ' ' }, branch.label);
-        }
-        return Ok(());
-    }
-    let name = options.positional.get(3).ok_or(USAGE)?;
+/// `branch [--list] | -m [<old>] <new> | create <name> | switch <name>`.
+fn branch_command(options: &Options, action: BranchAction) -> Result<(), String> {
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
     match action {
-        "create" => {
-            srcmgr_git::create_branch(&session.installation, &session.identity, name)
-                .map_err(|error| error.to_string())?;
-            println!("created and switched to {}", name.to_string_lossy());
+        BranchAction::List => {
+            for branch in srcmgr_git::local_branches(&session.installation, &session.identity)
+                .map_err(|error| error.to_string())?
+            {
+                println!("{} {}", if branch.current { '*' } else { ' ' }, branch.label);
+            }
         }
-        "switch" => {
-            srcmgr_git::switch_branch(&session.installation, &session.identity, name)
+        BranchAction::Rename { old, new } => {
+            let current = || {
+                srcmgr_git::local_branches(&session.installation, &session.identity)
+                    .map_err(|error| error.to_string())
+                    .and_then(|branches| {
+                        branches.into_iter().find(|branch| branch.current).map(|branch| branch.label).ok_or_else(|| "no current branch to rename; give the old name".to_owned())
+                    })
+            };
+            let old = match old {
+                Some(old) => old,
+                None => current()?,
+            };
+            srcmgr_git::rename_branch(&session.installation, &session.identity, &old, &new)
                 .map_err(|error| error.to_string())?;
-            println!("switched to {}", name.to_string_lossy());
+            println!("renamed {old} to {new}");
         }
-        _ => return Err(USAGE.to_owned()),
-    }
-    Ok(())
-}
-
-/// `upstream <worktree> set <remote>/<branch> | clear`.
-fn upstream_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    let session = open_trusted(options, worktree)?;
-    match action {
-        "set" => {
-            let upstream = options.positional.get(3).and_then(|word| word.to_str()).ok_or(USAGE)?;
-            srcmgr_git::set_upstream(&session.installation, &session.identity, upstream)
+        BranchAction::Create(name) => {
+            srcmgr_git::create_branch(&session.installation, &session.identity, name.as_ref())
                 .map_err(|error| error.to_string())?;
-            println!("upstream set to {upstream}");
+            println!("created and switched to {name}");
         }
-        "clear" => {
-            srcmgr_git::clear_upstream(&session.installation, &session.identity)
+        BranchAction::Switch(name) => {
+            srcmgr_git::switch_branch(&session.installation, &session.identity, name.as_ref())
                 .map_err(|error| error.to_string())?;
-            println!("upstream cleared");
+            println!("switched to {name}");
         }
-        _ => return Err(USAGE.to_owned()),
     }
     Ok(())
 }
 
 /// `pull <worktree>`: fetch facts are assumed current; the merge is fast-forward only.
 fn pull_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let session = open_trusted(options, worktree)?;
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
     let cancel = AtomicBool::new(false);
     let sink: srcmgr_git::ProgressSink = Arc::new(|chunk: &str| {
         if let Some(line) = srcmgr_git::progress_line(chunk) {
@@ -200,10 +194,9 @@ fn pull_command(options: &Options) -> Result<(), String> {
 }
 
 /// `push <worktree> <remote>`: one explicit branch ref, per-ref state reported.
-fn push_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let remote = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    let session = open_trusted(options, worktree)?;
+fn push_command(options: &Options, remote: &str) -> Result<(), String> {
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
     let cancel = AtomicBool::new(false);
     let sink: srcmgr_git::ProgressSink = Arc::new(|chunk: &str| {
         if let Some(line) = srcmgr_git::progress_line(chunk) {
@@ -226,54 +219,22 @@ fn push_command(options: &Options) -> Result<(), String> {
     Ok(())
 }
 
-/// The value after `flag` when present.
-fn flag_value<'a>(options: &'a Options, flag: &str) -> Option<&'a str> {
-    let position = options.positional.iter().position(|word| word == flag)?;
-    options.positional.get(position + 1).and_then(|word| word.to_str())
+/// The reviewed change, mirroring `srcmgr_git::RemoteChange`.
+fn remote_change(change: RemoteChange) -> srcmgr_git::RemoteChange {
+    match change {
+        RemoteChange::Add { name, url, push_url } => srcmgr_git::RemoteChange::Add { name, url, push_url },
+        RemoteChange::SetUrl { name, url, push } => srcmgr_git::RemoteChange::SetUrl { name, url, push },
+        RemoteChange::Rename { from, to } => srcmgr_git::RemoteChange::Rename { from, to },
+        RemoteChange::Remove { name } => srcmgr_git::RemoteChange::Remove { name },
+    }
 }
 
-fn argument(options: &Options, index: usize) -> Result<&str, String> {
-    options.positional.get(index).and_then(|word| word.to_str()).ok_or_else(|| USAGE.to_owned())
-}
-
-/// Builds the reviewed change from the command words. Nothing is applied here.
-fn remote_change(options: &Options, action: &str) -> Result<srcmgr_git::RemoteChange, String> {
-    Ok(match action {
-        "add" => srcmgr_git::RemoteChange::Add {
-            name: argument(options, 3)?.to_owned(),
-            url: argument(options, 4)?.to_owned(),
-            push_url: flag_value(options, "--push-url").map(str::to_owned),
-        },
-        "set-url" => srcmgr_git::RemoteChange::SetUrl {
-            name: argument(options, 3)?.to_owned(),
-            url: argument(options, 4)?.to_owned(),
-            push: options.positional.iter().any(|word| word == "--push"),
-        },
-        "rename" => srcmgr_git::RemoteChange::Rename {
-            from: argument(options, 3)?.to_owned(),
-            to: argument(options, 4)?.to_owned(),
-        },
-        "remove" => srcmgr_git::RemoteChange::Remove { name: argument(options, 3)?.to_owned() },
-        _ => return Err(USAGE.to_owned()),
-    })
-}
-
-/// `clone <url> <destination>`: reviewed destination and transport, no checkout.
-/// A transfer failure keeps whatever was written so it can be inspected.
-fn clone_command(options: &Options) -> Result<(), String> {
-    let url = argument(options, 1)?.to_owned();
-    let destination = PathBuf::from(argument(options, 2)?);
-    let depth = match flag_value(options, "--depth") {
-        Some(value) => Some(value.parse::<u32>().map_err(|_| "--depth needs a number".to_owned())?),
-        None => None,
-    };
+/// `clone [--branch <b>] [--depth <n>] <url> <dir>`: reviewed destination and
+/// transport, no checkout. A transfer failure keeps whatever was written so it
+/// can be inspected.
+fn clone_command(options: &Options, url: &str, destination: PathBuf, branch: Option<String>, depth: Option<u32>) -> Result<(), String> {
     let installation = GitInstallation::probe(selected_git(options)?).map_err(|error| error.to_string())?;
-    let request = srcmgr_git::CloneRequest {
-        url,
-        destination,
-        branch: flag_value(options, "--branch").map(str::to_owned),
-        depth,
-    };
+    let request = srcmgr_git::CloneRequest { url: url.to_owned(), destination, branch, depth };
     let preview = srcmgr_git::preview_clone(&installation, &request).map_err(|error| error.to_string())?;
     for line in &preview.lines {
         println!("{line}");
@@ -285,10 +246,7 @@ fn clone_command(options: &Options) -> Result<(), String> {
         }
     });
     srcmgr_git::clone_repository(&installation, &request, &cancel, Some(&sink)).map_err(|error| {
-        format!(
-            "{error}; inspect {} for a partial clone before retrying",
-            preview.destination.display()
-        )
+        format!("{error}; inspect {} for a partial clone before retrying", preview.destination.display())
     })?;
     println!("cloned into {}", preview.destination.display());
     println!("checkout is deferred: review and trust the repository, then approve the filter review");
@@ -304,21 +262,20 @@ fn print_json(value: JsonValue) -> Result<(), String> {
     stdout.write_all(&bytes).map_err(|error| error.to_string())
 }
 
-/// `remote <worktree> list|tracking`: configured remotes with redacted URLs,
-/// and the current branch's distance from the fetched tracking ref.
-fn remote_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    let session = open_trusted(options, worktree)?;
+/// `remote list|tracking [--json]`, or a reviewed configuration change that
+/// is applied only with `--yes`.
+fn remote_command(options: &Options, action: RemoteAction) -> Result<(), String> {
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
     match action {
-        "add" | "set-url" | "rename" | "remove" => {
-            let change = remote_change(options, action)?;
+        RemoteAction::Change { change, yes } => {
+            let change = remote_change(change);
             let preview = srcmgr_git::preview_remote_change(&session.installation, &session.identity, &change)
                 .map_err(|error| error.to_string())?;
             for line in &preview.lines {
                 println!("{line}");
             }
-            if options.positional.iter().any(|word| word == "--yes") {
+            if yes {
                 srcmgr_git::apply_remote_change(&session.installation, &session.identity, &change)
                     .map_err(|error| error.to_string())?;
                 println!("applied; the repository trust fingerprint changed - review and grant trust again before the next action");
@@ -327,10 +284,10 @@ fn remote_command(options: &Options) -> Result<(), String> {
             }
             Ok(())
         }
-        "list" => {
+        RemoteAction::List { json } => {
             let remotes = srcmgr_git::list_remotes(&session.installation, &session.identity)
                 .map_err(|error| error.to_string())?;
-            if options.json {
+            if json {
                 let rows = remotes
                     .iter()
                     .map(|remote| {
@@ -340,13 +297,7 @@ fn remote_command(options: &Options) -> Result<(), String> {
                             ("push_url", json::nullable(remote.push_url.clone())),
                             (
                                 "refspecs",
-                                JsonValue::Array(
-                                    remote
-                                        .fetch_refspecs
-                                        .iter()
-                                        .map(|refspec| refspec.as_str().into())
-                                        .collect(),
-                                ),
+                                JsonValue::Array(remote.fetch_refspecs.iter().map(|refspec| refspec.as_str().into()).collect()),
                             ),
                         ])
                     })
@@ -362,10 +313,10 @@ fn remote_command(options: &Options) -> Result<(), String> {
                 Ok(())
             }
         }
-        "tracking" => {
+        RemoteAction::Tracking { json } => {
             let state = srcmgr_git::tracking(&session.installation, &session.identity)
                 .map_err(|error| error.to_string())?;
-            if options.json {
+            if json {
                 print_json(json::object(vec![
                     ("upstream", json::nullable(state.upstream.clone())),
                     ("ahead", JsonValue::Unsigned(u64::from(state.ahead))),
@@ -373,39 +324,29 @@ fn remote_command(options: &Options) -> Result<(), String> {
                 ]))
             } else {
                 match &state.upstream {
-                    Some(upstream) => {
-                        println!("{upstream}  ahead {}  behind {}", state.ahead, state.behind);
-                    }
+                    Some(upstream) => println!("{upstream}  ahead {}  behind {}", state.ahead, state.behind),
                     None => println!("no upstream"),
                 }
                 Ok(())
             }
         }
-        _ => Err(USAGE.to_owned()),
     }
 }
 
-/// `fetch <worktree> <remote>`: one explicit remote, with transfer progress on
+/// `fetch [--json] <remote>`: one explicit remote, with transfer progress on
 /// stderr and the actual refs Git reported on stdout.
-fn fetch_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let remote = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    let session = open_trusted(options, worktree)?;
+fn fetch_command(options: &Options, remote: &str, json_output: bool) -> Result<(), String> {
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
     let cancel = AtomicBool::new(false);
     let sink: srcmgr_git::ProgressSink = Arc::new(|chunk: &str| {
         if let Some(line) = srcmgr_git::progress_line(chunk) {
             eprintln!("{line}");
         }
     });
-    let report = srcmgr_git::fetch(
-        &session.installation,
-        &session.identity,
-        remote,
-        &cancel,
-        Some(&sink),
-    )
-    .map_err(|error| error.to_string())?;
-    if options.json {
+    let report = srcmgr_git::fetch(&session.installation, &session.identity, remote, &cancel, Some(&sink))
+        .map_err(|error| error.to_string())?;
+    if json_output {
         let updates = report
             .updates
             .iter()
@@ -417,10 +358,7 @@ fn fetch_command(options: &Options) -> Result<(), String> {
                 ])
             })
             .collect();
-        print_json(json::object(vec![
-            ("remote", report.remote.as_str().into()),
-            ("updates", JsonValue::Array(updates)),
-        ]))
+        print_json(json::object(vec![("remote", report.remote.as_str().into()), ("updates", JsonValue::Array(updates))]))
     } else {
         if report.updates.is_empty() {
             println!("{}: up to date", report.remote);
@@ -474,38 +412,35 @@ fn parse_locale(text: &str) -> Result<&'static str, String> {
     }
 }
 
-/// `setting get|set <key> [value]`: app preferences kept in the profile store.
-/// Only the keys listed here are accepted, and each value is validated before
-/// it is written, so a typo cannot silently persist.
-fn setting_command(options: &Options) -> Result<(), String> {
-    let action = options.positional.get(1).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    let key = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
+/// `config get|set <key> [value]`: SrcMgr preferences kept in the profile
+/// store, in the `git config` spelling. These are the product's own keys, not
+/// Git configuration. Only the keys listed here are accepted, and each value is
+/// validated before it is written, so a typo cannot silently persist.
+fn config_command(options: &Options, action: ConfigAction) -> Result<(), String> {
+    let key = match &action {
+        ConfigAction::Get { key } | ConfigAction::Set { key, .. } => key.as_str(),
+    };
     if key != HISTORY_LIMIT_KEY && key != UI_LOCALE_KEY {
-        return Err(format!(
-            "unknown setting '{key}'; known keys: {HISTORY_LIMIT_KEY}, {UI_LOCALE_KEY}"
-        ));
+        return Err(format!("unknown setting '{key}'; known keys: {HISTORY_LIMIT_KEY}, {UI_LOCALE_KEY}"));
     }
     let mut store = open_profile_store(options)?;
     match action {
-        "get" => match store.get_setting(key).map_err(|error| error.to_string())? {
+        ConfigAction::Get { key } => match store.get_setting(&key).map_err(|error| error.to_string())? {
             Some(value) => println!("{value}"),
             None => println!("unset"),
         },
-        "set" => {
-            let value = options.positional.get(3).and_then(|word| word.to_str()).ok_or(USAGE)?;
+        ConfigAction::Set { key, value } => {
+            let value = value.to_str().ok_or("the value must be valid UTF-8")?;
             if key == UI_LOCALE_KEY {
                 let locale = parse_locale(value)?;
-                store.put_setting(key, locale).map_err(|error| error.to_string())?;
+                store.put_setting(&key, locale).map_err(|error| error.to_string())?;
                 println!("{key} = {locale}");
             } else {
                 let limit = parse_history_limit(value)?;
-                store
-                    .put_setting(key, &limit.to_string())
-                    .map_err(|error| error.to_string())?;
+                store.put_setting(&key, &limit.to_string()).map_err(|error| error.to_string())?;
                 println!("{key} = {limit}");
             }
         }
-        _ => return Err(USAGE.to_owned()),
     }
     Ok(())
 }
@@ -517,35 +452,21 @@ fn parse_history_limit(text: &str) -> Result<usize, String> {
     }
 }
 
-fn history_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let limit: usize = match options.positional.iter().position(|word| word == "--limit") {
-        Some(position) => options
-            .positional
-            .get(position + 1)
-            .and_then(|word| word.to_str())
-            .and_then(|text| text.parse().ok())
-            .ok_or("--limit needs a number")?,
-        // The store is opened only when no --limit is given, so an explicit
-        // limit never waits on the profile lock.
-        None => {
-            let store = open_profile_store(options)?;
-            match store.get_setting(HISTORY_LIMIT_KEY).map_err(|error| error.to_string())? {
-                Some(saved) => parse_history_limit(&saved)?,
-                None => DEFAULT_HISTORY_LIMIT,
-            }
-        }
+/// `log [--skip <n>] [--limit <n>]`: a newest-first commit list from HEAD,
+/// in the `git log` spelling. Merges are marked `M`; this is a list, not a
+/// lane graph.
+fn log_command(options: &Options, skip: usize, limit: Option<usize>) -> Result<(), String> {
+    // The store is opened only when no --limit is given, so an explicit limit
+    // never waits on the profile lock.
+    let limit = match limit {
+        Some(limit) => limit,
+        None => match open_profile_store(options)?.get_setting(HISTORY_LIMIT_KEY).map_err(|error| error.to_string())? {
+            Some(saved) => parse_history_limit(&saved)?,
+            None => DEFAULT_HISTORY_LIMIT,
+        },
     };
-    let skip: usize = match options.positional.iter().position(|word| word == "--skip") {
-        Some(position) => options
-            .positional
-            .get(position + 1)
-            .and_then(|word| word.to_str())
-            .and_then(|text| text.parse().ok())
-            .ok_or("--skip needs a number")?,
-        None => 0,
-    };
-    let session = open_trusted(options, worktree)?;
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
     let commits = srcmgr_git::log(&session.installation, &session.identity, skip, limit)
         .map_err(|error| error.to_string())?;
     if commits.is_empty() {
@@ -558,92 +479,57 @@ fn history_command(options: &Options) -> Result<(), String> {
     Ok(())
 }
 
-/// `ignore <worktree> <path>`: names the rule that ignores the path, or says
-/// that none does. Git decides the match; this only reports it.
-fn ignore_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let path = options.positional.get(2).ok_or(USAGE)?;
-    let session = open_trusted(options, worktree)?;
+/// `check-ignore [--] <path>`: names the rule that ignores the path, or says
+/// that none does. Git decides the match; this only reports it. `git
+/// check-ignore` exits 1 when nothing matches; so does this.
+fn check_ignore_command(options: &Options, path: &OsStr) -> Result<(), String> {
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
     match srcmgr_git::ignore_match(&session.installation, &session.identity, path)
         .map_err(|error| error.to_string())?
     {
         Some(rule) => println!("ignored by {rule}"),
-        None => println!("not ignored"),
+        None => {
+            println!("not ignored");
+            std::process::exit(1);
+        }
     }
     Ok(())
 }
 
-/// `hunk <worktree> list <path> [--staged]`, or
-/// `hunk <worktree> stage|unstage <path> <number>`. Hunk numbers start at 1.
-/// Staging applies to the index only; unstaging reverses a staged hunk.
-fn hunk_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    let path = options.positional.get(3).ok_or(USAGE)?;
-    let session = open_trusted(options, worktree)?;
+/// `hunk list [--staged] [--] <path>`, or `hunk stage|unstage [--] <path> <n>`.
+/// Hunk numbers start at 1. Staging applies to the index only; unstaging
+/// reverses a staged hunk.
+fn hunk_command(options: &Options, action: HunkAction) -> Result<(), String> {
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
     match action {
-        "list" => {
-            let staged = options.positional.iter().any(|word| word == "--staged");
-            let hunks = srcmgr_git::hunks(&session.installation, &session.identity, path, staged)
+        HunkAction::List { staged, path } => {
+            let hunks = srcmgr_git::hunks(&session.installation, &session.identity, &path, staged)
                 .map_err(|error| error.to_string())?;
             for (index, hunk) in hunks.iter().enumerate() {
                 println!("hunk {}", index + 1);
                 print!("{hunk}");
             }
         }
-        "stage" | "unstage" => {
-            let number: usize = options
-                .positional
-                .get(4)
-                .and_then(|word| word.to_str())
-                .and_then(|text| text.parse().ok())
-                .filter(|number| *number >= 1)
-                .ok_or("give the hunk number, starting at 1")?;
-            srcmgr_git::apply_hunk(
-                &session.installation,
-                &session.identity,
-                path,
-                number - 1,
-                action == "unstage",
-            )
-            .map_err(|error| error.to_string())?;
-            println!("{action}d hunk {number}");
+        HunkAction::Apply { path, number, unstage } => {
+            srcmgr_git::apply_hunk(&session.installation, &session.identity, &path, number, unstage)
+                .map_err(|error| error.to_string())?;
+            println!("{} hunk {}", if unstage { "unstaged" } else { "staged" }, number + 1);
         }
-        _ => return Err(USAGE.to_owned()),
     }
     Ok(())
 }
 
 /// Prints the textual diff of one path, unstaged by default and staged with
 /// `--staged`. The same trust gate as `status` applies.
-fn diff_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let path = options.positional.get(2).ok_or(USAGE)?;
-    let staged = options.positional.iter().any(|word| word == "--staged");
-    let session = open_trusted(options, worktree)?;
+fn diff_command(options: &Options, path: &OsStr, staged: bool) -> Result<(), String> {
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
     let text = srcmgr_git::diff(&session.installation, &session.identity, path, staged)
         .map_err(|error| error.to_string())?;
     print!("{text}");
     Ok(())
-}
-
-fn parse(arguments: Vec<OsString>) -> Result<Options, String> {
-    let mut options = Options::default();
-    let mut arguments = arguments.into_iter();
-    while let Some(argument) = arguments.next() {
-        match argument.to_str() {
-            Some("--profile") => {
-                options.profile = Some(PathBuf::from(arguments.next().ok_or("--profile needs a directory")?));
-            }
-            Some("--git") => {
-                options.git = Some(PathBuf::from(arguments.next().ok_or("--git needs an executable path")?));
-            }
-            Some("--json") => options.json = true,
-            Some("-m") => options.message = Some(arguments.next().ok_or("-m needs a message")?),
-            _ => options.positional.push(argument),
-        }
-    }
-    Ok(options)
 }
 
 fn profile_root(options: &Options) -> Result<PathBuf, String> {
@@ -653,14 +539,6 @@ fn profile_root(options: &Options) -> Result<PathBuf, String> {
         .or_else(|| env::var_os("MINICON_SRCMGR_PROFILE").map(PathBuf::from))
         .or_else(default_root)
         .ok_or_else(|| "no profile directory: pass --profile".to_owned())
-}
-
-fn worktree_argument(options: &Options, index: usize) -> Result<&Path, String> {
-    options
-        .positional
-        .get(index)
-        .map(|value| Path::new(value.as_os_str()))
-        .ok_or_else(|| USAGE.to_owned())
 }
 
 /// Metadata-only: the worktree's `.git` must be a plain directory. A `.git`
@@ -682,6 +560,34 @@ fn canonical_worktree(path: &Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("cannot open the worktree: {error}"))
 }
 
+/// The repository a verb acts on, from `-C <path>` or the current directory.
+///
+/// Discovery walks up from the current directory and stops at the first
+/// ancestor whose `.git` is a plain directory. It reads filesystem metadata
+/// only: nothing here runs Git, and what it finds is a candidate that still
+/// goes through the trust gate in [`open_trusted`]. An ancestor is never
+/// *followed into* in the sense of trusting it; it is only where the candidate
+/// is looked for, which is where `git` would look.
+fn worktree_argument(options: &Options) -> Result<PathBuf, String> {
+    match &options.directory {
+        // git accepts `-C ""` as "do not change directory".
+        Some(path) if !path.as_os_str().is_empty() => return Ok(path.clone()),
+        _ => {}
+    }
+    let start = env::current_dir().map_err(|error| format!("cannot read the current directory: {error}"))?;
+    let mut candidate = Some(start.as_path());
+    while let Some(directory) = candidate {
+        if let Ok(metadata) = std::fs::symlink_metadata(directory.join(".git"))
+            && metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+        {
+            return Ok(directory.to_path_buf());
+        }
+        candidate = directory.parent();
+    }
+    Err("not a Git repository (or any parent): no plain .git directory was found from the current directory; pass -C <path>".to_owned())
+}
+
 fn trust_store(options: &Options) -> Result<(PathBuf, TrustStore), String> {
     let path = profile_root(options)?.join(TRUST_FILE);
     let store = TrustStore::open(&path).map_err(|error| error.to_string())?;
@@ -700,7 +606,7 @@ fn open_trusted(options: &Options, worktree: &Path) -> Result<Session, String> {
     let (_, store) = trust_store(options)?;
     store
         .verify(&git_dir, &worktree)
-        .map_err(|error| format!("{error}; run `minicon-srcmgr trust grant <worktree>` after review"))?;
+        .map_err(|error| format!("{error}; run `minicon-srcmgr trust grant -C <path>` after review"))?;
 
     let executable = refuse_repository_local_executable(&selected_git(options)?, &worktree)?;
     let installation = GitInstallation::probe(executable).map_err(|e| e.to_string())?;
@@ -725,37 +631,58 @@ fn selected_git(options: &Options) -> Result<PathBuf, String> {
     find_git_on_path().ok_or("No installed Git was found. Open Git settings to select Git 2.43 or newer, or pass --git".into())
 }
 
-fn status(options: &Options) -> Result<(), String> {
-    let session = open_trusted(options, worktree_argument(options, 1)?)?;
+/// `status [--porcelain[=v1|v2]] [-z] [--json]`.
+///
+/// `--porcelain` is Git's own output, byte for byte: the product already reads
+/// `status --porcelain=v2 -z --branch` for its own snapshot, so that command's
+/// bytes are passed through rather than rebuilt from the coarser snapshot.
+/// Without `--porcelain` the text is the product's own listing and `--json` is
+/// its document.
+fn status(options: &Options, porcelain: Option<Porcelain>, null: bool, json_output: bool) -> Result<(), String> {
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
+    if let Some(version) = porcelain {
+        let mut arguments = vec!["status".to_owned(), format!("--porcelain={}", match version { Porcelain::V1 => "v1", Porcelain::V2 => "v2" })];
+        if null {
+            arguments.push("-z".to_owned());
+        }
+        arguments.push("--untracked-files=normal".to_owned());
+        if version == Porcelain::V2 {
+            arguments.push("--branch".to_owned());
+        }
+        let references: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        let output = srcmgr_git::run_raw(&session.installation, &session.identity, &references).map_err(|error| error.to_string())?;
+        let mut stdout = io::stdout().lock();
+        stdout.write_all(&output).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     let snapshot = read_status(&session.installation, &session.identity, Generation(1))
         .map_err(|error| error.to_string())?;
     let mut stdout = io::stdout().lock();
-    if options.json {
+    if json_output {
         let mut bytes = json::to_vec_pretty(&status_json(&snapshot));
         bytes.push(b'\n');
         stdout.write_all(&bytes).map_err(|error| error.to_string())?;
     } else {
-        stdout
-            .write_all(status_text(&snapshot).as_bytes())
-            .map_err(|error| error.to_string())?;
+        stdout.write_all(status_text(&snapshot).as_bytes()).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
 
-fn trust(options: &Options) -> Result<(), String> {
-    let action = options.positional.get(1).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    let worktree = canonical_worktree(worktree_argument(options, 2)?)?;
+/// `trust grant|revoke`: metadata only. No Git runs here.
+pub(crate) fn trust(options: &Options, action: TrustAction) -> Result<(), String> {
+    let worktree = canonical_worktree(&worktree_argument(options)?)?;
     let git_dir = git_dir_of(&worktree)?;
     let (path, mut store) = trust_store(options)?;
     match action {
-        "grant" => {
+        TrustAction::Grant => {
             let digest = fingerprint(&git_dir, &worktree).map_err(|error| error.to_string())?;
             store.grant(git_dir.clone(), digest.clone());
             store.save().map_err(|error| error.to_string())?;
             println!("trusted {} (fingerprint {})", display_path(&git_dir), &digest[..12]);
             println!("hooks, filters and helpers configured there may now run as you; re-grant after any change");
         }
-        "revoke" => {
+        TrustAction::Revoke => {
             let removed = store.revoke(&git_dir);
             store.save().map_err(|error| error.to_string())?;
             if removed {
@@ -764,7 +691,6 @@ fn trust(options: &Options) -> Result<(), String> {
                 println!("no grant existed for {} (store: {})", display_path(&git_dir), path.display());
             }
         }
-        _ => return Err(USAGE.to_owned()),
     }
     Ok(())
 }
@@ -775,19 +701,15 @@ enum Change {
     Unstage,
 }
 
-fn change_paths(options: &Options, change: Change) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let paths: Vec<OsString> = options.positional.iter().skip(2).cloned().collect();
-    if paths.is_empty() {
-        return Err(USAGE.to_owned());
-    }
-    let session = open_trusted(options, worktree)?;
+fn change_paths(options: &Options, change: Change, paths: &[OsString]) -> Result<(), String> {
+    let worktree = worktree_argument(options)?;
+    let session = open_trusted(options, &worktree)?;
     let snapshot = read_status(&session.installation, &session.identity, Generation(1))
         .map_err(|error| error.to_string())?;
 
     // Only paths the status read reports as changed may be targeted; the
     // paths are literal, never patterns.
-    for path in &paths {
+    for path in paths {
         let entry = snapshot
             .entries
             .iter()
@@ -799,8 +721,8 @@ fn change_paths(options: &Options, change: Change) -> Result<(), String> {
     }
 
     match change {
-        Change::Stage => stage(&session.installation, &session.identity, &paths),
-        Change::Unstage => unstage(&session.installation, &session.identity, &paths),
+        Change::Stage => stage(&session.installation, &session.identity, paths),
+        Change::Unstage => unstage(&session.installation, &session.identity, paths),
     }
     .map_err(|error| error.to_string())?;
     println!("{} {} path(s)", match change { Change::Stage => "staged", Change::Unstage => "unstaged" }, paths.len());
@@ -810,21 +732,21 @@ fn change_paths(options: &Options, change: Change) -> Result<(), String> {
 /// Commits the index. The message comes from `-m` or, when that is absent, from
 /// the saved draft for this repository. A successful commit clears the draft.
 /// A refused commit leaves the draft in place.
-fn commit_command(options: &Options) -> Result<(), String> {
+pub(crate) fn commit_command(options: &Options, message: Option<&OsStr>) -> Result<(), String> {
     // Resolve the passive preference before taking the writer used for the
     // draft/journal; installed-Git lookup must not recursively open it.
     let mut selected = options.clone();
     selected.git = Some(selected_git(options)?);
     let options = &selected;
-    let worktree = worktree_argument(options, 1)?;
-    let key = repository_key(worktree)?;
+    let worktree = worktree_argument(options)?;
+    let key = repository_key(&worktree)?;
     let mut store = open_profile_store(options)?;
-    let message = match &options.message {
+    let message = match message {
         Some(given) => given.to_str().ok_or("the commit message must be valid UTF-8")?.to_owned(),
         None => store.get_draft(BACKEND_GIT, &key).map_err(|e| e.to_string())?.ok_or("commit needs -m <message> or a saved draft")?,
     };
     if message.trim().is_empty() { return Err("the commit message is empty".into()); }
-    let session = open_trusted(options, worktree)?;
+    let session = open_trusted(options, &worktree)?;
     let review = srcmgr_git::StagedReview::read(&session.installation, &session.identity).map_err(|e| e.to_string())?;
     if let Some(reason) = &review.blocked { return Err(reason.clone()); }
     store.begin_git_commit(&key, &message, review.binding.head.as_deref()).map_err(|e| e.to_string())?;
@@ -869,37 +791,26 @@ fn open_profile_store(options: &Options) -> Result<srcmgr_state::ProfileStore, S
     srcmgr_state::ProfileStore::open(&root).map_err(|error| error.to_string())
 }
 
-/// `draft <worktree> save -m <message> | show | clear`. Drafts store text only
-/// and never run Git, so they need no trust grant.
-fn draft_command(options: &Options) -> Result<(), String> {
-    let worktree = worktree_argument(options, 1)?;
-    let action = options.positional.get(2).and_then(|word| word.to_str()).ok_or(USAGE)?;
-    let key = repository_key(worktree)?;
+/// `draft save -m <message> | show | clear`. Drafts store text only and never
+/// run Git, so they need no trust grant.
+fn draft_command(options: &Options, action: DraftAction, message: Option<&OsStr>) -> Result<(), String> {
+    let worktree = worktree_argument(options)?;
+    let key = repository_key(&worktree)?;
     let mut store = open_profile_store(options)?;
     match action {
-        "save" => {
-            let message = options
-                .message
-                .as_ref()
-                .ok_or("draft save needs -m <message>")?
-                .to_str()
-                .ok_or("the draft must be valid UTF-8")?;
-            store
-                .put_draft(BACKEND_GIT, &key, message)
-                .map_err(|error| error.to_string())?;
+        DraftAction::Save => {
+            let message = message.ok_or("draft save needs -m <message>")?.to_str().ok_or("the draft must be valid UTF-8")?;
+            store.put_draft(BACKEND_GIT, &key, message).map_err(|error| error.to_string())?;
             println!("draft saved");
         }
-        "show" => match store.get_draft(BACKEND_GIT, &key).map_err(|error| error.to_string())? {
+        DraftAction::Show => match store.get_draft(BACKEND_GIT, &key).map_err(|error| error.to_string())? {
             Some(message) => print!("{message}"),
             None => println!("no draft"),
         },
-        "clear" => {
-            store
-                .delete_draft(BACKEND_GIT, &key)
-                .map_err(|error| error.to_string())?;
+        DraftAction::Clear => {
+            store.delete_draft(BACKEND_GIT, &key).map_err(|error| error.to_string())?;
             println!("draft cleared");
         }
-        _ => return Err(USAGE.to_owned()),
     }
     Ok(())
 }

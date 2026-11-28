@@ -84,7 +84,7 @@ fn untrusted_repository_is_refused_before_git_runs() {
     let scratch = Scratch::new("untrusted");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    let output = cli(&profile, &["status", path_str(&repo)]);
+    let output = cli(&profile, &["-C", path_str(&repo), "status"]);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("not trusted yet"), "{}", stderr(&output));
 }
@@ -94,9 +94,9 @@ fn grant_then_status_shows_the_branch() {
     let scratch = Scratch::new("grant");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    let granted = cli(&profile, &["trust", "grant", path_str(&repo)]);
+    let granted = cli(&profile, &["-C", path_str(&repo), "trust", "grant"]);
     assert!(granted.status.success(), "{}", stderr(&granted));
-    let status = cli(&profile, &["status", path_str(&repo)]);
+    let status = cli(&profile, &["-C", path_str(&repo), "status"]);
     assert!(status.status.success(), "{}", stderr(&status));
     assert!(stdout(&status).starts_with("On branch main ("), "{}", stdout(&status));
     assert!(stdout(&status).contains("Working tree clean"));
@@ -107,23 +107,23 @@ fn stage_unstage_and_commit_round_trip() {
     let scratch = Scratch::new("round-trip");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", path_str(&repo), "trust", "grant"]).status.success());
 
     fs::write(repo.join("a.txt"), "two\n").expect("modify");
-    let staged = cli(&profile, &["stage", path_str(&repo), "a.txt"]);
+    let staged = cli(&profile, &["-C", path_str(&repo), "stage", "--", "a.txt"]);
     assert!(staged.status.success(), "{}", stderr(&staged));
-    assert!(stdout(&cli(&profile, &["status", path_str(&repo)])).contains("M. a.txt"));
+    assert!(stdout(&cli(&profile, &["-C", path_str(&repo), "status"])).contains("M. a.txt"));
 
-    let unstaged = cli(&profile, &["unstage", path_str(&repo), "a.txt"]);
+    let unstaged = cli(&profile, &["-C", path_str(&repo), "unstage", "--", "a.txt"]);
     assert!(unstaged.status.success(), "{}", stderr(&unstaged));
-    assert!(stdout(&cli(&profile, &["status", path_str(&repo)])).contains(".M a.txt"));
+    assert!(stdout(&cli(&profile, &["-C", path_str(&repo), "status"])).contains(".M a.txt"));
 
-    assert!(cli(&profile, &["stage", path_str(&repo), "a.txt"]).status.success());
-    let committed = cli(&profile, &["commit", path_str(&repo), "-m", "second"]);
+    assert!(cli(&profile, &["-C", path_str(&repo), "stage", "--", "a.txt"]).status.success());
+    let committed = cli(&profile, &["-C", path_str(&repo), "commit", "-m", "second"]);
     assert!(committed.status.success(), "{}", stderr(&committed));
     assert!(stdout(&committed).starts_with("committed "));
 
-    let after = stdout(&cli(&profile, &["status", path_str(&repo)]));
+    let after = stdout(&cli(&profile, &["-C", path_str(&repo), "status"]));
     assert!(after.contains("Working tree clean"), "{after}");
     let log = Command::new(git_executable())
         .current_dir(&repo)
@@ -138,8 +138,8 @@ fn commit_without_anything_staged_is_refused() {
     let scratch = Scratch::new("nothing");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
-    let output = cli(&profile, &["commit", path_str(&repo), "-m", "empty"]);
+    assert!(cli(&profile, &["-C", path_str(&repo), "trust", "grant"]).status.success());
+    let output = cli(&profile, &["-C", path_str(&repo), "commit", "-m", "empty"]);
     assert!(!output.status.success());
     assert!(stderr(&output).to_ascii_lowercase().contains("nothing is staged"));
 }
@@ -149,9 +149,9 @@ fn pathspec_patterns_are_not_expanded() {
     let scratch = Scratch::new("literal");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", path_str(&repo), "trust", "grant"]).status.success());
     fs::write(repo.join("b.txt"), "new\n").expect("write");
-    let output = cli(&profile, &["stage", path_str(&repo), "*.txt"]);
+    let output = cli(&profile, &["-C", path_str(&repo), "stage", "--", "*.txt"]);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("not a changed path"));
 }
@@ -161,12 +161,12 @@ fn changed_config_invalidates_the_grant() {
     let scratch = Scratch::new("config");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", path_str(&repo), "trust", "grant"]).status.success());
     let config = repo.join(".git").join("config");
     let mut text = fs::read_to_string(&config).expect("read config");
     text.push_str("[alias]\n\tx = status\n");
     fs::write(&config, text).expect("write config");
-    let output = cli(&profile, &["status", path_str(&repo)]);
+    let output = cli(&profile, &["-C", path_str(&repo), "status"]);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("changed since trust was granted"), "{}", stderr(&output));
 }
@@ -176,11 +176,11 @@ fn a_hook_edit_invalidates_the_grant() {
     let scratch = Scratch::new("hook");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", path_str(&repo), "trust", "grant"]).status.success());
     let hooks = repo.join(".git").join("hooks");
     fs::create_dir_all(&hooks).expect("hooks dir");
     fs::write(hooks.join("pre-commit"), "#!/bin/sh\nexit 0\n").expect("hook");
-    let output = cli(&profile, &["status", path_str(&repo)]);
+    let output = cli(&profile, &["-C", path_str(&repo), "status"]);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("changed since trust was granted"));
 }
@@ -194,7 +194,7 @@ fn config_with_include_cannot_be_granted() {
     let mut text = fs::read_to_string(&config).expect("read config");
     text.push_str("[include]\n\tpath = ../other.cfg\n");
     fs::write(&config, text).expect("write config");
-    let output = cli(&profile, &["trust", "grant", path_str(&repo)]);
+    let output = cli(&profile, &["-C", path_str(&repo), "trust", "grant"]);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("includes other files"));
 }
@@ -204,9 +204,9 @@ fn revoke_blocks_later_commands() {
     let scratch = Scratch::new("revoke");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
-    assert!(cli(&profile, &["trust", "revoke", path_str(&repo)]).status.success());
-    let output = cli(&profile, &["status", path_str(&repo)]);
+    assert!(cli(&profile, &["-C", path_str(&repo), "trust", "grant"]).status.success());
+    assert!(cli(&profile, &["-C", path_str(&repo), "trust", "revoke"]).status.success());
+    let output = cli(&profile, &["-C", path_str(&repo), "status"]);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("not trusted yet"));
 }
@@ -216,18 +216,18 @@ fn diff_shows_the_unstaged_and_staged_change_of_a_path() {
     let scratch = Scratch::new("diff");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", path_str(&repo), "trust", "grant"]).status.success());
 
     fs::write(repo.join("a.txt"), "two\n").expect("modify");
-    let unstaged = cli(&profile, &["diff", path_str(&repo), "a.txt"]);
+    let unstaged = cli(&profile, &["-C", path_str(&repo), "diff", "a.txt"]);
     assert!(unstaged.status.success(), "{}", stderr(&unstaged));
     let text = stdout(&unstaged);
     assert!(text.contains("-one") && text.contains("+two"), "{text}");
 
-    assert!(cli(&profile, &["stage", path_str(&repo), "a.txt"]).status.success());
-    let staged = cli(&profile, &["diff", path_str(&repo), "a.txt", "--staged"]);
+    assert!(cli(&profile, &["-C", path_str(&repo), "stage", "--", "a.txt"]).status.success());
+    let staged = cli(&profile, &["-C", path_str(&repo), "diff", "a.txt", "--staged"]);
     assert!(stdout(&staged).contains("+two"), "{}", stdout(&staged));
-    assert!(stdout(&cli(&profile, &["diff", path_str(&repo), "a.txt"])).is_empty());
+    assert!(stdout(&cli(&profile, &["-C", path_str(&repo), "diff", "a.txt"])).is_empty());
 }
 
 #[test]
@@ -235,15 +235,15 @@ fn branch_create_and_switch_update_the_status_heading() {
     let scratch = Scratch::new("branches");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", path_str(&repo), "trust", "grant"]).status.success());
 
-    let created = cli(&profile, &["branch", path_str(&repo), "create", "feature/x"]);
+    let created = cli(&profile, &["-C", path_str(&repo), "branch", "create", "feature/x"]);
     assert!(created.status.success(), "{}", stderr(&created));
-    assert!(stdout(&cli(&profile, &["status", path_str(&repo)])).starts_with("On branch feature/x ("));
+    assert!(stdout(&cli(&profile, &["-C", path_str(&repo), "status"])).starts_with("On branch feature/x ("));
 
-    let switched = cli(&profile, &["branch", path_str(&repo), "switch", "main"]);
+    let switched = cli(&profile, &["-C", path_str(&repo), "branch", "switch", "main"]);
     assert!(switched.status.success(), "{}", stderr(&switched));
-    assert!(stdout(&cli(&profile, &["status", path_str(&repo)])).starts_with("On branch main ("));
+    assert!(stdout(&cli(&profile, &["-C", path_str(&repo), "status"])).starts_with("On branch main ("));
 }
 
 #[test]
@@ -251,13 +251,13 @@ fn invalid_and_option_like_branch_names_are_refused_before_git_changes_anything(
     let scratch = Scratch::new("bad-names");
     let repo = repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", path_str(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", path_str(&repo), "trust", "grant"]).status.success());
 
-    let dotted = cli(&profile, &["branch", path_str(&repo), "create", "bad..name"]);
+    let dotted = cli(&profile, &["-C", path_str(&repo), "branch", "create", "bad..name"]);
     assert!(!dotted.status.success());
     assert!(stderr(&dotted).contains("not valid"), "{}", stderr(&dotted));
 
-    let option_like = cli(&profile, &["branch", path_str(&repo), "create", "--orphan=x"]);
+    let option_like = cli(&profile, &["-C", path_str(&repo), "branch", "create", "--orphan=x"]);
     assert!(!option_like.status.success());
-    assert!(stdout(&cli(&profile, &["status", path_str(&repo)])).starts_with("On branch main ("));
+    assert!(stdout(&cli(&profile, &["-C", path_str(&repo), "status"])).starts_with("On branch main ("));
 }

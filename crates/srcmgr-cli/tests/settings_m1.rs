@@ -74,7 +74,7 @@ fn repository(scratch: &Scratch) -> (PathBuf, PathBuf) {
         oracle(&repo, &["commit", "-q", "-m", &format!("commit {index}")]);
     }
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
     (repo, profile)
 }
 
@@ -82,10 +82,10 @@ fn repository(scratch: &Scratch) -> (PathBuf, PathBuf) {
 fn a_saved_history_limit_applies_in_a_later_process() {
     let scratch = Scratch::new("saved");
     let (repo, profile) = repository(&scratch);
-    assert!(cli(&profile, &["setting", "set", "history.limit", "2"]).status.success());
-    assert_eq!(text(&cli(&profile, &["setting", "get", "history.limit"])).trim(), "2");
+    assert!(cli(&profile, &["config", "set", "history.limit", "2"]).status.success());
+    assert_eq!(text(&cli(&profile, &["config", "get", "history.limit"])).trim(), "2");
 
-    let shown = text(&cli(&profile, &["history", p(&repo)]));
+    let shown = text(&cli(&profile, &["-C", p(&repo), "log"]));
     assert_eq!(shown.lines().count(), 2, "{shown}");
 }
 
@@ -93,9 +93,9 @@ fn a_saved_history_limit_applies_in_a_later_process() {
 fn an_explicit_limit_overrides_the_saved_value() {
     let scratch = Scratch::new("override");
     let (repo, profile) = repository(&scratch);
-    assert!(cli(&profile, &["setting", "set", "history.limit", "2"]).status.success());
+    assert!(cli(&profile, &["config", "set", "history.limit", "2"]).status.success());
 
-    let shown = text(&cli(&profile, &["history", p(&repo), "--limit", "4"]));
+    let shown = text(&cli(&profile, &["-C", p(&repo), "log", "--limit", "4"]));
     assert_eq!(shown.lines().count(), 4, "{shown}");
 }
 
@@ -103,9 +103,9 @@ fn an_explicit_limit_overrides_the_saved_value() {
 fn without_a_saved_value_the_default_is_used() {
     let scratch = Scratch::new("default");
     let (repo, profile) = repository(&scratch);
-    assert_eq!(text(&cli(&profile, &["setting", "get", "history.limit"])).trim(), "unset");
+    assert_eq!(text(&cli(&profile, &["config", "get", "history.limit"])).trim(), "unset");
 
-    let shown = text(&cli(&profile, &["history", p(&repo)]));
+    let shown = text(&cli(&profile, &["-C", p(&repo), "log"]));
     assert_eq!(shown.lines().count(), 5, "{shown}");
 }
 
@@ -113,20 +113,20 @@ fn without_a_saved_value_the_default_is_used() {
 fn an_invalid_value_is_refused_and_the_stored_value_is_kept() {
     let scratch = Scratch::new("invalid");
     let (_repo, profile) = repository(&scratch);
-    assert!(cli(&profile, &["setting", "set", "history.limit", "3"]).status.success());
+    assert!(cli(&profile, &["config", "set", "history.limit", "3"]).status.success());
 
     for bad in ["0", "201", "-1", "many", ""] {
-        let refused = cli(&profile, &["setting", "set", "history.limit", bad]);
+        let refused = cli(&profile, &["config", "set", "history.limit", bad]);
         assert!(!refused.status.success(), "accepted {bad:?}");
     }
-    assert_eq!(text(&cli(&profile, &["setting", "get", "history.limit"])).trim(), "3");
+    assert_eq!(text(&cli(&profile, &["config", "get", "history.limit"])).trim(), "3");
 }
 
 #[test]
 fn an_unknown_key_is_refused() {
     let scratch = Scratch::new("unknown");
     let (_repo, profile) = repository(&scratch);
-    let refused = cli(&profile, &["setting", "set", "history.limt", "3"]);
+    let refused = cli(&profile, &["config", "set", "history.limt", "3"]);
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("unknown setting"));
 }

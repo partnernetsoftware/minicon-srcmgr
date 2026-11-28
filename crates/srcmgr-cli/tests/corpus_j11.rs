@@ -79,7 +79,7 @@ fn granted_repository(scratch: &Scratch) -> (PathBuf, PathBuf) {
     oracle(&repo, &["add", "base.txt"]);
     oracle(&repo, &["commit", "-q", "-m", "base"]);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
     (repo, profile)
 }
 
@@ -99,10 +99,10 @@ fn supplementary_plane_name_stages_and_commits_with_exact_index_bytes() {
     let name = "🙂 note.txt";
     fs::write(repo.join(name), "smile\n").expect("write emoji name");
 
-    let staged = cli(&profile, &["stage", p(&repo), name]);
+    let staged = cli(&profile, &["-C", p(&repo), "stage", "--", name]);
     assert!(staged.status.success(), "{}", err(&staged));
     assert_eq!(index_blob(&repo, name), blob(&repo, name));
-    assert!(cli(&profile, &["commit", p(&repo), "-m", "emoji"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "commit", "-m", "emoji"]).status.success());
     assert_eq!(oracle(&repo, &["status", "--porcelain"]), "");
 }
 
@@ -114,12 +114,12 @@ fn bidi_control_in_a_name_is_escaped_in_every_display_label() {
     let name = "report\u{202E}gnp.txt";
     fs::write(repo.join(name), "x\n").expect("this host must accept a bidi control in a name for the check to run");
 
-    let status = cli(&profile, &["status", p(&repo)]);
+    let status = cli(&profile, &["-C", p(&repo), "status"]);
     let shown = text(&status);
     assert!(shown.contains("\\u{202E}"), "{shown}");
     assert!(!shown.contains('\u{202E}'), "raw bidi control reached the label");
 
-    let json = text(&cli(&profile, &["status", p(&repo), "--json"]));
+    let json = text(&cli(&profile, &["-C", p(&repo), "status", "--json"]));
     assert!(json.contains("\\u{202E}"), "{json}");
     assert!(!json.contains('\u{202E}'), "raw bidi control reached JSON");
 }
@@ -132,7 +132,7 @@ fn bracket_name_is_staged_literally_not_as_a_glob() {
     fs::write(repo.join("lit1.txt"), "digit\n").expect("write lookalike");
 
     // As a glob, lit[1].txt would match lit1.txt; the literal pathspec must not.
-    assert!(cli(&profile, &["stage", p(&repo), "lit[1].txt"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "stage", "--", "lit[1].txt"]).status.success());
     assert_eq!(index_blob(&repo, "lit[1].txt"), blob(&repo, "lit[1].txt"));
     assert!(oracle(&repo, &["ls-files", "--", "lit1.txt"]).is_empty(), "the glob matched a lookalike");
 }

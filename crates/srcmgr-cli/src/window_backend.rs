@@ -1225,7 +1225,6 @@ impl WindowBackend {
 #[cfg(test)]
 pub(crate) mod tests {
     use std::env;
-    use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -1234,7 +1233,7 @@ pub(crate) mod tests {
     use srcmgr_ui::{Backend, Job, MainRequest, Reply, Snapshot};
 
     use super::WindowBackend;
-    use crate::{Options, trust};
+    use crate::Options;
 
     /// The temp root with symlinks resolved where the platform needs it.
     pub(crate) fn resolve_temp_root() -> PathBuf {
@@ -1336,15 +1335,10 @@ pub(crate) mod tests {
             ..Options::default()
         };
         if grant {
-            let granted = Options {
-                positional: vec![
-                    OsString::from("trust"),
-                    OsString::from("grant"),
-                    repo.as_os_str().to_owned(),
-                ],
-                ..options.clone()
-            };
-            trust(&granted).expect("grant the fixture");
+            // The fixture is granted through the same command the user runs:
+            // `trust grant`, with the repository from `-C`.
+            let granted = Options { directory: Some(repo.to_path_buf()), ..options.clone() };
+            crate::trust(&granted, crate::args::TrustAction::Grant).expect("grant the fixture");
         }
         WindowBackend {
             reviewed_diff: None,
@@ -1857,8 +1851,8 @@ pub(crate) mod tests {
         let executable = fs::canonicalize(git_executable()).unwrap();
         crate::open_profile_store(&backend.options).unwrap().set_git_executable(Some(&NativePath::new(executable.into_os_string()))).unwrap();
         fixture_git(&repo, &["add", "a.txt"]);
-        let options = Options { git: None, positional: vec!["commit".into(), repo.as_os_str().to_owned()], message: Some("saved Git commit".into()), ..backend.options.clone() };
-        crate::commit_command(&options).unwrap();
+        let options = Options { git: None, directory: Some(repo.clone()), ..backend.options.clone() };
+        crate::commit_command(&options, Some("saved Git commit".as_ref())).unwrap();
         assert_eq!(git_text(&repo, &["log", "-1", "--format=%s"]), "saved Git commit");
         let store = crate::open_profile_store(&options).unwrap();
         let key = crate::repository_key(&repo).unwrap();

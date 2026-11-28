@@ -112,13 +112,13 @@ fn remote_changes_preview_first_and_apply_only_with_yes() {
     let cloned = cli(&profile, &["clone", bare.to_str().expect("bare"), worktree.to_str().expect("work")]);
     assert!(cloned.status.success(), "clone failed: {}", error(&cloned));
 
-    let granted = cli(&profile, &["trust", "grant", worktree.to_str().expect("work")]);
+    let granted = cli(&profile, &["-C", worktree.to_str().expect("work"), "trust", "grant"]);
     assert!(granted.status.success(), "{}", error(&granted));
     let config = worktree.join(".git/config");
 
     let preview = cli(
         &profile,
-        &["remote", worktree.to_str().expect("work"), "add", "backup", "https://example.test/backup.git"],
+        &["-C", worktree.to_str().expect("work"), "remote", "add", "backup", "https://example.test/backup.git"],
     );
     assert!(preview.status.success(), "{}", error(&preview));
     assert!(text(&preview).contains("preview only"), "{}", text(&preview));
@@ -126,7 +126,7 @@ fn remote_changes_preview_first_and_apply_only_with_yes() {
 
     let applied = cli(
         &profile,
-        &["remote", worktree.to_str().expect("work"), "add", "backup", "https://example.test/backup.git", "--yes"],
+        &["-C", worktree.to_str().expect("work"), "remote", "add", "backup", "https://example.test/backup.git", "--yes"],
     );
     assert!(applied.status.success(), "{}", error(&applied));
     assert!(fs::read_to_string(&config).expect("config").contains("backup"));

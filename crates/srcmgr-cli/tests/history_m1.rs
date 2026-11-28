@@ -89,9 +89,9 @@ fn history_matches_git_log_order_and_marks_the_merge() {
     let scratch = Scratch::new("order");
     let repo = history_repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
 
-    let shown = text(&cli(&profile, &["history", p(&repo), "--limit", "10"]));
+    let shown = text(&cli(&profile, &["-C", p(&repo), "log", "--limit", "10"]));
     let expected_ids: Vec<String> = oracle(&repo, &["log", "--format=%H", "--max-count=10"])
         .lines()
         .map(str::to_owned)
@@ -113,8 +113,8 @@ fn the_limit_is_respected() {
     let scratch = Scratch::new("limit");
     let repo = history_repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
-    let shown = text(&cli(&profile, &["history", p(&repo), "--limit", "2"]));
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
+    let shown = text(&cli(&profile, &["-C", p(&repo), "log", "--limit", "2"]));
     assert_eq!(shown.lines().count(), 2, "{shown}");
 }
 
@@ -123,9 +123,9 @@ fn paging_with_skip_matches_git_log_skip() {
     let scratch = Scratch::new("paging");
     let repo = history_repository(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
 
-    let shown = text(&cli(&profile, &["history", p(&repo), "--skip", "1", "--limit", "2"]));
+    let shown = text(&cli(&profile, &["-C", p(&repo), "log", "--skip", "1", "--limit", "2"]));
     let expected: Vec<String> = oracle(&repo, &["log", "--format=%H", "--skip=1", "--max-count=2"])
         .lines()
         .map(str::to_owned)
@@ -145,8 +145,8 @@ fn an_unborn_branch_has_no_history() {
     fs::create_dir_all(&repo).expect("create repo");
     oracle(&repo, &["init", "-q", "-b", "main"]);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
-    assert_eq!(text(&cli(&profile, &["history", p(&repo)])).trim(), "no commits yet");
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
+    assert_eq!(text(&cli(&profile, &["-C", p(&repo), "log"])).trim(), "no commits yet");
 }
 
 #[test]
@@ -159,8 +159,8 @@ fn bidi_controls_in_a_subject_are_escaped() {
     oracle(&repo, &["config", "user.email", "fixture@example.invalid"]);
     commit_file(&repo, "a.txt", "left\u{202E}right");
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
-    let shown = text(&cli(&profile, &["history", p(&repo)]));
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
+    let shown = text(&cli(&profile, &["-C", p(&repo), "log"]));
     assert!(shown.contains("left\\u{202E}right"), "{shown}");
     assert!(!shown.contains('\u{202E}'), "raw bidi control reached the list");
 }

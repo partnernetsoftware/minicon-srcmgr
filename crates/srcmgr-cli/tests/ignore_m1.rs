@@ -102,7 +102,7 @@ fn scoped_repository(scratch: &Scratch) -> (PathBuf, PathBuf) {
     oracle_ok(&repo, &["commit", "-q", "-m", "base"]);
     fs::write(repo.join(".git").join("info").join("exclude"), "secret.tmp\n").expect("exclude");
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
     (repo, profile)
 }
 
@@ -112,7 +112,7 @@ fn an_ignored_file_is_named_with_the_same_rule_as_git() {
     let (repo, profile) = scoped_repository(&scratch);
     fs::write(repo.join("build.log"), "noise\n").expect("write");
 
-    let shown = text(&cli(&profile, &["ignore", p(&repo), "build.log"]));
+    let shown = text(&cli(&profile, &["-C", p(&repo), "check-ignore", "--", "build.log"]));
     let oracle_rule = git_rule(&repo, "build.log").expect("git ignores build.log");
     assert_eq!(shown.trim(), format!("ignored by {oracle_rule}"));
     assert!(shown.contains(".gitignore:1:*.log"), "{shown}");
@@ -125,7 +125,7 @@ fn negation_keeps_a_file_that_the_pattern_would_ignore() {
     fs::write(repo.join("keep.log"), "kept\n").expect("write");
 
     assert!(git_rule(&repo, "keep.log").is_none(), "git does not ignore keep.log");
-    assert_eq!(text(&cli(&profile, &["ignore", p(&repo), "keep.log"])).trim(), "not ignored");
+    assert_eq!(text(&cli(&profile, &["-C", p(&repo), "check-ignore", "--", "keep.log"])).trim(), "not ignored");
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn info_exclude_rules_are_honoured_and_named() {
     let (repo, profile) = scoped_repository(&scratch);
     fs::write(repo.join("secret.tmp"), "x\n").expect("write");
 
-    let shown = text(&cli(&profile, &["ignore", p(&repo), "secret.tmp"]));
+    let shown = text(&cli(&profile, &["-C", p(&repo), "check-ignore", "--", "secret.tmp"]));
     assert!(shown.contains("info/exclude"), "{shown}");
     assert_eq!(
         shown.trim(),
@@ -148,11 +148,11 @@ fn ignored_files_stay_out_of_status_and_cannot_be_staged() {
     let (repo, profile) = scoped_repository(&scratch);
     fs::write(repo.join("build.log"), "noise\n").expect("write");
 
-    let status = text(&cli(&profile, &["status", p(&repo)]));
+    let status = text(&cli(&profile, &["-C", p(&repo), "status"]));
     assert!(!status.contains("build.log"), "{status}");
     assert!(status.contains("Working tree clean"), "{status}");
 
-    let refused = cli(&profile, &["stage", p(&repo), "build.log"]);
+    let refused = cli(&profile, &["-C", p(&repo), "stage", "--", "build.log"]);
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("not a changed path"));
 }

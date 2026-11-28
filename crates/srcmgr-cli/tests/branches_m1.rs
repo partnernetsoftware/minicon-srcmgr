@@ -76,7 +76,7 @@ fn repository(scratch: &Scratch) -> (PathBuf, PathBuf) {
     oracle(&repo, &["branch", "feature/a"]);
     oracle(&repo, &["branch", "ünïcode"]);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
     (repo, profile)
 }
 
@@ -92,7 +92,7 @@ fn oracle_names(repo: &Path) -> Vec<String> {
 fn the_list_matches_git_and_marks_only_the_checked_out_branch() {
     let scratch = Scratch::new("list");
     let (repo, profile) = repository(&scratch);
-    let shown = text(&cli(&profile, &["branch", p(&repo), "list"]));
+    let shown = text(&cli(&profile, &["-C", p(&repo), "branch", "list"]));
     let lines: Vec<&str> = shown.lines().collect();
     let names = oracle_names(&repo);
     assert_eq!(lines.len(), names.len(), "{shown}");
@@ -109,9 +109,9 @@ fn the_marker_follows_a_switch_and_listed_names_switch_back() {
     let scratch = Scratch::new("switch");
     let (repo, profile) = repository(&scratch);
     for name in oracle_names(&repo) {
-        let switched = cli(&profile, &["branch", p(&repo), "switch", &name]);
+        let switched = cli(&profile, &["-C", p(&repo), "branch", "switch", &name]);
         assert!(switched.status.success(), "switch to {name}: {}", String::from_utf8_lossy(&switched.stderr));
-        let shown = text(&cli(&profile, &["branch", p(&repo), "list"]));
+        let shown = text(&cli(&profile, &["-C", p(&repo), "branch", "list"]));
         let current: Vec<&str> = shown.lines().filter(|line| line.starts_with("* ")).collect();
         assert_eq!(current, vec![format!("* {name}").as_str()], "{shown}");
     }
@@ -124,8 +124,8 @@ fn an_unborn_branch_lists_no_branches() {
     fs::create_dir_all(&repo).expect("create repo");
     oracle(&repo, &["init", "-q", "-b", "main"]);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
-    assert_eq!(text(&cli(&profile, &["branch", p(&repo), "list"])), "");
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
+    assert_eq!(text(&cli(&profile, &["-C", p(&repo), "branch", "list"])), "");
 }
 
 #[test]
@@ -133,7 +133,7 @@ fn bidi_controls_in_a_branch_name_are_escaped_in_the_list() {
     let scratch = Scratch::new("bidi");
     let (repo, profile) = repository(&scratch);
     oracle(&repo, &["branch", "left\u{202E}right"]);
-    let shown = text(&cli(&profile, &["branch", p(&repo), "list"]));
+    let shown = text(&cli(&profile, &["-C", p(&repo), "branch", "list"]));
     assert!(shown.contains("left\\u{202E}right"), "{shown}");
     assert!(!shown.contains('\u{202E}'), "raw bidi control reached the list");
 }

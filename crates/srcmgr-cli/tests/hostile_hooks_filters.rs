@@ -109,7 +109,7 @@ fn untrusted_commit_does_not_run_the_pre_commit_hook() {
     install_pre_commit(&scratch, &repo, &marker);
     let profile = scratch.root.join("profile");
 
-    let output = cli(&profile, &["commit", p(&repo), "-m", "x"]);
+    let output = cli(&profile, &["-C", p(&repo), "commit", "-m", "x"]);
     assert!(!output.status.success());
     assert!(err(&output).contains("not trusted yet"), "{}", err(&output));
     assert!(!marker.exists(), "the hook ran before trust was granted");
@@ -122,10 +122,10 @@ fn granted_commit_runs_the_pre_commit_hook_as_a_positive_control() {
     let marker = scratch.root.join("hook.marker");
     install_pre_commit(&scratch, &repo, &marker);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
-    assert!(cli(&profile, &["stage", p(&repo), "a.txt"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "stage", "--", "a.txt"]).status.success());
 
-    let output = cli(&profile, &["commit", p(&repo), "-m", "x"]);
+    let output = cli(&profile, &["-C", p(&repo), "commit", "-m", "x"]);
     assert!(output.status.success(), "{}", err(&output));
     assert!(marker.exists(), "the positive control did not run the hook");
 }
@@ -137,15 +137,15 @@ fn a_hook_changed_after_the_grant_does_not_run_on_commit() {
     let marker = scratch.root.join("hook.marker");
     install_pre_commit(&scratch, &repo, &marker);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
-    assert!(cli(&profile, &["stage", p(&repo), "a.txt"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "stage", "--", "a.txt"]).status.success());
 
     // Edit the hook after the grant: the fingerprint must catch it.
     install_pre_commit(&scratch, &repo, &marker);
     fs::write(repo.join(".git").join("hooks").join("pre-commit"), "#!/bin/sh\nexit 0\n").expect("edit hook");
     let _ = fs::remove_file(&marker);
 
-    let output = cli(&profile, &["commit", p(&repo), "-m", "x"]);
+    let output = cli(&profile, &["-C", p(&repo), "commit", "-m", "x"]);
     assert!(!output.status.success());
     assert!(err(&output).contains("changed since trust was granted"), "{}", err(&output));
     assert!(!marker.exists(), "a changed hook still ran");
@@ -161,7 +161,7 @@ fn untrusted_stage_does_not_run_the_clean_filter() {
     fixture_git(&repo, &["config", "filter.hostile.clean", &format!("sh \"{}\"", p(&filter).replace('\\', "/"))]);
     let profile = scratch.root.join("profile");
 
-    let output = cli(&profile, &["stage", p(&repo), "a.txt"]);
+    let output = cli(&profile, &["-C", p(&repo), "stage", "--", "a.txt"]);
     assert!(!output.status.success());
     assert!(!marker.exists(), "the clean filter ran before trust was granted");
 }
@@ -175,9 +175,9 @@ fn granted_stage_runs_the_clean_filter_as_a_positive_control() {
     fs::write(repo.join(".gitattributes"), "*.txt filter=hostile\n").expect("attributes");
     fixture_git(&repo, &["config", "filter.hostile.clean", &format!("sh \"{}\"", p(&filter).replace('\\', "/"))]);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
 
-    let output = cli(&profile, &["stage", p(&repo), "a.txt"]);
+    let output = cli(&profile, &["-C", p(&repo), "stage", "--", "a.txt"]);
     assert!(output.status.success(), "{}", err(&output));
     assert!(marker.exists(), "the positive control did not run the clean filter");
 }

@@ -100,14 +100,14 @@ fn open_unborn_repository_and_make_the_first_commit() {
     let scratch = Scratch::new("first-commit");
     let repo = unborn(&scratch);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
 
-    let before = cli(&profile, &["status", p(&repo)]);
+    let before = cli(&profile, &["-C", p(&repo), "status"]);
     assert!(text(&before).starts_with("On branch main (no commits yet)"), "{}", text(&before));
 
     fs::write(repo.join("first.txt"), "hello\n").expect("write");
-    assert!(cli(&profile, &["stage", p(&repo), "first.txt"]).status.success());
-    let committed = cli(&profile, &["commit", p(&repo), "-m", "first"]);
+    assert!(cli(&profile, &["-C", p(&repo), "stage", "--", "first.txt"]).status.success());
+    let committed = cli(&profile, &["-C", p(&repo), "commit", "-m", "first"]);
     assert!(committed.status.success(), "{}", err(&committed));
 
     // The index and HEAD must match what Git itself reports.
@@ -125,14 +125,14 @@ fn mixed_states_are_classified_and_stage_matches_the_index_oracle() {
     fixture_git(&repo, &["add", "base.txt"]);
     fixture_git(&repo, &["commit", "-q", "-m", "base"]);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
 
     fs::write(repo.join("base.txt"), "changed\n").expect("modify");
     fs::write(repo.join("new file.txt"), "fresh\n").expect("create");
     fs::write(repo.join("loose.txt"), "untracked\n").expect("create untracked");
-    assert!(cli(&profile, &["stage", p(&repo), "base.txt", "new file.txt"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "stage", "--", "base.txt", "new file.txt"]).status.success());
 
-    let status = text(&cli(&profile, &["status", p(&repo)]));
+    let status = text(&cli(&profile, &["-C", p(&repo), "status"]));
     assert!(status.contains("M. base.txt"), "{status}");
     assert!(status.contains("A. new file.txt"), "{status}");
     assert!(status.contains(".? loose.txt"), "{status}");
@@ -152,12 +152,12 @@ fn unstage_restores_the_head_blob_in_the_index() {
     fixture_git(&repo, &["commit", "-q", "-m", "base"]);
     let head_blob = index_entry(&repo, "base.txt");
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
 
     fs::write(repo.join("base.txt"), "changed\n").expect("modify");
-    assert!(cli(&profile, &["stage", p(&repo), "base.txt"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "stage", "--", "base.txt"]).status.success());
     assert_ne!(index_entry(&repo, "base.txt"), head_blob);
-    assert!(cli(&profile, &["unstage", p(&repo), "base.txt"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "unstage", "--", "base.txt"]).status.success());
     assert_eq!(index_entry(&repo, "base.txt"), head_blob);
     // The working-tree bytes survive the unstage.
     assert_eq!(fs::read_to_string(repo.join("base.txt")).expect("read"), "changed\n");
@@ -176,10 +176,10 @@ fn dirty_switch_that_would_overwrite_local_edits_is_refused_and_changes_nothing(
     fixture_git(&repo, &["switch", "-q", "main"]);
 
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
     fs::write(repo.join("shared.txt"), "local edit\n").expect("local edit");
 
-    let switched = cli(&profile, &["branch", p(&repo), "switch", "other"]);
+    let switched = cli(&profile, &["-C", p(&repo), "branch", "switch", "other"]);
     assert!(!switched.status.success(), "switch should be refused");
     assert_eq!(oracle(&repo, &["symbolic-ref", "--short", "HEAD"]), "main");
     assert_eq!(fs::read_to_string(repo.join("shared.txt")).expect("read"), "local edit\n");
@@ -193,18 +193,18 @@ fn escaped_and_dash_prefixed_paths_round_trip_through_stage_and_commit() {
     fixture_git(&repo, &["add", "base.txt"]);
     fixture_git(&repo, &["commit", "-q", "-m", "base"]);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
 
     // Spaces, non-ASCII and a leading dash: all must be taken literally.
     let names = ["sp ace.txt", "中文.txt", "-dash.txt"];
     for name in names {
         fs::write(repo.join(name), format!("{name}\n")).expect("write");
     }
-    let staged = cli(&profile, &["stage", p(&repo), "sp ace.txt", "中文.txt", "./-dash.txt"]);
+    let staged = cli(&profile, &["-C", p(&repo), "stage", "--", "sp ace.txt", "中文.txt", "./-dash.txt"]);
     assert!(!staged.status.success(), "a non-changed literal ./path must be refused, not expanded");
 
-    assert!(cli(&profile, &["stage", p(&repo), "sp ace.txt", "中文.txt", "-dash.txt"]).status.success());
-    assert!(cli(&profile, &["commit", p(&repo), "-m", "escaped"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "stage", "--", "sp ace.txt", "中文.txt", "-dash.txt"]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "commit", "-m", "escaped"]).status.success());
     for name in names {
         assert_eq!(index_entry(&repo, name), format!("100644 {}", blob_of(&repo, name)), "{name}");
     }

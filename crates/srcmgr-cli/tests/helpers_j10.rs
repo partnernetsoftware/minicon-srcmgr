@@ -97,9 +97,9 @@ fn product_diff_does_not_run_external_or_textconv_helpers_even_when_granted() {
     let textconv = program(&scratch, "textconv.sh", &textconv_marker);
     let repo = configured_repository(&scratch, &external, &textconv);
     let profile = scratch.root.join("profile");
-    assert!(cli(&profile, &["trust", "grant", p(&repo)]).status.success());
+    assert!(cli(&profile, &["-C", p(&repo), "trust", "grant"]).status.success());
 
-    let output = cli(&profile, &["diff", p(&repo), "a.txt"]);
+    let output = cli(&profile, &["-C", p(&repo), "diff", "a.txt"]);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert!(String::from_utf8_lossy(&output.stdout).contains("+two"));
     assert!(!external_marker.exists(), "the external diff driver ran");

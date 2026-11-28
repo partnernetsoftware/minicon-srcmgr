@@ -337,7 +337,30 @@ enforced in code or a fixture today.
   worktree changes instead of offering a force flag.
 - **Direction is the owner's sentence, written into the owner module first.**  "Match and then exceed SourceTree and lazygit; the CLI matches standard git and  adds its own control surface" arrived as one message. It went into PRD 01  (targets plus a CLI contract table) and PRD 13 (the `control` surface) before  any code, and the versions were re-sequenced from those owners: 0.2.2 CLI,  0.2.3 control, 0.2.4 history moves.- **The owner chose removal over a compatibility mode.** The private CLI spelling  (`branch <worktree> create`, `history`, `setting`, worktree-first) is removed,  not kept beside the Git spelling. "Exceed" for UI/UX is bound to resources and  response by measurement; do not re-derive it as feature count.- **When a file's line ending is unknown, match per line.** Two patch scripts  aborted on a `
 ` assumption in one file and a `
-` assumption in the next,  and both aborted before writing. Assert single-line anchors that contain no  line break, or detect the ending from the bytes.
+` assumption in the next,  and both aborted before writing. Assert single-line anchors that contain no  line break, or detect the ending from the bytes.- **Measure `git` before writing "compatible".** Four rules were run on a real
+  `git` before the parser was written, and three corrected what was about to be
+  coded: `-C` is valid before the subcommand only, `-C ""` is valid and changes
+  nothing, and `--porcelain=v2 -z` has no `# branch` header without `--branch`.
+  A compatibility rule remembered from impression is a guess; the oracle is the
+  binary.
+- **A smoke script's own mistakes imitate product defects.** Three rounds failed
+  on the script (`-C` placed after the verb, `> -- -dash.txt` which is not a
+  redirect in bash, a `cd` that moved the working directory) while the product
+  was right each time. Before changing the product for a failing smoke step,
+  run the same command by hand and compare with real `git`.
+- **Do not assemble Markdown patches from `"..." + nl` chains in Python.** Three
+  scripts failed on that shape, and a heredoc holding `''` or `})` broke bash
+  quoting twice. Write each insertion as one triple-quoted block, convert its
+  line endings with one `.replace`, and keep the Python to locate-and-insert.
+- **Porcelain compatibility is a pass-through, not a rebuild.** `StatusSnapshot`
+  has two coarse `ChangeKind`s and no mode, oid or score, so it cannot produce a
+  rename record. The product already reads `status --porcelain=v2 -z --branch`,
+  so `--porcelain` returns that command's bytes after the trust gate.
+- **A mechanical migration is reviewed in the diff before a test runs.** The
+  first pass of the CLI test migration inserted `--` into `diff` and `hunk`
+  calls and turned `--staged` and an action word into paths; the diff showed it.
+  Migrate call shapes only, leave assertions alone, and read the diff per shape.
+
 ## Four reading paths
 
 1. **Implement a mutation** — this file, then the owning module, then
