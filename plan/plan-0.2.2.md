@@ -1,163 +1,154 @@
-# 0.2.2 history moves
+# 0.2.2 the Git-compatible command line
 
 Status: `[_]` planned, not started. The workspace version stays **0.2.1** until
-this version's work begins. The owner kept the 0.2 minor open and moved the whole
-of the planned 0.3.0 scope into it, so this version is every ref and commit move
-the product has not built yet: rename, tags, cherry-pick, revert, reset and amend.
+this version's work begins.
 
-## Why this is 0.2.2 and not 0.3.0
+## Why this version exists
 
-Picking, reverting and resetting do change what the repository commits to, and
-renaming a branch, managing tags and amending the tip edit a name or the last
-commit in place. The earlier split — graph-changing moves to 0.3.0, the rest to
-0.2.2 — was an implementer's derivation. The owner's decision is that all of it
-finishes the sentence 0.2.0 started, "move something on purpose, after naming the
-loss", inside the current minor. Version numbering is the owner's call.
+Decision 2026-11-28 ([PRD 01](../prd/PRD_01_product.md#direction-2026-11-28-match-then-exceed-the-reference-clients)):
+the command line matches the standard `git` spelling, and the private spelling
+is removed rather than kept beside it. Today `minicon-srcmgr branch <worktree>
+create <name>` cannot be reached by a script written for `git`, the worktree is
+the first positional instead of `-C <path>` or the current directory, `history`
+and `setting` are names `git` does not use, and `status` prints a private text
+format. This version moves every verb to the Git spelling and removes the old
+one. It comes before the `control` surface ([0.2.3](plan-0.2.3.md)) because
+`control` reuses the option parsing and the trust lookup built here.
 
 ## Product outcome
 
-**A developer moves a branch, a tag or a commit from a reviewed decision, sees
-exactly what is lost, and is never told a move happened when Git refused.**
+**A script written for `git status --porcelain`, `git log` or `git branch -m`
+runs against `minicon-srcmgr` unchanged apart from the binary name, and every
+write still passes trust, the preview and the job record.**
 
 ```text
-0.2.2 · move refs and commits only after the loss is named
-├── A. Refs
-│   ├── Rename a local branch, with its upstream and the refs that point at it
-│   └── Create or delete a tag, annotated or lightweight, local only
-├── B. Commits
-│   ├── Cherry-pick one commit onto the current branch
-│   ├── Revert one commit with its message
-│   └── Amend the last commit's message, author or staged content
-└── C. Reset
-    ├── soft, mixed and hard, each naming the commits that stop being reachable
-    └── a hard reset refuses while the worktree holds changes it would overwrite
+0.2.2 · one spelling, Git's
+├── A. Invocation
+│   ├── subcommand first; -C <path> selects the repository
+│   ├── without -C, discovery from the current directory, as git does
+│   └── -- ends options; a path that begins with - is still a path
+├── B. Git names and formats
+│   ├── status --porcelain[=v2] [-z], matching git's bytes for the fields it emits
+│   ├── log replaces history; check-ignore replaces ignore; branch -m renames
+│   └── exit codes: 0 success, 1 "nothing matched" where git uses 1, non-zero refusal
+└── C. SrcMgr verbs, same rules
+    ├── stage, unstage, hunk, draft, trust, config, gui, remote tracking
+    └── trust refused → the message names the exact grant command
 ```
 
 ## Boundaries
 
-**Must.** One review per move that names the current and resulting ref value;
-one-use tickets bound to that review; every mutation in a job record; a reset
-that lists the commits it makes unreachable; amend that keeps the old commit id
-in the review; conflict stops that name paths and leave the branch where Git left
-it; refusal while another operation is in progress.
+**Must.** `-C <path>` and current-directory discovery for every repository verb;
+`--porcelain=v2 -z` output byte-compatible with `git status --porcelain=v2 -z`
+for ordinary, renamed, unmerged and untracked entries; `log` with `--skip` and
+`--limit`; the old spelling rejected with a message that names the replacement;
+every integration test moved, none deleted; a write that is refused leaves the
+repository byte-identical.
 
-**Not in 0.2.2.** Interactive rebase, multi-commit cherry-pick ranges, remote tag
-deletion, force-push, patch exchange, submodule and LFS administration, worktrees,
-and reflog browsing. Force-push stays a separate earlier decision and is not
-widened here.
+**Not in 0.2.2.** Any new Git verb the product does not already perform
+(`rebase`, `tag`, `cherry-pick`, `reset` are [0.2.4](plan-0.2.4.md)); full
+`git log` option parity (`--author`, `--grep`, `--graph`); `status` long format;
+`add -p`/`reset -p` interactive modes; aliases; a config file. The `control`
+verbs are [0.2.3](plan-0.2.3.md).
 
-**Excluded.** A move without a ticket, a reset whose lost commits are not named,
-deleting a tag that exists only on the remote, and treating a clean exit code as
-proof that a ref moved — the resulting value is read back.
+**Excluded.** Keeping the private spelling as a hidden compatibility mode;
+parsing `git`'s human-readable output as the compatibility oracle (the oracle is
+real `git` on the same repository); changing what a verb does to the repository
+in order to make its spelling match.
 
 ## Review of the starting point
 
 | Area | Actual state at 0.2.1 | Consequence for 0.2.2 |
 |---|---|---|
-| Preview/apply | Merge, rebase, resolution and skip each review one outcome with a one-use ticket | Every move reuses the ticket shape; a new ticket is still one use |
-| Job record | Every mutation writes `action timestamp` first and clears it after | Rename, tags, pick, revert, reset and amend join it |
-| Write guard | An unfinished operation or unmerged path blocks writes | Every move refuses under it rather than half-applying |
-| Conflict stop | 0.2.0 detects an operation from Git's own metadata and 0.2.1 resolves it in the window | A pick or revert that stops on conflicts lands in the existing conflict centre |
-| Branch reads | Branches are listed with upstream and ahead/behind | Rename and reset write through the same read afterwards |
-| Tags | Nothing reads or writes them | New: list, create, delete; annotated needs an identity |
-| Composer | Multiline message with refresh review and a pending guard | Amend extends it with the old id and the staged index check |
-| History | Commits are listed with subject and id | Pick, revert and reset take their target from that list |
+| Parser | One pass over `argv`; `--profile`, `--git`, `--json`, `-m` are lifted out anywhere; everything else is positional | Replaced by a per-verb parser that knows `-C`, `--` and its own options |
+| Worktree | First positional on every repository verb | Becomes `-C <path>`, else current directory |
+| Tests | 15 integration files, each with its own `cli()` helper; roughly 150 call sites use the private order | One shared helper; call sites rewritten mechanically, assertions kept |
+| Scripts and CI | `candidate.yml` and `windows-candidate.yml` call `setting get history.limit` to prove the binary starts | Rewritten to `config get history.limit` |
+| Docs | `first-run.txt` shows `clone <url> <destination>` (already Git's spelling); PRD 14 evidence lines quote the private spelling | `first-run.txt` unchanged; PRD 14 lines are historical evidence and stay as written |
+| GUI backend | Talks to `srcmgr-git` directly; never shells out to the CLI | Untouched |
 
 ## Dependency graph
 
 ```text
-T1 ref read/write helpers (srcmgr-git, no UI)
+C1 shared option parser (-C, --, per-verb options)  ── no behaviour change yet
       │
-T2 branch rename + tag list/create/delete ──┐
-      │                                    │
-T3 cherry-pick / revert (single commit) ────┤  need T1
-      │                                    │
-T4 reset soft/mixed/hard ───────────────────┤  needs T1
-      │                                    │
-T5 amend in the composer ──────────────────┘  needs T1
+C2 discovery + trust lookup from -C / cwd
+      │
+C3 Git names and formats (status --porcelain=v2 -z, log, check-ignore, branch -m)
+      │
+C4 tests + scripts + usage moved to the new spelling; old spelling rejected
       ↓
    release 0.2.2 (courts inherited)
 ```
 
-Merge points: each preview lands with the key that opens it; a drawn surface that
-cannot take keys is the defect 0.2.0 paid for twice. T2-T5 touch different files
-in the Git layer and different keys in the window, so they may proceed side by
-side once T1 has landed; `workspace.rs` key routing stays with one integrator.
+Merge points: C1 and C2 land together, because a parser without lookup is
+untestable end to end. C3 is one commit per verb with its byte-comparison
+fixture. C4 is one mechanical commit that touches no assertion.
 
 ## What must be true before the first line of code
 
-- "Move" means the ref value is read before and after; the report carries both
-  ids, and a move is only reported when the after-value differs.
-- A branch rename keeps `branch.<name>.remote` and `.merge` by renaming through
-  Git, not by writing config beside it.
-- An annotated tag uses the identity Git already resolves; when none exists the
-  create is refused with the same reason a commit would give.
-- A tag delete review names the commit the tag points at, not just the tag name.
-- A reset review lists every commit that becomes unreachable from the target ref,
-  read from Git, not inferred from a count.
-- A hard reset refuses when the worktree has tracked changes it would overwrite,
-  and the refusal names the paths rather than offering a force flag.
-- Amend re-reads the staged index at approval time; a review whose index changed
-  is stale and is refused.
-- A cherry-pick or revert that stops on conflicts is reported by the operation
-  state Git leaves, never by the exit code alone.
+- The compatibility oracle is real `git` on the same repository, run through
+  `SRCMGR_TEST_GIT`, never a hand-written expected string.
+- `--porcelain=v2 -z` is compared for the fields `git` emits; a field SrcMgr
+  does not know yet is compared as "SrcMgr emits the same subset", and the test
+  names which fields are not emitted.
+- A path beginning with `-` is a path after `--`, and an option before it.
+- An untrusted repository refuses with the exact grant command, including `-C`.
+- Current-directory discovery does not run repository Git before trust is
+  checked: metadata only, then the gate, then Git.
 
 ## Risks this plan accepts, and why
 
 | Risk | Why it is accepted | What bounds it |
 |---|---|---|
-| Rewriting history can lose commits | The product's whole premise is explicit previews | Lost commits are listed; reset is three named modes; tickets are one use |
-| Refs can be moved while another operation runs | Git itself allows some of it | The write guard refuses before the first mutation |
-| Annotated tags vary by Git configuration | Asking Git to write the tag is the only honest path | The review shows the object Git would create and the identity it used |
-| Amend changes what a push would publish | Users ask for it; hiding it is worse | The review names the old id and the fact that the old commit stops being reachable |
-| A pick or revert stops mid-way | Git leaves an operation state for exactly this case | The conflict centre opens on the paths; the branch is read back, not assumed |
-| Scope is four surfaces instead of one | The owner chose to finish the minor | Each surface is one work package with its own fixture; the ledger closes per row |
+| Removing the old spelling breaks an existing caller | The owner chose removal over a compatibility mode | The old spelling names its replacement; release notes list every renamed verb |
+| Byte compatibility with `git` is subtle (renames, unmerged, `-z`) | It is the point of the version | One fixture per entry kind, compared against real `git` |
+| Current-directory discovery differs from `git` in edge cases (`.git` file, bare) | Today the CLI refuses both already | The existing refusal is kept and stated; no new claim |
+| Mechanical test rewrite hides a behaviour change | Rewrites are error-prone | C4 changes call shapes only; assertions and fixtures are untouched and reviewed in the diff |
 
 ## Work packages
 
 | Package | Deliverable | Minimum evidence |
 |---|---|---|
-| T1 · refs | Read a ref value, write a branch or tag, refuse a missing source | Fixture: values before and after for branch and tag; a missing ref refuses |
-| T2 · rename and tags | `r` renames a branch with its upstream; `T` opens tags for create and delete, each with a review | Fixture: rename keeps `branch.<name>.remote/merge`; annotated create shows identity; delete names the target; an existing target refuses and writes nothing |
-| T3 · pick and revert | One commit picked or reverted from the history list, conflict stop named | Fixture: applied and conflicted outcomes, branch id read back |
-| T4 · reset | soft, mixed and hard with the unreachable-commit list and a dirty-worktree refusal | Fixture: each mode against a known graph; refusal writes nothing |
-| T5 · amend | Amend from the composer with the old id in the review | Fixture: staged-content and message-only amend; stale index refused |
+| C1 · parser | `-C`, `--`, per-verb options; unknown option is a usage error naming the verb | Unit cases: `-C` before and after the verb, `--` then `-dash.txt`, unknown option |
+| C2 · discovery | Repository from `-C` or the current directory; metadata then trust then Git | Fixture: run from inside the worktree with no path; untrusted from cwd refuses before Git runs |
+| C3 · Git formats | `status --porcelain=v2 [-z]`, `log`, `check-ignore`, `branch -m`, `config` | Byte comparison against real `git` for each `status` entry kind; `log` order against `git log --format` |
+| C4 · migration | Tests, two workflows, usage text; old spelling rejected | Workspace tests green with `SRCMGR_TEST_GIT`; CI workflows parse; old spelling returns usage with the new name |
 
 ## Invariants this increment must not weaken
 
-- A ref or commit moves only after a review of that exact move and a one-use
-  ticket; a changed repository makes the ticket stale, not the review optional.
-- Every mutation writes a job record first and clears it when the command returns.
-- The reported after-value is read from Git, never assumed from a zero exit.
-- A destructive mode names what it destroys before it runs.
-- An amend names the commit it replaces before it replaces it.
-- Nothing in this version pushes; a moved ref stays local until the existing push
-  path publishes it.
-- Binary, symlink, submodule and delete/modify conflicts stay refused by name.
+- Trust is checked before any repository Git runs, whichever way the repository
+  was found.
+- A refused write leaves the repository byte-identical.
+- Paths are literal, never patterns, whatever their spelling.
+- The GUI backend keeps calling `srcmgr-git` directly.
+- `--porcelain` output is derived from the same status read the window uses.
 
 ## Acceptance ledger
 
 | Case | Required outcome | State |
 |---|---|---|
-| R1 · refs | Branch rename and tag create/delete are reviewed, ticketed and read back | `[_]` |
-| R2 · pick/revert | One commit is picked or reverted; conflicts name the paths | `[_]` |
-| R3 · reset | soft, mixed and hard all list the commits they make unreachable | `[_]` |
-| R4 · reset refusal | A hard reset over tracked changes refuses and writes nothing | `[_]` |
-| R5 · amend | Amend shows the old id, accepts staged content and refuses a stale index | `[_]` |
-| R6 · guard | Every move refuses while an operation or unmerged path is present | `[_]` |
+| G1 · invocation | `-C <path>` and current-directory discovery work for every repository verb | `[_]` |
+| G2 · porcelain | `status --porcelain=v2 -z` matches real `git` byte for byte on the emitted fields | `[_]` |
+| G3 · names | `log`, `check-ignore`, `branch -m`, `config` replace the private names; the old spelling names its replacement | `[_]` |
+| G4 · gate | An untrusted repository refuses before Git runs, from `-C` and from the current directory | `[_]` |
+| G5 · migration | Every integration test runs in the new spelling with its assertions intact; CI workflows pass | `[_]` |
 
 ## Selected verification and stopping
 
-Cheapest oracle first: fixture repositories with a known graph for each move,
-byte-level assertions on refs through `git rev-parse`, and CLI tests through the
-window backend. Run the affected `cargo test` selection with `SRCMGR_TEST_GIT`,
+Cheapest oracle first: real `git` on the same fixture for output comparison, then
+the moved integration tests, then the two CI workflows. Run the affected
+`cargo test -p srcmgr-cli` selection with `SRCMGR_TEST_GIT`,
 `cargo clippy --workspace --all-targets` and `python scripts/check_docs.py`.
+Stop when the moved tests and the byte comparisons pass without an unexplained
+difference.
 
 ## Round protocol
 
-Same three artefacts as 0.2.0 and 0.2.1: the ledger row rewritten with the evidence
-it has, an execution record entry, and [the memory palace](../prd/prd_mempalace.md)
-updated with any fact that would otherwise be re-learned.
+Same three artefacts as 0.2.0 and 0.2.1: the ledger row rewritten with the
+evidence it has, an execution record entry, and
+[the memory palace](../prd/prd_mempalace.md) updated with any fact that would
+otherwise be re-learned.
 
 ## Qualification path and exit criteria
 
@@ -165,17 +156,7 @@ C6 and C7 are inherited with their runbooks unchanged. 0.2.2 closes in one of th
 same three ways; if the courts still cannot run, it publishes as `0.2.2-beta`
 naming them.
 
-## Still outside the 0.2 minor
-
-Interactive rebase, multi-commit cherry-pick ranges, remote tag deletion,
-force-push, patch exchange, submodule and LFS administration, worktrees and reflog
-browsing. Their product requirements stay in [PRD 01](../prd/PRD_01_product.md)
-and [PRD 06](../prd/PRD_06_references.md); this plan does not implement a part of
-them, and no partial surface is exposed.
-
 ## Execution record
 
-Nothing built yet. The first round starts with T1 and writes down the fixture
-graph it will use before writing the helper: one branch with an upstream, one
-annotated tag, a second branch carrying one commit to pick, and a tip that can be
-amended twice.
+Nothing built yet. The first round starts with C1 and C2 together and proves
+them with `trust`, `status` and `stage` before any format work.

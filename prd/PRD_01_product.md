@@ -60,6 +60,41 @@ Use the TUI application [lazygit](https://github.com/jesseduffield/lazygit) as a
 
 The benchmark guides daily workflow coverage and low-friction panel navigation. The deliverable remains a native GUI; a separate TUI edition is not added by this requirement. Do not require lazygit at runtime, copy every command, reproduce destructive shortcuts or add a plugin/shell system for nominal parity. Reference snapshot: [lazygit at `4e1eebe278790f257a875da6633234391a5a85b3`](https://github.com/jesseduffield/lazygit/tree/4e1eebe278790f257a875da6633234391a5a85b3), reviewed 2026-10-18. Compare the listed workflows against that snapshot; future upstream changes do not silently expand release scope.
 
+## Direction 2026-11-28: match, then exceed, the reference clients
+
+Decision by the product owner. Two references are to be matched and then exceeded, and each "exceed" is bound to a measurement rather than an adjective:
+
+| Surface | References to match | What "exceed" means here | Evidence |
+|---|---|---|---|
+| UI/UX | [lazygit](https://github.com/jesseduffield/lazygit) for keyboard workflows and the desktop client analysed below for discoverable repository, history and remote workflows | **Resources and response** (the owner's choice): a lower idle footprint and a shorter key-to-redraw latency than both references on the same host and repository, measured with a published method. The two existing differentiators stay: an exact preview before every destructive write, and keyboard-first operation | QA-J09 extended with a side-by-side reference run; numbers go in [14](PRD_14_verification_roadmap.md) |
+| CLI | the standard `git` command line: subcommand names, `-C <path>`, current-directory discovery, `--porcelain`/`-z` machine output and exit codes | The Git spelling is the default and the earlier private spelling is **removed**. SrcMgr then adds what `git` does not have: a trust gate before any repository Git runs, a preview before a destructive write, and the versioned `control` surface owned by [13](PRD_13_state_control.md) | CLI journeys in the local-client lane assert Git-compatible spelling against real repositories |
+
+Matching a reference never means copying it. The table of design decisions below still governs what SrcMgr does not copy, and the functional benchmark stays pinned; this section adds targets, it does not widen the milestone scope by itself. A reference that is faster or lighter on a measured day is a finding to act on, not a number to omit.
+
+### CLI contract
+
+`minicon-srcmgr` follows `git` for every verb that `git` also has: the subcommand comes first, `-C <path>` selects the repository, and without `-C` the repository is discovered from the current directory the way `git` does. A verb `git` does not have keeps its own name under the same rules. Trust is granted once per repository and is then required by every repository-touching verb; an untrusted repository is refused with the exact command that would grant it.
+
+| Verb | Spelling | Notes |
+|---|---|---|
+| `status` | `status [-C <path>] [--porcelain \[=v2\] \[-z\]] [--json]` | Default text follows `git status --short`; `--json` is the SrcMgr document |
+| `stage` / `unstage` | `stage [-C <path>] [--] <path>...` | SrcMgr names; paths are literal, never patterns |
+| `commit` | `commit [-C <path>] [-m <message> \| --amend]` | Without `-m` the saved draft is used, as before |
+| `branch` | `branch [-C <path>] [--list] \| [-m \[<old>\] <new>]` | List and rename; `create`/`switch` keep their SrcMgr names because `git switch` is its own verb |
+| `clone` | `clone [--branch <b>] [--depth <n>] <url> <dir>` | Unchanged; already the Git spelling |
+| `fetch` / `pull` / `push` | `fetch [-C <path>] <remote>` · `pull [-C <path>]` · `push [-C <path>] <remote>` | `pull` stays fast-forward only |
+| `remote` | `remote [-C <path>] list \| tracking [--json] \| add/set-url/rename/remove ... [--yes]` | `tracking` is a SrcMgr verb |
+| `log` | `log [-C <path>] [--skip <n>] [--limit <n>]` | Replaces the private `history` |
+| `diff` | `diff [-C <path>] [--staged] -- <path>` | |
+| `hunk` | `hunk [-C <path>] list [--staged] -- <path>` · `hunk stage\|unstage -- <path> <n>` | SrcMgr verb |
+| `check-ignore` | `check-ignore [-C <path>] -- <path>` | Replaces the private `ignore` |
+| `draft` | `draft [-C <path>] save -m <message> \| show \| clear` | SrcMgr verb; no trust needed |
+| `trust` | `trust grant\|revoke [-C <path>]` | SrcMgr verb; metadata only |
+| `config` | `config get\|set <key> [value]` | SrcMgr preferences, not Git config; replaces the private `setting` |
+| `gui` | `gui [-C <path>]` | SrcMgr verb |
+| `control` | `control <verb> ...` | [13](PRD_13_state_control.md#control-surface) |
+
+A write verb prints its preview and applies it in one invocation, as `git` does, unless the PRD owner requires a review; the review-only form stays available where it exists today (`remote ... ` without `--yes`). Output that a script parses is Git's own format where one exists and a versioned SrcMgr document otherwise. Exit codes: `0` success, non-zero refusal or failure; a refusal never leaves a partial write.
 ## reference GUI analysis
 
 reference GUI (Atlassian) is the desktop Git client most users compare against. Observed on this Windows host on 2026-10-20:

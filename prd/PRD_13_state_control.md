@@ -1,6 +1,6 @@
 # 13 · Persistence, jobs and public control
 
-Parent: [PRD index](../PRD.md). Owns durable application state, snapshots, operation records and automation contracts. No control endpoint is implemented yet.
+Parent: [PRD index](../PRD.md). Owns durable application state, snapshots, operation records and automation contracts. The `control` verbs below are planned; their delivery is sequenced in the active version plan and nothing here is implemented until a plan records evidence.
 
 ## Outcome tree
 
@@ -88,6 +88,32 @@ Only completion of the submitted prompt action may acknowledge its commit, branc
 
 Once Git reports a commit or branch creation completed, a later draft-cleanup or snapshot failure must not be reported as a refused submission. Acknowledge the known write, identify its actual commit/branch, retain any durable draft whose cleanup failed, and explain unavailable refresh/stale displayed lists without inviting resubmission. A fresh snapshot is still required before claiming reconciled state; completion of a different action cannot acknowledge another pending prompt.
 
+## Control surface
+
+Decision 2026-11-28: the `control` surface is delivered, in the shape this module already planned, as the product's own management interface beside the Git-compatible command line ([01](PRD_01_product.md#cli-contract)). It is a local command-line surface first. The named-pipe/socket transport in the next section stays a later milestone and is not implied by this one.
+
+Spelling is `minicon-srcmgr control <verb>`; global options come before `control`. Every verb prints one JSON document on stdout with `"schema": "minicon-srcmgr.control/1"`, or an error document and a non-zero exit. There is no network listener and no background service: a verb opens the profile, does its work and exits.
+
+| Verb | Authority | Returns |
+|---|---|---|---|
+| `version` | none | product version, Git floor and the control schema version |
+| `capabilities` | none | backend tags and capability states; `git` only in this milestone |
+| `list-repositories` | none | the profile's recent records; no path is probed |
+| `repo-snapshot [-C <path>]` | trust | the status document plus operation state, unmerged paths and a pending job record if one was left behind |
+| `jobs` | none | jobs recorded in the profile, newest first, bounded |
+| `plan-action <verb> [-C <path>] [args...]` | trust | a plan: unpredictable id, bound repo/trust fingerprint/generation, exact effects, risk class and a sixty-second expiry; nothing is written |
+| `execute-plan <id>` | trust | the job identifier; the plan is consumed on launch, a replayed id fails, and a stale plan is refused with a reason to replan |
+| `wait-job <id> [--timeout <s>]` | trust | the job's final state and observed outcome, or `timeout` |
+
+`plan-action` accepts the write verbs the window already offers through the same operation gate: `stage`, `unstage`, `commit`, `create-branch`, `switch-branch`, `merge`, `rebase`, `checkout` and the remote writes. A plan never carries a raw Git argument list; there is no escape hatch to arbitrary Git.
+
+Authority rules. Read-only verbs need no grant except `repo-snapshot`, which requires the repository's trust like any other read. Every mutation goes through the same gate as the window: trust, the unfinished-operation check, the one-use plan and the job record. A plan is created bound to the trust fingerprint and the generation it previewed; if either changes before `execute-plan`, the plan is stale and is refused without a write. Risk class `destructive` (a hard reset, a force push, a discard) additionally requires `--confirm-destructive` on `execute-plan`, and that flag is refused unless the profile setting `control.destructive` is `allow`; the default is `refuse`.
+
+Plans and jobs are kept in the profile's SQLite store under the schema-1 settings namespace `control.plan.v1.<id>` and `control.job.v1.<id>`, with a bounded ring of the most recent 256 jobs per profile. A plan holds no credential, patch body or raw helper output. A process restart invalidates every outstanding plan: `execute-plan` consults the instance id a plan was created under and refuses a plan from another instance.
+
+Safe failure. An unknown verb, an invalid enum, a schema mismatch or an oversized request is refused before any Git runs. `execute-plan` reports the job's observed outcome and never converts an unknown result into success. A refused plan leaves the repository byte-identical.
+
+Non-goals for this surface: a TCP listener, a token that authorizes arbitrary operations, automation that bypasses trust or safety copies, and any remote-control transport. Those stay with the next section.
 ## Transport and compatibility
 
 Use current-user-restricted named pipes on Windows and owner-only Unix sockets in a private runtime directory elsewhere. Validate peer identity where supported and use a per-instance secret capability delivered through a private launch channel; no world-readable token files or token-in-argv logging. Equivalent current-user hostile processes remain outside the security promise, as defined in 11. Endpoint cleanup validates ownership and live instance identity before removing stale files.

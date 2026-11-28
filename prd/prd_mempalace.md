@@ -335,7 +335,9 @@ enforced in code or a fixture today.
 - **A destructive mode names what it destroys first.** Reset lists the commits
   that become unreachable, read from the graph; a hard reset refuses over tracked
   worktree changes instead of offering a force flag.
-
+- **Direction is the owner's sentence, written into the owner module first.**  "Match and then exceed SourceTree and lazygit; the CLI matches standard git and  adds its own control surface" arrived as one message. It went into PRD 01  (targets plus a CLI contract table) and PRD 13 (the `control` surface) before  any code, and the versions were re-sequenced from those owners: 0.2.2 CLI,  0.2.3 control, 0.2.4 history moves.- **The owner chose removal over a compatibility mode.** The private CLI spelling  (`branch <worktree> create`, `history`, `setting`, worktree-first) is removed,  not kept beside the Git spelling. "Exceed" for UI/UX is bound to resources and  response by measurement; do not re-derive it as feature count.- **When a file's line ending is unknown, match per line.** Two patch scripts  aborted on a `
+` assumption in one file and a `
+` assumption in the next,  and both aborted before writing. Assert single-line anchors that contain no  line break, or detect the ending from the bytes.
 ## Four reading paths
 
 1. **Implement a mutation** — this file, then the owning module, then
