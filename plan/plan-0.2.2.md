@@ -133,7 +133,7 @@ fixture. C4 is one mechanical commit that touches no assertion.
 | G2 · porcelain | `status --porcelain=v2 -z` matches real `git` byte for byte on the emitted fields | `[v]` `porcelain_v2_and_v1_are_byte_identical_to_git` and `porcelain_matches_git_through_a_rename_and_a_conflict` compare the product's bytes with `git`'s on the same repository, through a rename record; the product passes the command through rather than rebuilding it |
 | G3 · names | `log`, `check-ignore`, `branch -m`, `config` replace the private names; the old spelling names its replacement | `[v]` `the_git_names_replace_the_private_ones_and_the_old_ones_say_so` and `branch_m_renames_through_git_and_reads_the_result_back`; `history`, `setting` and `ignore` exit 129 naming `log`, `config` and `check-ignore` |
 | G4 · gate | An untrusted repository refuses before Git runs, from `-C` and from the current directory | `[v]` `an_untrusted_repository_refuses_before_git_runs_from_either_path` uses a Git that leaves a marker when executed, from the directory, a subdirectory and `-C`; the marker never appears |
-| G5 · migration | Every integration test runs in the new spelling with its assertions intact; CI workflows pass | `[-]` 15 integration files moved by `scripts/migrate_cli_tests_022.py` plus three hand moves; all green with `SRCMGR_TEST_GIT`. The two CI workflows now call `config get`; their next run is the evidence |
+| G5 · migration | Every integration test runs in the new spelling with its assertions intact; CI workflows pass | `[-]` 15 integration files moved by `scripts/migrate_cli_tests_022.py` plus three hand moves; all green with `SRCMGR_TEST_GIT`. Three CI workflow calls were `setting get`; the first CI run caught the third (`local-client.yml`, through `cargo run`) after a grep pattern missed it. All three now call `config get` |
 
 ## Selected verification and stopping
 
@@ -202,5 +202,10 @@ The first round built C1-C4 together; the record follows.
   suites green including the new `git_compat.rs` (8 cases).
   `cargo clippy --workspace --all-targets` clean. A 26-step smoke against real
   `git` passes.
-- **Open.** The full-workspace run and the two CI workflows are the remaining
-  evidence for G5; the release bump, notes and beta publication follow them.
+- **CI caught what a grep missed.** `cargo test --workspace` passed with 35
+  suites, and the first CI run then failed in `local-client.yml`: one more
+  `setting get` call, reached through `cargo run`, that the search for the
+  binary's name had skipped because the path in front of it differed. A search
+  for the *verb* found it at once.
+- **Open.** The release bump, notes and beta publication follow a green CI run
+  on the corrected workflows.
