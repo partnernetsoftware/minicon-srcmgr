@@ -323,10 +323,12 @@ enforced in code or a fixture today.
 - **A release page is checked from the outside.** After `gh release create`,
   re-download at least one archive through the release URL and compare its digest
   with `SHA256SUMS.txt`; the local assembly proves the pipeline, not the upload.
-- **The owner decides which minor a move belongs to.** Renaming a branch, tags
-  and amend do not produce a new commit graph, so the owner kept them in 0.2.2;
-  cherry-pick, revert and reset stay deferred to 0.3.0. Version numbering is the
-  owner's call, not a consequence the implementer derives from reach alone.
+- **The owner decides which minor a move belongs to.** An implementer split the
+  ref and commit moves into 0.2.2 (rename, tags, amend) and 0.3.0 (pick, revert,
+  reset) by reasoning about which ones change the graph. The owner overrode both
+  steps: keep the 0.2 minor, and move the whole of the planned 0.3.0 scope into
+  0.2.2. Version numbering is the owner's call, not a consequence derived from
+  reach alone, and neither split is to be re-derived.
 - **A move is reported only when the after-value differs.** Read the ref before
   and after with `rev-parse`; a zero exit is not a move, and a ticket is stale
   when the value it reviewed is no longer the value on disk.
